@@ -1,0 +1,35 @@
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.34.0
+
+# Data validation & settings
+pydantic==2.10.0
+pydantic-settings==2.6.0
+
+# Database ORM
+sqlmodel==0.0.22
+
+# Task Queue
+celery==5.4.0
+redis==5.2.1
+
+# HTTP client
+httpx==0.28.0
+
+# Notebook execution
+papermill==2.6.0
+nbformat==5.10.4
+nbclient==0.10.1
+ipykernel==6.29.5
+
+# ML tracking
+mlflow==2.9.2
+
+# Structured logging
+structlog==24.4.0
+
+# ML libraries (needed by notebooks at execution time)
+scikit-learn==1.5.2
+joblib==1.4.2
+pandas==2.2.3
+numpy==1.26.4

@@ -1,0 +1,125 @@
+version: "3.9"
+
+services:
+  # ---------- Backend API ----------
+  backend:
+    build: ./backend
+    container_name: mlops-backend
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - DATABASE_URL=sqlite:///./mlops.db
+    volumes:
+      - mlops-models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---------- Celery Worker ----------
+  worker:
+    build: ./backend
+    container_name: mlops-worker
+    command: celery -A tasks.celery_tasks worker --loglevel=info -Q pipelines,celery --concurrency=2
+    env_file: .env
+    environment:
+      - DATABASE_URL=sqlite:///./mlops.db
+    volumes:
+      - mlops-models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
+  # ---------- Redis ----------
+  redis:
+    image: redis:7-alpine
+    container_name: mlops-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ---------- MLflow ----------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.9.2
+    container_name: mlops-mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:///mlflow/mlflow.db
+        --default-artifact-root /mlflow/artifacts
+    volumes:
+      - mlflow-data:/mlflow
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
+  # ---------- Model Server ----------
+  model-server:
+    build: ./model-server
+    container_name: mlops-model-server
+    ports:
+      - "8001:8001"
+    env_file: .env
+    volumes:
+      - mlops-models:/app/models
+    depends_on:
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: mlops-frontend
+    ports:
+      - "3000:80"
+    env_file: .env
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
+
+networks:
+  mlops-network:
+    driver: bridge
+
+volumes:
+  mlops-models:
+  mlflow-data:
+  redis-data:

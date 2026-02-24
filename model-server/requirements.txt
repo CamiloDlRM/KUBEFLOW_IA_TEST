@@ -1,0 +1,18 @@
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.34.0
+
+# Data validation & settings
+pydantic==2.10.0
+pydantic-settings==2.6.0
+
+# ML tracking (for artifact download)
+mlflow==2.9.2
+
+# Model loading
+scikit-learn==1.5.2
+joblib==1.4.2
+numpy==1.26.4
+
+# Structured logging
+structlog==24.4.0
