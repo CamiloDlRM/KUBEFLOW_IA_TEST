@@ -149,11 +149,7 @@ class TestGithubWebhook:
         self,
         test_app,
     ):
-        """Ping events should be ignored. Note: the webhook router has a bug
-        where ``logger.info("webhook.ignored_event", event=...)`` conflicts
-        with structlog's positional ``event`` parameter, causing a TypeError.
-        This test documents that bug -- the endpoint returns 500 instead of 200.
-        """
+        """Ping events should be acknowledged with 200 and an 'ignored' detail message."""
         body = json.dumps({"zen": "test"}).encode()
         sig = make_webhook_signature(body)
 
@@ -167,9 +163,8 @@ class TestGithubWebhook:
             },
         )
 
-        # BUG: Should be 200, but structlog 'event' kwarg clash causes 500.
-        # The HTTPException is raised with status 200 but logger.info() fails first.
-        assert resp.status_code == 500
+        assert resp.status_code == 200
+        assert "ignored" in resp.json()["detail"].lower()
 
     def test_receive_push_when_missing_signature_should_return_401(
         self,
