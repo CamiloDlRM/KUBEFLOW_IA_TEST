@@ -71,7 +71,6 @@ services:
     command: >
       mlflow server
         --host 0.0.0.0
-        --port 5000
         --backend-store-uri sqlite:///mlflow/mlflow.db
         --default-artifact-root /mlflow/artifacts
     volumes:
@@ -102,7 +101,11 @@ services:
       retries: 3
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+        - VITE_WS_URL=${VITE_WS_URL:-ws://localhost:8000}
     container_name: mlops-frontend
     ports:
       - "3000:80"
@@ -113,7 +116,6 @@ services:
     networks:
       - mlops-network
     restart: unless-stopped
-
 
 networks:
   mlops-network:

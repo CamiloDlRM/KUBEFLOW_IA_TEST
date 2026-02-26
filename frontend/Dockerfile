@@ -4,6 +4,10 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --frozen-lockfile || npm install
 COPY . .
+
+ARG VITE_API_URL
+ARG VITE_WS_URL
+
 RUN npm run build
 
 # Stage 2: Serve

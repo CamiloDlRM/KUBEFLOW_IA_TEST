@@ -66,7 +66,22 @@ async def create_webhook(
     }
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(url, json=payload, headers=_headers(token))
-        resp.raise_for_status()
+        if resp.status_code == 422:
+            # Webhook already exists — find and return it
+            list_resp = await client.get(url, headers=_headers(token))
+            list_resp.raise_for_status()
+            for hook in list_resp.json():
+                if hook.get("config", {}).get("url") == webhook_url:
+                    logger.info(
+                        "github.webhook_already_exists",
+                        owner=owner,
+                        repo=repo,
+                        hook_id=hook.get("id"),
+                    )
+                    return hook
+            resp.raise_for_status()
+        else:
+            resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         logger.info(
             "github.webhook_created",
