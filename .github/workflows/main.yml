@@ -26,6 +26,7 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       - name: Executting test
-        run: pytest backend/tests/ --cov=. --cov-report=term-missing -v
+        working-directory: backend
+        run: pytest tests/ --cov=. --cov-report=term-missing -v
                 
         
