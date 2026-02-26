@@ -76,6 +76,10 @@ class AppSettings(BaseSettings):
         default="http://localhost:3000",
         description="Frontend origin for CORS.",
     )
+    backend_public_url: str = Field(
+        default="http://localhost:8000",
+        description="Public URL of the backend, used to register GitHub webhooks.",
+    )
 
 
 @lru_cache(maxsize=1)
