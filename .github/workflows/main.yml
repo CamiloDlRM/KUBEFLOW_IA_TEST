@@ -1,0 +1,31 @@
+name: unit_and_integration_tests
+
+on:
+  push:
+    branches: [ dev ]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Updating and Installing dependencies
+        run: apt update && apt install python3 python3-pip -y
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+                        ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Executting test
+        run: pytest tests/ --cov=. --cov-report=term-missing -v
+                
+        
