@@ -41,6 +41,25 @@ def _headers(token: str) -> dict[str, str]:
     }
 
 
+async def _find_existing_webhook(
+    client: httpx.AsyncClient,
+    owner: str,
+    repo: str,
+    webhook_url: str,
+    token: str,
+) -> dict[str, Any] | None:
+    """Return the existing webhook for ``webhook_url``, or None."""
+    resp = await client.get(
+        f"{_GITHUB_API}/repos/{owner}/{repo}/hooks",
+        headers=_headers(token),
+    )
+    resp.raise_for_status()
+    for hook in resp.json():
+        if hook.get("config", {}).get("url") == webhook_url:
+            return hook
+    return None
+
+
 async def create_webhook(
     repo_url: str,
     token: str,
@@ -49,6 +68,7 @@ async def create_webhook(
 ) -> dict[str, Any]:
     """Create a push-event webhook on the repository.
 
+    If a webhook for ``webhook_url`` already exists, returns it without error.
     Returns the GitHub API response body (includes ``id``).
     """
     owner, repo = parse_repo_url(repo_url)
@@ -66,7 +86,39 @@ async def create_webhook(
     }
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(url, json=payload, headers=_headers(token))
-        resp.raise_for_status()
+
+        if resp.status_code == 422:
+            body = resp.json()
+            errors = body.get("errors", [])
+            if any(e.get("message") == "Hook already exists on this repository" for e in errors):
+                logger.info(
+                    "github.webhook_already_exists",
+                    owner=owner,
+                    repo=repo,
+                    webhook_url=webhook_url,
+                )
+                existing = await _find_existing_webhook(client, owner, repo, webhook_url, token)
+                if existing:
+                    return existing
+            logger.error(
+                "github.webhook_creation_http_error",
+                status=resp.status_code,
+                body=resp.text,
+                owner=owner,
+                repo=repo,
+            )
+            resp.raise_for_status()
+
+        if not resp.is_success:
+            logger.error(
+                "github.webhook_creation_http_error",
+                status=resp.status_code,
+                body=resp.text,
+                owner=owner,
+                repo=repo,
+            )
+            resp.raise_for_status()
+
         data: dict[str, Any] = resp.json()
         logger.info(
             "github.webhook_created",
