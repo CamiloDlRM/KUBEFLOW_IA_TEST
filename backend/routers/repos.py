@@ -55,9 +55,7 @@ async def create_repo(
             detail="A GitHub token is required (via body or GITHUB_TOKEN env).",
         )
 
-    webhook_url = f"{settings.frontend_url.rstrip('/')}/api/webhook/github"
-    # In production this would be the backend's public URL:
-    # webhook_url = f"https://your-domain.com/webhook/github"
+    webhook_url = f"{settings.backend_public_url.rstrip('/')}/webhook/github"
 
     try:
         hook_data = await create_webhook(
