@@ -58,8 +58,8 @@ class Pipeline(SQLModel, table=True):
     commit_sha: str = SQLField(default="")
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
-    phases: list[dict[str, Any]] = SQLField(default=[], sa_column=Column(JSON))
-    metrics: dict[str, Any] = SQLField(default={}, sa_column=Column(JSON))
+    phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
+    metrics: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class ModelDeployment(SQLModel, table=True):
