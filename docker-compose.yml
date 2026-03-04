@@ -98,6 +98,7 @@ services:
     env_file: .env
     volumes:
       - mlops-models:/app/models
+      - mlflow-data:/mlflow
     depends_on:
       mlflow:
         condition: service_started
