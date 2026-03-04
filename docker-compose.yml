@@ -42,6 +42,7 @@ services:
     volumes:
       - mlops-models:/app/models
       - mlops-db:/data
+      - mlflow-data:/mlflow
     depends_on:
       redis:
         condition: service_healthy
