@@ -131,6 +131,27 @@ async def github_webhook(
             detail="No notebook files modified in this push.",
         )
 
+    # Deduplication: skip if an identical run is already queued or running
+    existing = session.exec(
+        select(Pipeline).where(
+            Pipeline.repo_id == repo.id,
+            Pipeline.commit_sha == commit_sha,
+            Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
+        )
+    ).first()
+
+    if existing:
+        logger.info(
+            "webhook.duplicate_pipeline_skipped",
+            existing_pipeline_id=existing.id,
+            repo_id=repo.id,
+            commit_sha=commit_sha,
+        )
+        return WebhookAccepted(
+            status="already_queued",
+            pipeline_id=existing.id,
+        )
+
     # Create pipeline record
     pipeline = Pipeline(
         repo_id=repo.id,  # type: ignore[arg-type]

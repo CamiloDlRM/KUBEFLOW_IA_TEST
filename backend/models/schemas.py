@@ -40,7 +40,7 @@ class Repository(SQLModel, table=True):
         description="Masked token stored for display only (last 4 chars).",
     )
     branch: str = SQLField(default="main")
-    notebook_path: str = SQLField(default="notebooks/train.ipynb")
+    notebook_path: str = SQLField(description="Path to the notebook file within the repository.")
     webhook_id: int | None = SQLField(default=None)
     webhook_url: str | None = SQLField(default=None)
     created_at: datetime = SQLField(default_factory=_utcnow)
@@ -105,7 +105,7 @@ class RepoCreateRequest(BaseModel):
     github_url: str = Field(..., examples=["https://github.com/user/repo"])
     github_token: str = Field(default="", description="Optional override token.")
     branch: str = Field(default="main")
-    notebook_path: str = Field(default="notebooks/train.ipynb")
+    notebook_path: str = Field(..., description="Path to the notebook file within the repository (e.g. 'train.ipynb' or 'notebooks/train.ipynb').")
 
 
 class PredictRequest(BaseModel):
@@ -206,7 +206,7 @@ class WebhookAccepted(BaseModel):
 class ModelDeploymentResponse(BaseModel):
     """Deployed model read representation."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     model_name: str
     version: str
@@ -233,6 +233,8 @@ class HealthResponse(BaseModel):
 
 class ReadyResponse(BaseModel):
     """Readiness check response."""
+
+    model_config = ConfigDict(protected_namespaces=())
 
     status: str
     redis: str

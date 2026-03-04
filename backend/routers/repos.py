@@ -48,6 +48,14 @@ async def create_repo(
     """
     from core.github import create_webhook
 
+    # Validate notebook_path is not empty/whitespace-only
+    clean_notebook_path = body.notebook_path.strip().strip("/")
+    if not clean_notebook_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="notebook_path must not be empty.",
+        )
+
     token = body.github_token or settings.github_token
     if not token:
         raise HTTPException(

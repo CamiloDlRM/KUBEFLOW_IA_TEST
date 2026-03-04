@@ -217,17 +217,35 @@ def run_pipeline(
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
+        # Sanitise notebook_path: strip leading/trailing slashes to avoid
+        # double-slash in the URL (e.g. /contents//?ref=main).
+        clean_nb_path = repo.notebook_path.strip("/")
+        if not clean_nb_path:
+            raise ValueError(
+                f"Repository {repo_id} has an empty notebook_path. "
+                "A valid notebook_path is required (e.g. 'train.ipynb' or 'notebooks/train.ipynb')."
+            )
         nb_url = (
             f"https://api.github.com/repos/{owner}/{repo_name}"
-            f"/contents/{repo.notebook_path}"
+            f"/contents/{clean_nb_path}"
         )
         resp = httpx.get(
             nb_url,
             headers=headers,
             params={"ref": repo.branch},
             timeout=60,
+            follow_redirects=True,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise ValueError(
+                    f"Notebook not found at '{clean_nb_path}' in repo "
+                    f"{owner}/{repo_name} (branch: {repo.branch}). "
+                    f"Check the notebook_path setting for repository {repo_id}."
+                ) from exc
+            raise
         nb_content = base64.b64decode(resp.json()["content"])
         notebook = json.loads(nb_content)
         _phase("download", "success")
@@ -253,6 +271,8 @@ def run_pipeline(
         _phase("execute", "running")
         log.info("pipeline.phase.execute.start")
 
+        import mlflow
+
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, "input.ipynb")
             output_path = os.path.join(tmpdir, "output.ipynb")
@@ -262,7 +282,25 @@ def run_pipeline(
             with open(input_path, "w") as f:
                 json.dump(notebook, f)
 
-            # Execute with papermill
+            # Start the MLflow run BEFORE papermill so the notebook logs
+            # metrics into this same run (avoids the 0.0 accuracy bug).
+            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+            mlflow.set_experiment(f"mlops-{model_name}")
+            mlflow_run = mlflow.start_run(run_name=f"{model_name}-{pipeline_id[:8]}")
+            mlflow_run_id = mlflow_run.info.run_id
+
+            mlflow.set_tag("pipeline_id", pipeline_id)
+            mlflow.set_tag("commit_sha", commit_sha)
+            mlflow.set_tag("model_name", model_name)
+            mlflow.set_tag("version", model_version)
+
+            log.info(
+                "pipeline.mlflow_run.started",
+                mlflow_run_id=mlflow_run_id,
+            )
+
+            # Execute with papermill — pass run_id so the notebook
+            # logs metrics into the same MLflow run.
             pm.execute_notebook(
                 input_path,
                 output_path,
@@ -270,6 +308,7 @@ def run_pipeline(
                     "MODEL_OUTPUT_PATH": model_output_path,
                     "PIPELINE_ID": pipeline_id,
                     "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri,
+                    "MLFLOW_RUN_ID": mlflow_run_id,
                 },
                 cwd=tmpdir,
             )
@@ -296,34 +335,27 @@ def run_pipeline(
                 raise SystemExit("Worker shutting down")
 
             # Phase 4: Register in MLflow
+            # Re-use the run that was started before papermill — the
+            # notebook already logged metrics (accuracy, etc.) into it.
             _phase("register", "running")
             log.info("pipeline.phase.register.start")
 
-            import mlflow
+            # Log model artifact if it exists
+            if os.path.exists(model_output_path):
+                mlflow.log_artifact(model_output_path, artifact_path="model")
 
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-            mlflow.set_experiment(f"mlops-{model_name}")
+            # Read metrics that the notebook logged into this run
+            try:
+                client = mlflow.tracking.MlflowClient()
+                run_data = client.get_run(mlflow_run_id).data
+                metrics = dict(run_data.metrics)
+            except Exception:
+                metrics = {}
 
-            with mlflow.start_run(run_name=f"{model_name}-{pipeline_id[:8]}") as run:
-                mlflow.set_tag("pipeline_id", pipeline_id)
-                mlflow.set_tag("commit_sha", commit_sha)
-                mlflow.set_tag("model_name", model_name)
-                mlflow.set_tag("version", model_version)
+            accuracy = metrics.get("accuracy", 0.0)
 
-                # Log model artifact if it exists
-                if os.path.exists(model_output_path):
-                    mlflow.log_artifact(model_output_path, artifact_path="model")
-
-                # Read metrics from output notebook (look for mlflow logged metrics)
-                try:
-                    client = mlflow.tracking.MlflowClient()
-                    run_data = client.get_run(run.info.run_id).data
-                    metrics = dict(run_data.metrics)
-                except Exception:
-                    metrics = {}
-
-                accuracy = metrics.get("accuracy", 0.0)
-                mlflow_run_id = run.info.run_id
+            # End the MLflow run
+            mlflow.end_run()
 
             _phase("register", "success")
             log.info(
