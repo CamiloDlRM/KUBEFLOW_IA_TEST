@@ -293,6 +293,16 @@ def run_pipeline(
             # on an active run context.
             mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
             mlflow.set_experiment(f"mlops-{model_name}")
+
+            # Guard: end any lingering active run left by a previous task
+            # in this reused worker process (Celery forks share global state).
+            if mlflow.active_run():
+                log.warning(
+                    "pipeline.mlflow.stale_run_cleanup",
+                    stale_run_id=mlflow.active_run().info.run_id,
+                )
+                mlflow.end_run()
+
             mlflow_run = mlflow.start_run(run_name=f"{model_name}-{pipeline_id[:8]}")
             mlflow_run_id = mlflow_run.info.run_id
 
