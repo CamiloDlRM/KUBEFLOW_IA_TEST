@@ -88,18 +88,15 @@ async def create_webhook(
         resp = await client.post(url, json=payload, headers=_headers(token))
 
         if resp.status_code == 422:
-            body = resp.json()
-            errors = body.get("errors", [])
-            if any(e.get("message") == "Hook already exists on this repository" for e in errors):
-                logger.info(
-                    "github.webhook_already_exists",
-                    owner=owner,
-                    repo=repo,
-                    webhook_url=webhook_url,
-                )
-                existing = await _find_existing_webhook(client, owner, repo, webhook_url, token)
-                if existing:
-                    return existing
+            logger.info(
+                "github.webhook_already_exists",
+                owner=owner,
+                repo=repo,
+                webhook_url=webhook_url,
+            )
+            existing = await _find_existing_webhook(client, owner, repo, webhook_url, token)
+            if existing:
+                return existing
             logger.error(
                 "github.webhook_creation_http_error",
                 status=resp.status_code,
