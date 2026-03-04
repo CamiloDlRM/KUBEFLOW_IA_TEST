@@ -284,15 +284,23 @@ def run_pipeline(
 
             # Start the MLflow run BEFORE papermill so the notebook logs
             # metrics into this same run (avoids the 0.0 accuracy bug).
+            #
+            # IMPORTANT: We use MlflowClient for all post-papermill
+            # operations (log_artifact, set_tag, get_run) because the
+            # notebook's `with mlflow.start_run(run_id=...)` block calls
+            # mlflow.end_run() when it exits, which closes our active run.
+            # MlflowClient operates by run_id directly and does not depend
+            # on an active run context.
             mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
             mlflow.set_experiment(f"mlops-{model_name}")
             mlflow_run = mlflow.start_run(run_name=f"{model_name}-{pipeline_id[:8]}")
             mlflow_run_id = mlflow_run.info.run_id
 
-            mlflow.set_tag("pipeline_id", pipeline_id)
-            mlflow.set_tag("commit_sha", commit_sha)
-            mlflow.set_tag("model_name", model_name)
-            mlflow.set_tag("version", model_version)
+            client = mlflow.tracking.MlflowClient()
+            client.set_tag(mlflow_run_id, "pipeline_id", pipeline_id)
+            client.set_tag(mlflow_run_id, "commit_sha", commit_sha)
+            client.set_tag(mlflow_run_id, "model_name", model_name)
+            client.set_tag(mlflow_run_id, "version", model_version)
 
             log.info(
                 "pipeline.mlflow_run.started",
@@ -340,13 +348,25 @@ def run_pipeline(
             _phase("register", "running")
             log.info("pipeline.phase.register.start")
 
-            # Log model artifact if it exists
+            # Log model artifact via MlflowClient (run_id-based, does not
+            # require an active run context — safe after papermill ends the
+            # run the notebook opened with `with mlflow.start_run()`).
             if os.path.exists(model_output_path):
-                mlflow.log_artifact(model_output_path, artifact_path="model")
+                client.log_artifact(mlflow_run_id, model_output_path, artifact_path="model")
+                log.info(
+                    "pipeline.artifact.logged",
+                    mlflow_run_id=mlflow_run_id,
+                    artifact=model_output_path,
+                )
+            else:
+                log.warning(
+                    "pipeline.artifact.missing",
+                    mlflow_run_id=mlflow_run_id,
+                    expected_path=model_output_path,
+                )
 
             # Read metrics that the notebook logged into this run
             try:
-                client = mlflow.tracking.MlflowClient()
                 run_data = client.get_run(mlflow_run_id).data
                 metrics = dict(run_data.metrics)
             except Exception:
@@ -354,8 +374,12 @@ def run_pipeline(
 
             accuracy = metrics.get("accuracy", 0.0)
 
-            # End the MLflow run
-            mlflow.end_run()
+            # Ensure the MLflow run is terminated (no-op if already ended
+            # by the notebook).
+            try:
+                client.set_terminated(mlflow_run_id)
+            except Exception:
+                pass
 
             _phase("register", "success")
             log.info(
