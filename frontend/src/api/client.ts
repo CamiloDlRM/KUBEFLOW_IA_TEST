@@ -4,6 +4,7 @@ import type {
   CreateRepoPayload,
   Pipeline,
   PaginatedPipelines,
+  PipelineLogsResponse,
   ModelDeployment,
   PredictionResult,
   HealthResponse,
@@ -72,8 +73,8 @@ export async function getPipeline(pipelineId: string): Promise<Pipeline> {
   return data;
 }
 
-export async function getPipelineLogs(pipelineId: string): Promise<string[]> {
-  const { data } = await apiClient.get<string[]>(
+export async function getPipelineLogs(pipelineId: string): Promise<PipelineLogsResponse> {
+  const { data } = await apiClient.get<PipelineLogsResponse>(
     `/pipelines/${pipelineId}/logs`,
   );
   return data;
@@ -130,7 +131,7 @@ export async function getReady(): Promise<ReadyResponse> {
 
 export function getWsUrl(pipelineId: string): string {
   const base = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
-  return `${base}/ws/pipelines/${pipelineId}/logs`;
+  return `${base}/pipelines/${pipelineId}/ws`;
 }
 
 export default apiClient;

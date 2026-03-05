@@ -64,6 +64,11 @@ export interface WebSocketLogMessage {
   timestamp: string;
 }
 
+export interface PipelineLogsResponse {
+  pipeline_id: string;
+  logs: WebSocketLogMessage[];
+}
+
 export interface ModelDeployment {
   model_name: string;
   version: string;

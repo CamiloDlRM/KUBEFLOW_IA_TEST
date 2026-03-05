@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { usePipeline, useRepos } from '../hooks/usePipelines';
+import { usePipeline, useRepos, usePipelineLogs } from '../hooks/usePipelines';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { getWsUrl } from '../api/client';
 import PipelineStatusBadge from '../components/PipelineStatus';
@@ -8,7 +8,7 @@ import LogViewer from '../components/LogViewer';
 import MetricsChart from '../components/MetricsChart';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, truncate, repoNameFromUrl } from '../utils/format';
-import type { PhaseStatus } from '../types';
+import type { PhaseStatus, WebSocketLogMessage, ConnectionStatus } from '../types';
 import { getPipelines } from '../api/client';
 
 const PHASE_ORDER = ['download', 'validate', 'execute', 'register', 'deploy'];
@@ -27,8 +27,12 @@ export default function PipelineDetail() {
 
   // WebSocket for live logs - only connect when pipeline is running/queued
   const shouldStream = pipeline?.status === 'running' || pipeline?.status === 'queued';
+  const isFinished = pipeline?.status === 'success' || pipeline?.status === 'failed';
   const wsUrl = id && shouldStream ? getWsUrl(id) : null;
   const { messages, status: wsStatus } = useWebSocket(wsUrl);
+
+  // Fetch historical logs via REST for completed pipelines
+  const { data: historicalLogsData, isLoading: isLogsLoading } = usePipelineLogs(id, isFinished);
 
   // Fetch historical pipelines for the same repo for MetricsChart
   const { data: historyPage } = useQuery({
@@ -76,6 +80,12 @@ export default function PipelineDetail() {
       label: truncate(p.id, 6),
       metrics: p.metrics,
     }));
+
+  // Determine which logs to show
+  const logsToShow: WebSocketLogMessage[] = shouldStream
+    ? messages
+    : (historicalLogsData?.logs ?? []);
+  const displayStatus: ConnectionStatus = shouldStream ? wsStatus : 'disconnected';
 
   // Model endpoint info
   const isDeployed = pipeline.status === 'success' && pipeline.metrics.deployed;
@@ -153,8 +163,21 @@ export default function PipelineDetail() {
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
           Logs
         </h3>
-        <LogViewer messages={messages} status={wsStatus} />
-        {!shouldStream && messages.length === 0 && (
+        {isFinished && isLogsLoading ? (
+          <div className="flex items-center gap-2 py-8 text-sm text-slate-400">
+            <Spinner size="md" />
+            Loading logs...
+          </div>
+        ) : (
+          <LogViewer messages={logsToShow} status={displayStatus} />
+        )}
+        {shouldStream && messages.length === 0 && (
+          <p className="mt-2 text-xs text-slate-500">Connecting to live log stream...</p>
+        )}
+        {isFinished && logsToShow.length === 0 && !isLogsLoading && (
+          <p className="mt-2 text-xs text-slate-500">No logs were recorded for this pipeline run.</p>
+        )}
+        {!shouldStream && !isFinished && (
           <p className="mt-2 text-xs text-slate-500">
             Live log streaming is available while the pipeline is running. The pipeline is currently {pipeline.status}.
           </p>
