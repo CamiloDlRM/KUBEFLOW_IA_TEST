@@ -109,7 +109,7 @@ async def get_pipeline_logs(
     return PipelineLogsResponse(pipeline_id=pipeline_id, logs=logs)
 
 
-@router.websocket("/ws/pipelines/{pipeline_id}/logs")
+@router.websocket("/{pipeline_id}/ws")
 async def ws_pipeline_logs(
     websocket: WebSocket,
     pipeline_id: str,
