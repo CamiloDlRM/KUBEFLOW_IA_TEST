@@ -38,6 +38,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Installing dependencies
+        working-directory: frontend
+        run: npm install 
+
       - name: Executing the frontend test with coverage
         working-directory: frontend
         run: npm run test:coverage
