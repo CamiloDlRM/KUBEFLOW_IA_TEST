@@ -63,18 +63,17 @@ function LogEntry({ msg }: { msg: WebSocketLogMessage }) {
     if (nonEmpty.length === 0) return null;
     return (
       <>
-        {nonEmpty.map((c) =>
-          c.output
-            .trimEnd()
-            .split('\n')
-            .map((line, li) => (
-              <div key={`${c.cell}-${li}`} className="flex gap-2">
-                <span className="shrink-0 text-slate-600">{li === 0 ? time : ''}</span>
-                <span className={`shrink-0 w-20 ${color}`}>{li === 0 ? `[cell ${c.cell}]` : ''}</span>
-                <span className="text-slate-300 whitespace-pre">{line}</span>
-              </div>
-            ))
-        )}
+        {nonEmpty.map((c) => (
+          <div key={c.cell} className="mb-2">
+            <div className="flex gap-2">
+              <span className="shrink-0 text-slate-600">{time}</span>
+              <span className={`shrink-0 ${color}`}>[execute][cell {c.cell}]</span>
+            </div>
+            <pre className="mt-0.5 ml-6 pl-2 border-l border-slate-700 text-slate-300 whitespace-pre overflow-x-auto leading-relaxed text-xs">
+              {c.output.trimEnd()}
+            </pre>
+          </div>
+        ))}
       </>
     );
   }
@@ -82,7 +81,7 @@ function LogEntry({ msg }: { msg: WebSocketLogMessage }) {
   return (
     <div className="flex gap-2">
       <span className="shrink-0 text-slate-600">{time}</span>
-      <span className={`shrink-0 w-20 ${color}`}>[{msg.phase}]</span>
+      <span className={`shrink-0 w-24 ${color}`}>[{msg.phase}]</span>
       <span className={color}>{msg.logs}</span>
     </div>
   );
