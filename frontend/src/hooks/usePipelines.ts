@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getRepos, getPipelines, getPipeline, getReady } from '../api/client';
+import { getRepos, getPipelines, getPipeline, getReady, getPipelineLogs } from '../api/client';
 
 export function useRepos() {
   return useQuery({
@@ -29,6 +29,15 @@ export function usePipeline(id: string | undefined) {
       }
       return false;
     },
+  });
+}
+
+export function usePipelineLogs(id: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['pipeline-logs', id],
+    queryFn: () => getPipelineLogs(id!),
+    enabled: Boolean(id) && enabled,
+    staleTime: 30_000,
   });
 }
 

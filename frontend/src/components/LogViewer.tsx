@@ -20,10 +20,72 @@ const statusLabels: Record<ConnectionStatus, string> = {
   reconnecting: 'Reconnecting...',
 };
 
-function logLevelColor(phase: string, logStatus: string): string {
+interface CellOutput {
+  cell: number;
+  output: string;
+}
+
+function parseCellOutputs(logs: string): CellOutput[] | null {
+  try {
+    const parsed = JSON.parse(logs);
+    if (Array.isArray(parsed) && parsed.length > 0 && 'cell' in parsed[0]) {
+      return parsed as CellOutput[];
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+function phaseColor(phase: string, logStatus: string): string {
   if (logStatus === 'failed') return 'text-red-400';
-  if (phase === 'complete') return 'text-emerald-400';
-  return 'text-slate-300';
+  switch (phase) {
+    case 'download': return 'text-sky-400';
+    case 'validate': return 'text-violet-400';
+    case 'execute':  return 'text-slate-300';
+    case 'register': return 'text-amber-400';
+    case 'deploy':   return logStatus === 'success' ? 'text-emerald-400' : 'text-sky-400';
+    case 'complete': return 'text-emerald-400';
+    case 'error':    return 'text-red-400';
+    default:         return 'text-slate-300';
+  }
+}
+
+function LogEntry({ msg }: { msg: WebSocketLogMessage }) {
+  if (!msg.logs || !msg.logs.trim()) return null;
+
+  const time = new Date(msg.timestamp).toLocaleTimeString();
+  const cellOutputs = parseCellOutputs(msg.logs);
+  const color = phaseColor(msg.phase, msg.status);
+
+  if (cellOutputs) {
+    const nonEmpty = cellOutputs.filter((c) => c.output.trim());
+    if (nonEmpty.length === 0) return null;
+    return (
+      <>
+        {nonEmpty.map((c) =>
+          c.output
+            .trimEnd()
+            .split('\n')
+            .map((line, li) => (
+              <div key={`${c.cell}-${li}`} className="flex gap-2">
+                <span className="shrink-0 text-slate-600">{li === 0 ? time : ''}</span>
+                <span className={`shrink-0 w-20 ${color}`}>{li === 0 ? `[cell ${c.cell}]` : ''}</span>
+                <span className="text-slate-300 whitespace-pre">{line}</span>
+              </div>
+            ))
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="flex gap-2">
+      <span className="shrink-0 text-slate-600">{time}</span>
+      <span className={`shrink-0 w-20 ${color}`}>[{msg.phase}]</span>
+      <span className={color}>{msg.logs}</span>
+    </div>
+  );
 }
 
 export default function LogViewer({ messages, status }: LogViewerProps) {
@@ -59,17 +121,7 @@ export default function LogViewer({ messages, status }: LogViewerProps) {
         {messages.length === 0 ? (
           <p className="text-slate-500">Waiting for log output...</p>
         ) : (
-          messages.map((msg, i) => (
-            <div key={i} className="flex gap-2">
-              <span className="shrink-0 text-slate-600">
-                {new Date(msg.timestamp).toLocaleTimeString()}
-              </span>
-              <span className="shrink-0 w-20 text-slate-500">[{msg.phase}]</span>
-              <span className={logLevelColor(msg.phase, msg.status)}>
-                {msg.logs}
-              </span>
-            </div>
-          ))
+          messages.map((msg, i) => <LogEntry key={i} msg={msg} />)
         )}
       </div>
     </div>
