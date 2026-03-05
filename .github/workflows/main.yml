@@ -28,5 +28,18 @@ jobs:
       - name: Executting test
         working-directory: backend
         run: pytest tests/ --cov=. --cov-report=term-missing -v
+        
+  test-frontend:
+    runs-on: ubuntu-22.04
+    container:
+      image: node:18-alpine
+    needs: test-backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Executing the frontend test with coverage
+        working-directory: frontend
+        run: npm run test:coverage
                 
         
