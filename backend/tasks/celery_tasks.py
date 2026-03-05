@@ -197,7 +197,7 @@ def run_pipeline(
         )
 
         # Phase 1: Download notebook
-        _phase("download", "running")
+        _phase("download", "running", "Downloading notebook from GitHub...")
         log.info("pipeline.phase.download.start")
 
         with Session(engine) as session:
@@ -248,27 +248,27 @@ def run_pipeline(
             raise
         nb_content = base64.b64decode(resp.json()["content"])
         notebook = json.loads(nb_content)
-        _phase("download", "success")
+        _phase("download", "success", f"Notebook '{clean_nb_path}' downloaded successfully from {owner}/{repo_name}@{repo.branch}")
         log.info("pipeline.phase.download.done")
 
         if _shutting_down:
             raise SystemExit("Worker shutting down")
 
         # Phase 2: Validate tags
-        _phase("validate", "running")
+        _phase("validate", "running", "Validating notebook tags and configuration...")
         log.info("pipeline.phase.validate.start")
         validate_required_tags(notebook)
         config = extract_config(notebook)
         model_name = config["model_name"]
         model_version = config["version"]
-        _phase("validate", "success")
+        _phase("validate", "success", f"Notebook validated. Model: {model_name} v{model_version}")
         log.info("pipeline.phase.validate.done", model_name=model_name)
 
         if _shutting_down:
             raise SystemExit("Worker shutting down")
 
         # Phase 3: Execute notebook with papermill
-        _phase("execute", "running")
+        _phase("execute", "running", "Executing notebook with papermill...")
         log.info("pipeline.phase.execute.start")
 
         import mlflow
@@ -355,7 +355,7 @@ def run_pipeline(
             # Phase 4: Register in MLflow
             # Re-use the run that was started before papermill — the
             # notebook already logged metrics (accuracy, etc.) into it.
-            _phase("register", "running")
+            _phase("register", "running", "Registering model artifact in MLflow...")
             log.info("pipeline.phase.register.start")
 
             # Log model artifact via MlflowClient (run_id-based, does not
@@ -391,7 +391,7 @@ def run_pipeline(
             except Exception:
                 pass
 
-            _phase("register", "success")
+            _phase("register", "success", f"Model registered in MLflow run {mlflow_run_id}. Accuracy: {accuracy:.4f}")
             log.info(
                 "pipeline.phase.register.done",
                 mlflow_run_id=mlflow_run_id,
@@ -404,7 +404,7 @@ def run_pipeline(
                 settings.auto_deploy_on_success
                 and accuracy >= settings.min_accuracy_threshold
             ):
-                _phase("deploy", "running")
+                _phase("deploy", "running", f"Deploying model '{model_name}' to model server...")
                 log.info("pipeline.phase.deploy.start", accuracy=accuracy)
 
                 try:
@@ -448,7 +448,7 @@ def run_pipeline(
                         session.commit()
 
                     deployed = True
-                    _phase("deploy", "success")
+                    _phase("deploy", "success", f"Model deployed successfully. Endpoint: {endpoint_url}")
                     log.info("pipeline.phase.deploy.done", endpoint_url=endpoint_url)
                 except Exception as exc:
                     _phase("deploy", "failed", str(exc))
@@ -466,7 +466,7 @@ def run_pipeline(
             metrics=metrics,
             finished_at=datetime.now(timezone.utc),
         )
-        _publish_phase(pipeline_id, "complete", "success")
+        _publish_phase(pipeline_id, "complete", "success", "Pipeline completed successfully.")
         log.info("pipeline.completed", metrics=metrics)
         return {"status": "success", "metrics": metrics}
 
