@@ -74,17 +74,17 @@ const steps = [
 
 export function PipelineFlow() {
   return (
-    <section className="w-full flex justify-center bg-[#09090b]" id="arquitectura">
+    <section className="w-full flex justify-center bg-white dark:bg-[#09090b] transition-colors duration-300" id="arquitectura">
       <div className="max-w-[1200px] w-full px-6 py-24 flex flex-col items-center">
-        <h2 className="text-3xl font-bold text-white mb-16">
+        <h2 className="text-3xl font-bold text-zinc-900 dark:text-white mb-16">
           ¿Cómo Funciona?
         </h2>
 
         <div className="flex flex-col md:flex-row items-center justify-between w-full max-w-5xl relative">
           {/* Connecting line - Desktop */}
-          <div className="hidden md:block absolute top-8 left-8 right-8 h-0.5 bg-[#27272a]" />
+          <div className="hidden md:block absolute top-8 left-8 right-8 h-0.5 bg-zinc-200 dark:bg-[#27272a]" />
           {/* Connecting line - Mobile */}
-          <div className="md:hidden absolute left-1/2 top-8 bottom-8 w-0.5 bg-[#27272a] -translate-x-1/2" />
+          <div className="md:hidden absolute left-1/2 top-8 bottom-8 w-0.5 bg-zinc-200 dark:bg-[#27272a] -translate-x-1/2" />
 
           {steps.map((step, i) => (
             <div
@@ -93,12 +93,12 @@ export function PipelineFlow() {
                 i < steps.length - 1 ? "mb-10 md:mb-0" : ""
               }`}
             >
-              <div className="bg-[#09090b] p-1">
+              <div className="bg-white dark:bg-[#09090b] p-1">
                 <div
                   className={`w-16 h-16 rounded-full flex items-center justify-center ${
                     step.active
-                      ? "bg-white text-[#09090b] shadow-[0_0_30px_rgba(255,255,255,0.3)]"
-                      : "bg-[#18181b] text-white border border-[#27272a]"
+                      ? "bg-zinc-900 dark:bg-white text-white dark:text-[#09090b] shadow-[0_0_30px_rgba(0,0,0,0.15)] dark:shadow-[0_0_30px_rgba(255,255,255,0.3)]"
+                      : "bg-zinc-100 dark:bg-[#18181b] text-zinc-700 dark:text-white border border-zinc-200 dark:border-[#27272a]"
                   }`}
                 >
                   {step.icon}
@@ -106,12 +106,12 @@ export function PipelineFlow() {
               </div>
               <span
                 className={`text-sm font-medium ${
-                  step.active ? "text-white font-bold" : "text-[#a1a1aa]"
+                  step.active ? "text-zinc-900 dark:text-white font-bold" : "text-zinc-500 dark:text-[#a1a1aa]"
                 }`}
               >
                 {step.name}
               </span>
-              <span className="text-xs text-[#52525b] max-w-[100px] text-center">
+              <span className="text-xs text-zinc-400 dark:text-[#52525b] max-w-[100px] text-center">
                 {step.description}
               </span>
             </div>

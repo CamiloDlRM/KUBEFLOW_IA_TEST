@@ -8,13 +8,23 @@
     height: 8px;
   }
   ::-webkit-scrollbar-track {
-    background: rgb(15 23 42);
+    background: rgb(244 244 245);
   }
   ::-webkit-scrollbar-thumb {
-    background: rgb(51 65 85);
+    background: rgb(212 212 216);
     border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
+    background: rgb(161 161 170);
+  }
+
+  .dark ::-webkit-scrollbar-track {
+    background: rgb(15 23 42);
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgb(51 65 85);
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
     background: rgb(71 85 105);
   }
 }

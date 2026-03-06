@@ -8,18 +8,19 @@ import { FeatureCards } from '@/components/landing/FeatureCards';
 import { TechStack } from '@/components/landing/TechStack';
 import { Footer } from '@/components/landing/Footer';
 import { AnimatedSection } from '@/components/landing/AnimatedSection';
+import { ThemeProvider } from '@/hooks/useTheme';
 
 export default function Landing() {
   const [showIntro, setShowIntro] = useState(true);
 
   return (
-    <>
+    <ThemeProvider>
       {showIntro && <IntroSplash onComplete={() => setShowIntro(false)} />}
 
       <AnimatePresence>
         {!showIntro && (
           <motion.div
-            className="min-h-screen bg-[#09090b] text-white font-['Inter',sans-serif]"
+            className="min-h-screen bg-white dark:bg-[#09090b] text-zinc-900 dark:text-white font-['Inter',sans-serif] transition-colors duration-300"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6 }}
@@ -56,6 +57,6 @@ export default function Landing() {
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </ThemeProvider>
   );
 }

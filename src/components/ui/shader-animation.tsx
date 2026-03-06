@@ -1,3 +1,4 @@
+"use client"
 import { useEffect, useRef } from "react"
 import * as THREE from "three"
 
@@ -8,13 +9,7 @@ interface ShaderAnimationProps {
 export function ShaderAnimation({ onReady }: ShaderAnimationProps) {
   const onReadyCalledRef = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  const sceneRef = useRef<{
-    camera: THREE.Camera
-    scene: THREE.Scene
-    renderer: THREE.WebGLRenderer
-    uniforms: { time: { type: string; value: number }; resolution: { type: string; value: THREE.Vector2 } }
-    animationId: number
-  } | null>(null)
+  const sceneRef = useRef<{ camera: THREE.Camera; scene: THREE.Scene; renderer: THREE.WebGLRenderer; uniforms: any; animationId: number } | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -43,10 +38,7 @@ export function ShaderAnimation({ onReady }: ShaderAnimationProps) {
     camera.position.z = 1
     const scene = new THREE.Scene()
     const geometry = new THREE.PlaneGeometry(2, 2)
-    const uniforms = {
-      time: { type: "f", value: 1.0 },
-      resolution: { type: "v2", value: new THREE.Vector2() },
-    }
+    const uniforms = { time: { type: "f", value: 1.0 }, resolution: { type: "v2", value: new THREE.Vector2() } }
     const material = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader })
     const mesh = new THREE.Mesh(geometry, material)
     scene.add(mesh)
