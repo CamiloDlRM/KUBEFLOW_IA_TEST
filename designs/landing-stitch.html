@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MLOps Platform Landing Page</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ffffff",
+                        "background-light": "#f7f7f7",
+                        "background-dark": "#09090b",
+                        "surface": "rgba(28, 28, 30, 0.8)",
+                        "surface-border": "#2a2a2e",
+                        "text-muted": "#a1a1aa",
+                        "text-dim": "#52525b"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #09090b;
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display min-h-screen flex flex-col items-center">
+<!-- Navigation Bar -->
+<header class="fixed top-0 w-full z-50 bg-[#09090b]/80 backdrop-blur-md border-b border-[#27272a] flex justify-center">
+<div class="max-w-[1200px] w-full px-6 py-4 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">model_training</span>
+<span class="text-primary font-bold text-xl tracking-tight">MLOps Platform</span>
+</div>
+<nav class="hidden md:flex items-center gap-8">
+<a class="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#caracteristicas">Características</a>
+<a class="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#pipeline">Pipeline</a>
+<a class="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#tech-stack">Tech Stack</a>
+<a class="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#docs">Docs</a>
+</nav>
+</div>
+</header>
+<main class="w-full flex flex-col items-center pt-24 flex-1">
+<!-- Hero Section -->
+<section class="w-full max-w-[1200px] px-6 py-20 md:py-32 flex flex-col items-center text-center bg-gradient-to-b from-[#09090b] to-[#18181b] rounded-3xl mt-8" data-alt="Abstract dark gradient background for hero section" style="background-image: linear-gradient(180deg, #09090b 0%, #18181b 100%);">
+<h1 class="text-4xl md:text-6xl font-black text-primary max-w-4xl leading-tight tracking-tight mb-6">
+                Automatiza tus Pipelines de Machine Learning, del Notebook a Producción
+            </h1>
+<p class="text-text-muted text-lg md:text-xl max-w-2xl mb-10">
+                Plataforma end-to-end que ejecuta, valida, registra y despliega tus modelos automáticamente cuando haces push a GitHub
+            </p>
+<div class="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+<button class="bg-primary text-[#09090b] px-8 py-4 rounded-xl font-bold text-base hover:bg-gray-200 transition-colors">
+                    Comenzar Ahora
+                </button>
+<button class="bg-transparent text-primary border border-primary px-8 py-4 rounded-xl font-bold text-base hover:bg-white/10 transition-colors">
+                    Ver Documentación
+                </button>
+</div>
+</section>
+<!-- Pipeline Flow Section -->
+<section class="w-full max-w-[1200px] px-6 py-24 flex flex-col items-center" id="pipeline">
+<h2 class="text-3xl font-bold text-primary mb-16 self-start md:self-center">Flujo del Pipeline</h2>
+<div class="flex flex-col md:flex-row items-center justify-between w-full max-w-5xl relative">
+<!-- Connecting Line (Desktop) -->
+<div class="hidden md:block absolute top-1/2 left-0 w-full h-0.5 bg-[#27272a] -z-10 -translate-y-1/2"></div>
+<!-- Connecting Line (Mobile) -->
+<div class="md:hidden absolute left-1/2 top-0 h-full w-0.5 bg-[#27272a] -z-10 -translate-x-1/2"></div>
+<!-- Step 1: Push -->
+<div class="flex flex-col items-center gap-4 mb-10 md:mb-0 bg-background-dark p-2 relative">
+<div class="w-16 h-16 rounded-full bg-[#18181b] border border-[#27272a] flex items-center justify-center relative z-10">
+<span class="material-symbols-outlined text-primary">commit</span>
+</div>
+<span class="text-sm font-medium text-text-muted">Push</span>
+</div>
+<!-- Step 2: Descarga -->
+<div class="flex flex-col items-center gap-4 mb-10 md:mb-0 bg-background-dark p-2 relative">
+<div class="w-16 h-16 rounded-full bg-[#18181b] border border-[#27272a] flex items-center justify-center relative z-10">
+<span class="material-symbols-outlined text-primary">download</span>
+</div>
+<span class="text-sm font-medium text-text-muted">Descarga</span>
+</div>
+<!-- Step 3: Validación -->
+<div class="flex flex-col items-center gap-4 mb-10 md:mb-0 bg-background-dark p-2 relative">
+<div class="w-16 h-16 rounded-full bg-[#18181b] border border-[#27272a] flex items-center justify-center relative z-10">
+<span class="material-symbols-outlined text-primary">check_circle</span>
+</div>
+<span class="text-sm font-medium text-text-muted">Validación</span>
+</div>
+<!-- Step 4: Ejecución (Glow) -->
+<div class="flex flex-col items-center gap-4 mb-10 md:mb-0 bg-background-dark p-2 relative">
+<div class="w-16 h-16 rounded-full bg-primary flex items-center justify-center relative z-10 shadow-[0_0_30px_rgba(255,255,255,0.3)]">
+<span class="material-symbols-outlined text-[#09090b]">terminal</span>
+</div>
+<span class="text-sm font-bold text-primary">Ejecución</span>
+</div>
+<!-- Step 5: Registro -->
+<div class="flex flex-col items-center gap-4 mb-10 md:mb-0 bg-background-dark p-2 relative">
+<div class="w-16 h-16 rounded-full bg-[#18181b] border border-[#27272a] flex items-center justify-center relative z-10">
+<span class="material-symbols-outlined text-primary">database</span>
+</div>
+<span class="text-sm font-medium text-text-muted">Registro</span>
+</div>
+<!-- Step 6: Deploy -->
+<div class="flex flex-col items-center gap-4 bg-background-dark p-2 relative">
+<div class="w-16 h-16 rounded-full bg-[#18181b] border border-[#27272a] flex items-center justify-center relative z-10">
+<span class="material-symbols-outlined text-primary">rocket_launch</span>
+</div>
+<span class="text-sm font-medium text-text-muted">Deploy</span>
+</div>
+</div>
+</section>
+<!-- Features Section -->
+<section class="w-full max-w-[1200px] px-6 py-24" id="caracteristicas">
+<h2 class="text-3xl font-bold text-primary mb-12 text-center md:text-left">Características Principales</h2>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Card 1 -->
+<div class="bg-surface backdrop-blur-xl border border-surface-border rounded-2xl p-8 flex flex-col gap-4 hover:border-gray-500 transition-colors">
+<span class="material-symbols-outlined text-3xl text-primary">code_blocks</span>
+<h3 class="text-xl font-bold text-primary">Integración con GitHub</h3>
+<p class="text-text-muted leading-relaxed">Webhook automático al hacer push. Detecta cambios en tu repositorio y lanza el pipeline completo sin intervención manual.</p>
+</div>
+<!-- Card 2 -->
+<div class="bg-surface backdrop-blur-xl border border-surface-border rounded-2xl p-8 flex flex-col gap-4 hover:border-gray-500 transition-colors">
+<span class="material-symbols-outlined text-3xl text-primary">monitor_heart</span>
+<h3 class="text-xl font-bold text-primary">Monitoreo en Tiempo Real</h3>
+<p class="text-text-muted leading-relaxed">Logs en vivo via WebSocket. Observa cada fase del pipeline mientras se ejecuta con actualizaciones instantáneas.</p>
+</div>
+<!-- Card 3 -->
+<div class="bg-surface backdrop-blur-xl border border-surface-border rounded-2xl p-8 flex flex-col gap-4 hover:border-gray-500 transition-colors">
+<span class="material-symbols-outlined text-3xl text-primary">rocket</span>
+<h3 class="text-xl font-bold text-primary">Auto-Deploy Inteligente</h3>
+<p class="text-text-muted leading-relaxed">Deploy automático si accuracy &gt;= 0.70. Solo los modelos que superan el umbral llegan a producción.</p>
+</div>
+</div>
+</section>
+<!-- Tech Stack Section -->
+<section class="w-full max-w-[1200px] px-6 py-24 flex flex-col items-center border-t border-[#27272a]" id="tech-stack">
+<h2 class="text-xl font-medium text-text-dim mb-10 text-center uppercase tracking-widest">Desarrollado con las mejores tecnologías</h2>
+<div class="flex flex-wrap justify-center gap-12 md:gap-20 opacity-60 hover:opacity-100 transition-opacity duration-500">
+<div class="flex items-center gap-2"><span class="font-bold text-2xl tracking-tighter">FastAPI</span></div>
+<div class="flex items-center gap-2"><span class="font-bold text-2xl tracking-tighter">React</span></div>
+<div class="flex items-center gap-2"><span class="font-bold text-2xl tracking-tighter">MLflow</span></div>
+<div class="flex items-center gap-2"><span class="font-bold text-2xl tracking-tighter">Redis</span></div>
+<div class="flex items-center gap-2"><span class="font-bold text-2xl tracking-tighter">Docker</span></div>
+<div class="flex items-center gap-2"><span class="font-bold text-2xl tracking-tighter">Celery</span></div>
+</div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="w-full max-w-[1200px] px-6 py-8 border-t border-[#27272a] flex flex-col md:flex-row justify-between items-center gap-4 mt-auto">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-text-muted text-sm">model_training</span>
+<span class="text-text-muted text-sm">© 2026 MLOps Platform. Todos los derechos reservados.</span>
+</div>
+<div class="flex gap-6">
+<a class="text-text-muted hover:text-primary text-sm transition-colors" href="#">Privacidad</a>
+<a class="text-text-muted hover:text-primary text-sm transition-colors" href="#">Términos</a>
+<a class="text-text-muted hover:text-primary text-sm transition-colors" href="#">Contacto</a>
+</div>
+</footer>
+</body></html>

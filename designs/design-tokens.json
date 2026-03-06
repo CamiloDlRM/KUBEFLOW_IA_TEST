@@ -1,0 +1,207 @@
+{
+  "project": "MLOps Platform Landing Page",
+  "source": "Stitch (Google) - Gemini 3 Pro",
+  "screen": {
+    "id": "29b5cf378b504ac3b74edb781d2555f4",
+    "projectId": "10820607282221316363",
+    "width": 2560,
+    "height": 4088,
+    "deviceType": "DESKTOP"
+  },
+
+  "colors": {
+    "primary": "#ffffff",
+    "background": {
+      "dark": "#09090b",
+      "charcoal": "#18181b",
+      "surface": "rgba(28, 28, 30, 0.8)",
+      "light": "#f7f7f7"
+    },
+    "border": {
+      "default": "#27272a",
+      "surface": "#2a2a2e",
+      "hover": "#6b7280"
+    },
+    "text": {
+      "primary": "#ffffff",
+      "muted": "#a1a1aa",
+      "dim": "#52525b",
+      "inverted": "#09090b"
+    },
+    "button": {
+      "primaryBg": "#ffffff",
+      "primaryText": "#09090b",
+      "primaryHover": "#e5e7eb",
+      "secondaryBg": "transparent",
+      "secondaryBorder": "#ffffff",
+      "secondaryText": "#ffffff",
+      "secondaryHover": "rgba(255, 255, 255, 0.1)"
+    },
+    "pipeline": {
+      "activeGlow": "rgba(255, 255, 255, 0.3)",
+      "activeBg": "#ffffff",
+      "activeText": "#09090b",
+      "inactiveBg": "#18181b",
+      "inactiveBorder": "#27272a",
+      "inactiveText": "#a1a1aa"
+    }
+  },
+
+  "typography": {
+    "fontFamily": {
+      "display": ["Inter", "sans-serif"]
+    },
+    "fontWeights": {
+      "light": 300,
+      "regular": 400,
+      "medium": 500,
+      "bold": 700,
+      "black": 900
+    },
+    "sizes": {
+      "heroTitle": {
+        "mobile": "2.25rem",
+        "desktop": "3.75rem",
+        "lineHeight": "tight",
+        "letterSpacing": "tight",
+        "fontWeight": "black"
+      },
+      "heroSubtitle": {
+        "mobile": "1.125rem",
+        "desktop": "1.25rem",
+        "fontWeight": "regular"
+      },
+      "sectionTitle": {
+        "size": "1.875rem",
+        "fontWeight": "bold"
+      },
+      "techStackTitle": {
+        "size": "1.25rem",
+        "fontWeight": "medium",
+        "letterSpacing": "widest",
+        "textTransform": "uppercase"
+      },
+      "cardTitle": {
+        "size": "1.25rem",
+        "fontWeight": "bold"
+      },
+      "body": {
+        "size": "1rem",
+        "lineHeight": "relaxed"
+      },
+      "navLink": {
+        "size": "0.875rem",
+        "fontWeight": "medium"
+      },
+      "footerText": {
+        "size": "0.875rem"
+      }
+    }
+  },
+
+  "spacing": {
+    "page": {
+      "maxWidth": "1200px",
+      "paddingX": "1.5rem"
+    },
+    "sections": {
+      "paddingY": {
+        "hero": {
+          "mobile": "5rem",
+          "desktop": "8rem"
+        },
+        "default": "6rem"
+      }
+    },
+    "cards": {
+      "padding": "2rem",
+      "gap": "1.5rem"
+    },
+    "nav": {
+      "paddingX": "1.5rem",
+      "paddingY": "1rem",
+      "linkGap": "2rem"
+    },
+    "pipeline": {
+      "stepGap": "auto (justify-between)"
+    },
+    "techStack": {
+      "gap": {
+        "mobile": "3rem",
+        "desktop": "5rem"
+      }
+    }
+  },
+
+  "borderRadius": {
+    "default": "0.5rem",
+    "lg": "1rem",
+    "xl": "1.5rem",
+    "2xl": "1rem",
+    "3xl": "1.5rem",
+    "full": "9999px",
+    "button": "0.75rem",
+    "card": "1rem",
+    "hero": "1.5rem",
+    "pipelineStep": "9999px"
+  },
+
+  "shadows": {
+    "pipelineActiveGlow": "0 0 30px rgba(255, 255, 255, 0.3)",
+    "card": "none (glassmorphism via backdrop-blur)"
+  },
+
+  "effects": {
+    "glassmorphism": {
+      "background": "rgba(28, 28, 30, 0.8)",
+      "backdropFilter": "blur(24px)",
+      "border": "1px solid #2a2a2e"
+    },
+    "navbar": {
+      "background": "rgba(9, 9, 11, 0.8)",
+      "backdropFilter": "blur(12px)",
+      "borderBottom": "1px solid #27272a"
+    },
+    "heroGradient": {
+      "type": "linear-gradient",
+      "direction": "180deg",
+      "stops": ["#09090b 0%", "#18181b 100%"]
+    }
+  },
+
+  "transitions": {
+    "colors": "transition-colors (150ms ease)",
+    "opacity": "transition-opacity duration-500"
+  },
+
+  "icons": {
+    "library": "Material Symbols Outlined",
+    "cdn": "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap",
+    "mappings": {
+      "logo": "model_training",
+      "push": "commit",
+      "descarga": "download",
+      "validacion": "check_circle",
+      "ejecucion": "terminal",
+      "registro": "database",
+      "deploy": "rocket_launch",
+      "github": "code_blocks",
+      "monitoreo": "monitor_heart",
+      "autoDeploy": "rocket"
+    }
+  },
+
+  "breakpoints": {
+    "mobile": "< 768px",
+    "desktop": ">= 768px (md:)"
+  },
+
+  "tailwindConfig": {
+    "darkMode": "class",
+    "saturation": 3,
+    "colorMode": "DARK",
+    "customColor": "#ffffff",
+    "font": "INTER",
+    "roundness": "ROUND_TWELVE"
+  }
+}
