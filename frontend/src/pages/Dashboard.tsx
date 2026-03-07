@@ -6,20 +6,89 @@ import RepoCard from '../components/RepoCard';
 import PipelineStatus from '../components/PipelineStatus';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
-import type { Pipeline } from '../types';
+import type { Pipeline, Repository, ReadyResponse } from '../types';
+
+/* ---- Mock data for offline/no-backend mode ---- */
+const MOCK_HEALTH: ReadyResponse = {
+  status: 'ok',
+  redis: true,
+  mlflow: true,
+  model_server: false,
+};
+
+const MOCK_REPOS: Repository[] = [
+  {
+    id: 1,
+    github_url: 'https://github.com/acme/iris-training',
+    github_token_masked: '***',
+    branch: 'main',
+    notebook_path: 'notebooks/train.ipynb',
+    webhook_id: null,
+    webhook_url: null,
+    created_at: '2025-12-01T10:00:00Z',
+    is_active: true,
+  },
+  {
+    id: 2,
+    github_url: 'https://github.com/acme/sentiment-analysis',
+    github_token_masked: '***',
+    branch: 'develop',
+    notebook_path: 'notebooks/sentiment.ipynb',
+    webhook_id: null,
+    webhook_url: null,
+    created_at: '2025-12-15T14:30:00Z',
+    is_active: true,
+  },
+];
+
+const MOCK_PIPELINES: Pipeline[] = [
+  {
+    id: 'a1b2c3d4-success',
+    repo_id: 1,
+    status: 'success',
+    commit_sha: 'abc1234def5678',
+    started_at: '2025-12-20T08:00:00Z',
+    finished_at: '2025-12-20T08:12:30Z',
+    phases: [],
+    metrics: { accuracy: 0.95, deployed: true },
+  },
+  {
+    id: 'e5f6g7h8-running',
+    repo_id: 2,
+    status: 'running',
+    commit_sha: 'def5678abc1234',
+    started_at: new Date().toISOString(),
+    finished_at: null,
+    phases: [],
+    metrics: {},
+  },
+  {
+    id: 'i9j0k1l2-failed',
+    repo_id: 1,
+    status: 'failed',
+    commit_sha: '9876543210abcdef',
+    started_at: '2025-12-19T15:00:00Z',
+    finished_at: '2025-12-19T15:03:10Z',
+    phases: [],
+    metrics: {},
+  },
+];
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const { data: repos, isLoading: reposLoading, error: reposError } = useRepos();
+  const { data: reposData, isLoading: reposLoading, error: reposError } = useRepos();
   const { data: pipelinesPage, isLoading: pipelinesLoading, error: pipelinesError } = usePipelines(1, 5);
-  const { data: health } = useServiceHealth();
+  const { data: healthData } = useServiceHealth();
 
   const deleteMutation = useMutation({
     mutationFn: deleteRepo,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['repos'] }),
   });
 
-  const pipelines = pipelinesPage?.items ?? [];
+  // Fall back to mock data when backend is unavailable
+  const repos = reposData ?? (reposError ? MOCK_REPOS : undefined);
+  const pipelines = pipelinesPage?.items ?? (pipelinesError ? MOCK_PIPELINES : []);
+  const health = healthData ?? (reposError || pipelinesError ? MOCK_HEALTH : undefined);
 
   function handleDelete(repoId: number) {
     if (window.confirm('Are you sure you want to delete this repository?')) {
@@ -34,6 +103,13 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8">
+      {/* Mock data banner */}
+      {(reposError || pipelinesError) && (
+        <div className="rounded-lg border border-yellow-800 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
+          Backend unavailable — showing mock data for preview.
+        </div>
+      )}
+
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
@@ -75,7 +151,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {reposError && (
+        {reposError && !repos && (
           <ErrorBox message={(reposError as Error).message} />
         )}
 
@@ -117,7 +193,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {pipelinesError && (
+        {pipelinesError && pipelines.length === 0 && (
           <ErrorBox message={(pipelinesError as Error).message} />
         )}
 

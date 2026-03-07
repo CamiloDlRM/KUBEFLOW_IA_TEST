@@ -1,5 +1,6 @@
 import { motion, type Variants } from 'framer-motion';
 import { Suspense, lazy, useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useTheme } from '@/hooks/useTheme';
 
 const SplineScene = lazy(() =>
@@ -167,8 +168,8 @@ export function HeroSection() {
             animate="visible"
             custom={3}
           >
-            <a
-              href="#comenzar"
+            <Link
+              to="/login"
               className={`px-8 py-4 rounded-xl font-bold text-base transition-colors text-center ${
                 isDark
                   ? 'bg-[#fafafa] text-[#09090b] hover:bg-[#e5e7eb]'
@@ -176,7 +177,7 @@ export function HeroSection() {
               }`}
             >
               Comenzar Ahora
-            </a>
+            </Link>
             <a
               href="#docs"
               className={`bg-transparent px-8 py-4 rounded-xl font-bold text-base transition-colors text-center border ${

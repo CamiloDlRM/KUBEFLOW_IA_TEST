@@ -5,13 +5,38 @@ import type { ModelDeployment } from '../types';
 import Spinner from '../components/Spinner';
 import { formatDate } from '../utils/format';
 
+/* ---- Mock data for offline/no-backend mode ---- */
+const MOCK_MODELS: ModelDeployment[] = [
+  {
+    model_name: 'iris-classifier',
+    version: '1',
+    accuracy: 0.95,
+    endpoint_url: 'http://localhost:8001/v1/models/iris-classifier:predict',
+    deployed_at: '2025-12-20T08:15:00Z',
+    is_active: true,
+    pipeline_id: 'a1b2c3d4-success',
+  },
+  {
+    model_name: 'sentiment-model',
+    version: '2',
+    accuracy: 0.82,
+    endpoint_url: 'http://localhost:8001/v1/models/sentiment-model:predict',
+    deployed_at: '2025-12-18T12:00:00Z',
+    is_active: true,
+    pipeline_id: 'x9y8z7w6-done',
+  },
+];
+
 export default function Models() {
   const queryClient = useQueryClient();
-  const { data: models, isLoading, error } = useQuery({
+  const { data: modelsData, isLoading, error } = useQuery({
     queryKey: ['models'],
     queryFn: getModels,
     refetchInterval: 15_000,
   });
+
+  // Fall back to mock data when backend is unavailable
+  const models = modelsData ?? (error ? MOCK_MODELS : undefined);
 
   const [testModal, setTestModal] = useState<ModelDeployment | null>(null);
   const [copiedName, setCopiedName] = useState<string | null>(null);
@@ -53,7 +78,7 @@ export default function Models() {
     );
   }
 
-  if (error) {
+  if (error && !models) {
     return (
       <div className="mx-auto max-w-xl py-12">
         <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
@@ -65,6 +90,12 @@ export default function Models() {
 
   return (
     <div className="space-y-6">
+      {error && models && (
+        <div className="rounded-lg border border-yellow-800 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
+          Backend unavailable — showing mock data for preview.
+        </div>
+      )}
+
       <div>
         <h2 className="text-2xl font-bold text-slate-100">Models</h2>
         <p className="mt-1 text-sm text-slate-400">

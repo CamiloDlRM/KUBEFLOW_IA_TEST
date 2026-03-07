@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: DashboardIcon },
+  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
   { to: '/models', label: 'Models', icon: ModelsIcon },
   { to: '/repos/new', label: 'Add Repo', icon: PlusIcon },
 ];
@@ -25,7 +25,7 @@ export default function Layout() {
         </div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} className={navLinkClass} end={item.to === '/'}>
+            <NavLink key={item.to} to={item.to} className={navLinkClass} end={item.to === '/dashboard'}>
               <item.icon />
               {item.label}
             </NavLink>
@@ -38,7 +38,7 @@ export default function Layout() {
         <h1 className="text-sm font-bold text-slate-100">MLOps Platform</h1>
         <nav className="flex gap-2">
           {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} className={navLinkClass} end={item.to === '/'}>
+            <NavLink key={item.to} to={item.to} className={navLinkClass} end={item.to === '/dashboard'}>
               <item.icon />
             </NavLink>
           ))}

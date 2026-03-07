@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useTheme } from "@/hooks/useTheme";
 
 const navLinks = [
@@ -81,12 +82,12 @@ export function Navbar() {
         {/* CTA + Theme Toggle */}
         <div className="hidden md:flex items-center gap-3">
           <ThemeToggle />
-          <a
-            href="#comenzar"
+          <Link
+            to="/login"
             className="bg-zinc-900 dark:bg-[#fafafa] text-white dark:text-[#09090b] px-6 py-2 rounded-xl font-semibold text-sm hover:bg-zinc-700 dark:hover:bg-[#e5e7eb] transition-colors"
           >
             Comenzar
-          </a>
+          </Link>
         </div>
 
         {/* Mobile Hamburger */}
@@ -133,13 +134,13 @@ export function Navbar() {
               {link.label}
             </a>
           ))}
-          <a
-            href="#comenzar"
+          <Link
+            to="/login"
             onClick={() => setMobileOpen(false)}
             className="mt-3 bg-zinc-900 dark:bg-[#fafafa] text-white dark:text-[#09090b] px-6 py-2.5 rounded-xl font-semibold text-sm text-center hover:bg-zinc-700 dark:hover:bg-[#e5e7eb] transition-colors"
           >
             Comenzar
-          </a>
+          </Link>
         </nav>
       </div>
     </header>
