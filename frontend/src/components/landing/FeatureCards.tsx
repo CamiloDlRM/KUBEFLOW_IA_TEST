@@ -1,7 +1,6 @@
 import { motion } from 'framer-motion';
 import { GitBranch, Activity, Rocket } from 'lucide-react';
 import { GlowingEffect } from '@/components/ui/glowing-effect';
-import { useTheme } from '@/hooks/useTheme';
 
 const features = [
   {
@@ -25,21 +24,13 @@ const features = [
 ];
 
 export function FeatureCards() {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
-
   return (
     <section
-      className="w-full flex justify-center transition-colors duration-300"
-      style={{ backgroundColor: isDark ? '#09090b' : '#ffffff' }}
+      className="w-full flex justify-center bg-[#09090b]"
       id="caracteristicas"
     >
       <div className="max-w-[1200px] w-full px-6 py-24">
-        <h2
-          className={`text-3xl font-bold mb-12 text-center ${
-            isDark ? 'text-white' : 'text-zinc-900'
-          }`}
-        >
+        <h2 className="text-3xl font-bold mb-12 text-center text-white">
           Características Principales
         </h2>
 
@@ -66,39 +57,19 @@ export function FeatureCards() {
                 borderWidth={3}
               />
 
-              <div
-                className={`relative rounded-[1.25rem] border p-8 flex flex-col gap-4 h-full ${
-                  isDark
-                    ? 'bg-[#0f0f11] border-[#27272a]'
-                    : 'bg-white border-zinc-200'
-                }`}
-              >
-                <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                    isDark ? 'bg-white/5' : 'bg-zinc-100'
-                  }`}
-                >
+              <div className="relative rounded-[1.25rem] border p-8 flex flex-col gap-4 h-full bg-[#0f0f11] border-[#27272a]">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-white/5">
                   <feature.icon
-                    className={`w-6 h-6 ${
-                      isDark ? 'text-white' : 'text-zinc-700'
-                    }`}
+                    className="w-6 h-6 text-white"
                     strokeWidth={1.5}
                   />
                 </div>
 
-                <h3
-                  className={`text-xl font-bold ${
-                    isDark ? 'text-white' : 'text-zinc-900'
-                  }`}
-                >
+                <h3 className="text-xl font-bold text-white">
                   {feature.title}
                 </h3>
 
-                <p
-                  className={`leading-relaxed ${
-                    isDark ? 'text-[#a1a1aa]' : 'text-zinc-500'
-                  }`}
-                >
+                <p className="leading-relaxed text-[#a1a1aa]">
                   {feature.description}
                 </p>
               </div>

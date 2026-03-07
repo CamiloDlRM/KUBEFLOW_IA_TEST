@@ -64,21 +64,21 @@ const technologies = [
 export function TechStack() {
   return (
     <section
-      className="w-full flex justify-center bg-white dark:bg-[#09090b] border-t border-zinc-200 dark:border-[#27272a] transition-colors duration-300"
+      className="w-full flex justify-center bg-[#09090b] border-t border-[#27272a]"
       id="tech-stack"
     >
       <div className="max-w-[1200px] w-full px-6 py-24 flex flex-col items-center">
-        <h2 className="text-xl font-medium text-zinc-400 dark:text-[#52525b] mb-14 text-center uppercase tracking-widest">
+        <h2 className="text-xl font-medium text-[#52525b] mb-14 text-center uppercase tracking-widest">
           Desarrollado con las mejores tecnologías
         </h2>
         <div className="flex flex-wrap justify-center gap-12 md:gap-20 opacity-60 hover:opacity-100 transition-opacity duration-500">
           {technologies.map((tech) => (
             <div
               key={tech.name}
-              className="flex flex-col items-center gap-3 text-zinc-500 dark:text-[#a1a1aa]"
+              className="flex flex-col items-center gap-3 text-[#a1a1aa]"
             >
               {tech.icon}
-              <span className="font-bold text-lg tracking-tighter text-zinc-900 dark:text-white">
+              <span className="font-bold text-lg tracking-tighter text-white">
                 {tech.name}
               </span>
             </div>

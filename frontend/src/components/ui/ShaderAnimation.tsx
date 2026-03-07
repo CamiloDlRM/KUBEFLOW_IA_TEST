@@ -78,10 +78,13 @@ export function ShaderAnimation({ onReady }: ShaderAnimationProps) {
       window.removeEventListener("resize", onWindowResize)
       if (sceneRef.current) {
         cancelAnimationFrame(sceneRef.current.animationId)
-        if (container && sceneRef.current.renderer.domElement) container.removeChild(sceneRef.current.renderer.domElement)
-        sceneRef.current.renderer.dispose()
+        const r = sceneRef.current.renderer
+        r.dispose()
+        r.forceContextLoss()
+        if (container && r.domElement.parentNode === container) container.removeChild(r.domElement)
         geometry.dispose()
         material.dispose()
+        sceneRef.current = null
       }
     }
   }, [])

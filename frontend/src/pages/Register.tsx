@@ -3,28 +3,11 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Eye, EyeOff, Github, Mail, Lock, User, Loader2, CheckCircle2 } from 'lucide-react';
 import AnimatedBackground from '../components/AnimatedBackground';
+import { calculatePasswordStrength } from '../utils/passwordStrength';
 
 function cn(...inputs: (string | undefined | null | false)[]) {
   return inputs.filter(Boolean).join(' ');
 }
-
-interface PasswordStrength {
-  score: number;
-  color: string;
-  label: string;
-}
-
-const calculatePasswordStrength = (password: string): PasswordStrength => {
-  let score = 0;
-  if (password.length >= 8) score++;
-  if (/[A-Z]/.test(password)) score++;
-  if (/[a-z]/.test(password)) score++;
-  if (/[0-9]/.test(password)) score++;
-  if (/[^A-Za-z0-9]/.test(password)) score++;
-  if (score <= 2) return { score, color: 'bg-red-500', label: 'Débil' };
-  if (score === 3) return { score, color: 'bg-yellow-500', label: 'Media' };
-  return { score, color: 'bg-green-500', label: 'Fuerte' };
-};
 
 export default function Register() {
   const [name, setName] = useState('');
@@ -65,8 +48,15 @@ export default function Register() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8 }}
           >
-            <Link to="/" className="flex items-center gap-2 text-white mb-12">
-              <span className="material-symbols-outlined text-2xl">model_training</span>
+            <Link to="/" className="flex items-center gap-2 text-white mb-6">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="16" cy="10" r="3" fill="currentColor"/>
+                <circle cx="9" cy="22" r="3" fill="currentColor"/>
+                <circle cx="23" cy="22" r="3" fill="currentColor"/>
+                <line x1="16" y1="13" x2="9" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+                <line x1="16" y1="13" x2="23" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+              </svg>
               <span className="text-lg font-bold">MLOps Platform</span>
             </Link>
 
@@ -113,7 +103,14 @@ export default function Register() {
             {/* Mobile logo */}
             <div className="lg:hidden mb-8">
               <Link to="/" className="flex items-center gap-2 text-white">
-                <span className="material-symbols-outlined text-2xl">model_training</span>
+                <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="16" cy="10" r="3" fill="currentColor"/>
+                  <circle cx="9" cy="22" r="3" fill="currentColor"/>
+                  <circle cx="23" cy="22" r="3" fill="currentColor"/>
+                  <line x1="16" y1="13" x2="9" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+                  <line x1="16" y1="13" x2="23" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
                 <span className="text-lg font-bold">MLOps Platform</span>
               </Link>
             </div>

@@ -1,21 +1,16 @@
 import { motion, type Variants } from 'framer-motion';
 import { Suspense, lazy, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useTheme } from '@/hooks/useTheme';
 
 const SplineScene = lazy(() =>
   import('@/components/ui/splite').then((mod) => ({ default: mod.SplineScene }))
 );
 
-function RobotSkeleton({ isDark }: { isDark: boolean }) {
+function RobotSkeleton() {
   return (
     <div className="absolute inset-0">
       <div
-        className={`absolute inset-0 bg-gradient-to-r ${
-          isDark
-            ? 'from-zinc-900 via-zinc-800 to-zinc-900'
-            : 'from-zinc-300 via-zinc-200 to-zinc-300'
-        }`}
+        className="absolute inset-0 bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900"
         style={{
           backgroundSize: '200% 100%',
           animation: 'heroShimmer 2s ease-in-out infinite',
@@ -44,12 +39,10 @@ const fadeUp: Variants = {
   }),
 };
 
-export function HeroSection() {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
-  const [shouldLoadRobot, setShouldLoadRobot] = useState(false);
+const bg = '#09090b';
 
-  const bg = isDark ? '#09090b' : '#f5f5f5';
+export function HeroSection() {
+  const [shouldLoadRobot, setShouldLoadRobot] = useState(false);
 
   useEffect(() => {
     if ('requestIdleCallback' in window) {
@@ -63,7 +56,7 @@ export function HeroSection() {
 
   return (
     <section
-      className="relative w-full min-h-[500px] md:min-h-[600px] overflow-hidden transition-colors duration-300"
+      className="relative w-full min-h-[500px] md:min-h-[600px] overflow-hidden"
       style={{ backgroundColor: bg }}
     >
       {/* Spline scene */}
@@ -77,27 +70,24 @@ export function HeroSection() {
             left: '25%',
             right: '-25%',
             transform: 'translateY(30%)',
-            ...(isDark
-              ? {}
-              : { filter: 'contrast(1.1) brightness(0.95)' }),
           }}
         >
           {shouldLoadRobot ? (
-            <Suspense fallback={<RobotSkeleton isDark={isDark} />}>
+            <Suspense fallback={<RobotSkeleton />}>
               <SplineScene
                 scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode"
                 className="w-full h-full"
               />
             </Suspense>
           ) : (
-            <RobotSkeleton isDark={isDark} />
+            <RobotSkeleton />
           )}
         </div>
       </div>
 
-      {/* Left gradient — covers text area */}
+      {/* Left gradient */}
       <div
-        className="absolute inset-0 z-[1] pointer-events-none transition-colors duration-300"
+        className="absolute inset-0 z-[1] pointer-events-none"
         style={{
           background: `linear-gradient(to right, ${bg}, ${bg}e6 40%, transparent)`,
         }}
@@ -125,9 +115,7 @@ export function HeroSection() {
       <div className="relative z-[2] max-w-[1200px] w-full mx-auto px-6 pointer-events-none">
         <div className="max-w-xl py-16 md:py-24">
           <motion.h1
-            className={`text-4xl md:text-5xl font-bold leading-snug tracking-tight mb-4 pb-1 bg-clip-text text-transparent bg-gradient-to-b ${
-              isDark ? 'from-neutral-50 to-neutral-400' : 'from-zinc-800 to-zinc-500'
-            }`}
+            className="text-4xl md:text-5xl font-bold leading-snug tracking-tight mb-4 pb-1 bg-clip-text text-transparent bg-gradient-to-b from-neutral-50 to-neutral-400"
             variants={fadeUp}
             initial="hidden"
             animate="visible"
@@ -137,28 +125,24 @@ export function HeroSection() {
           </motion.h1>
 
           <motion.p
-            className={`text-lg md:text-xl font-medium mb-4 ${
-              isDark ? 'text-neutral-300' : 'text-zinc-600'
-            }`}
+            className="text-lg md:text-xl font-medium mb-4 text-neutral-300"
             variants={fadeUp}
             initial="hidden"
             animate="visible"
             custom={1}
           >
-            Del Notebook a Producción en un solo push a GitHub
+            Del Notebook a Producción de forma automatizada
           </motion.p>
 
           <motion.p
-            className={`text-base md:text-lg max-w-lg mb-8 leading-relaxed ${
-              isDark ? 'text-[#a1a1aa]' : 'text-zinc-500'
-            }`}
+            className="text-base md:text-lg max-w-lg mb-8 leading-relaxed text-[#a1a1aa]"
             variants={fadeUp}
             initial="hidden"
             animate="visible"
             custom={2}
           >
             Plataforma end-to-end que ejecuta, valida, registra y despliega tus
-            modelos automáticamente cuando haces push a GitHub
+            modelos de Machine Learning de forma continua y escalable
           </motion.p>
 
           <motion.div
@@ -170,24 +154,16 @@ export function HeroSection() {
           >
             <Link
               to="/login"
-              className={`px-8 py-4 rounded-xl font-bold text-base transition-colors text-center ${
-                isDark
-                  ? 'bg-[#fafafa] text-[#09090b] hover:bg-[#e5e7eb]'
-                  : 'bg-zinc-900 text-white hover:bg-zinc-700'
-              }`}
+              className="px-8 py-4 rounded-xl font-bold text-base transition-colors text-center bg-[#fafafa] text-[#09090b] hover:bg-[#e5e7eb]"
             >
               Comenzar Ahora
             </Link>
-            <a
-              href="#docs"
-              className={`bg-transparent px-8 py-4 rounded-xl font-bold text-base transition-colors text-center border ${
-                isDark
-                  ? 'text-white border-white/20 hover:bg-white/10'
-                  : 'text-zinc-900 border-zinc-300 hover:bg-zinc-100'
-              }`}
+            <Link
+              to="/docs"
+              className="bg-transparent px-8 py-4 rounded-xl font-bold text-base transition-colors text-center border text-white border-white/20 hover:bg-white/10"
             >
               Ver Documentación
-            </a>
+            </Link>
           </motion.div>
         </div>
       </div>

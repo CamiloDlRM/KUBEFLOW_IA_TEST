@@ -8,55 +8,70 @@ import { FeatureCards } from '@/components/landing/FeatureCards';
 import { TechStack } from '@/components/landing/TechStack';
 import { Footer } from '@/components/landing/Footer';
 import { AnimatedSection } from '@/components/landing/AnimatedSection';
-import { ThemeProvider } from '@/hooks/useTheme';
+
+function shouldShowIntro(): boolean {
+  const navEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+  const isRefresh = navEntry?.type === 'reload';
+  const introShown = sessionStorage.getItem('introShown');
+
+  // Show intro on first visit or page refresh
+  return !introShown || isRefresh;
+}
 
 export default function Landing() {
-  const [showIntro, setShowIntro] = useState(true);
+  const [introNeeded] = useState(shouldShowIntro);
+  const [showIntro, setShowIntro] = useState(introNeeded);
 
+  function handleIntroComplete() {
+    sessionStorage.setItem('introShown', 'true');
+    setShowIntro(false);
+  }
+
+  const landingContent = (
+    <div className="min-h-screen bg-[#09090b] text-white font-['Inter',sans-serif]">
+      <Navbar />
+
+      <main className="pt-20">
+        <HeroSection />
+
+        <PipelineFlow />
+
+        <AnimatedSection>
+          <FeatureCards />
+        </AnimatedSection>
+
+        <AnimatedSection>
+          <TechStack />
+        </AnimatedSection>
+      </main>
+
+      <AnimatedSection>
+        <Footer />
+      </AnimatedSection>
+    </div>
+  );
+
+  // No intro needed — render landing directly without any animation
+  if (!introNeeded) {
+    return landingContent;
+  }
+
+  // Intro flow: show intro first, then fade in landing
   return (
-    <ThemeProvider>
-      {showIntro && <IntroSplash onComplete={() => setShowIntro(false)} />}
-
-      <AnimatePresence>
-        {!showIntro && (
-          <motion.div
-            className="min-h-screen bg-white dark:bg-[#09090b] text-zinc-900 dark:text-white font-['Inter',sans-serif] transition-colors duration-300"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6 }}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.15 }}
-            >
-              <Navbar />
-            </motion.div>
-
-            <main className="pt-20">
-              <AnimatedSection delay={0.3}>
-                <HeroSection />
-              </AnimatedSection>
-
-              <AnimatedSection delay={0.15}>
-                <PipelineFlow />
-              </AnimatedSection>
-
-              <AnimatedSection>
-                <FeatureCards />
-              </AnimatedSection>
-
-              <AnimatedSection>
-                <TechStack />
-              </AnimatedSection>
-            </main>
-
-            <AnimatedSection>
-              <Footer />
-            </AnimatedSection>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </ThemeProvider>
+    <AnimatePresence mode="wait">
+      {showIntro ? (
+        <IntroSplash key="intro" onComplete={handleIntroComplete} />
+      ) : (
+        <motion.div
+          key="landing"
+          style={{ willChange: 'opacity' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4 }}
+        >
+          {landingContent}
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

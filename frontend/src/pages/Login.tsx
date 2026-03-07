@@ -33,8 +33,15 @@ export default function Login() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8 }}
           >
-            <Link to="/" className="flex items-center gap-2 text-white mb-12">
-              <span className="material-symbols-outlined text-2xl">model_training</span>
+            <Link to="/" className="flex items-center gap-2 text-white mb-6">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="16" cy="10" r="3" fill="currentColor"/>
+                <circle cx="9" cy="22" r="3" fill="currentColor"/>
+                <circle cx="23" cy="22" r="3" fill="currentColor"/>
+                <line x1="16" y1="13" x2="9" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+                <line x1="16" y1="13" x2="23" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+              </svg>
               <span className="text-lg font-bold">MLOps Platform</span>
             </Link>
 
@@ -81,7 +88,14 @@ export default function Login() {
             {/* Mobile logo */}
             <div className="lg:hidden mb-8">
               <Link to="/" className="flex items-center gap-2 text-white">
-                <span className="material-symbols-outlined text-2xl">model_training</span>
+                <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="16" cy="10" r="3" fill="currentColor"/>
+                  <circle cx="9" cy="22" r="3" fill="currentColor"/>
+                  <circle cx="23" cy="22" r="3" fill="currentColor"/>
+                  <line x1="16" y1="13" x2="9" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+                  <line x1="16" y1="13" x2="23" y2="19" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
                 <span className="text-lg font-bold">MLOps Platform</span>
               </Link>
             </div>

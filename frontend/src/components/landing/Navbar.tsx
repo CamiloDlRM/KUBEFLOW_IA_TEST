@@ -1,148 +1,143 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { useTheme } from "@/hooks/useTheme";
+import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { Terminal, Layers, GitBranch, Box, LogIn } from 'lucide-react';
 
-const navLinks = [
-  { label: "Características", href: "#caracteristicas" },
-  { label: "Arquitectura", href: "#arquitectura" },
-  { label: "Tech Stack", href: "#tech-stack" },
-  { label: "Contacto", href: "#contacto" },
-];
-
-function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
-
-  return (
-    <button
-      onClick={toggleTheme}
-      className="p-2 rounded-lg text-zinc-500 dark:text-[#a1a1aa] hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
-      aria-label={theme === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-    >
-      {theme === "dark" ? (
-        /* Sun icon */
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="5" />
-          <line x1="12" y1="1" x2="12" y2="3" />
-          <line x1="12" y1="21" x2="12" y2="23" />
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-          <line x1="1" y1="12" x2="3" y2="12" />
-          <line x1="21" y1="12" x2="23" y2="12" />
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-        </svg>
-      ) : (
-        /* Moon icon */
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-        </svg>
-      )}
-    </button>
-  );
+interface NavItem {
+  id: string;
+  label: string;
+  icon: typeof Layers;
+  target: string;
 }
 
+const navItems: NavItem[] = [
+  { id: 'arquitectura', label: 'Cómo Funciona', icon: GitBranch, target: '#arquitectura' },
+  { id: 'caracteristicas', label: 'Características', icon: Layers, target: '#caracteristicas' },
+  { id: 'tech-stack', label: 'Tech Stack', icon: Box, target: '#tech-stack' },
+];
+
+const sectionIds = ['arquitectura', 'caracteristicas', 'tech-stack'];
+
+const spring = { type: 'spring' as const, stiffness: 350, damping: 32 };
+
 export function Navbar() {
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [active, setActive] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  useEffect(() => {
+    const observers: IntersectionObserver[] = [];
+
+    sectionIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) setActive(id);
+        },
+        { rootMargin: '-40% 0px -40% 0px', threshold: 0 }
+      );
+
+      observer.observe(el);
+      observers.push(observer);
+    });
+
+    return () => observers.forEach((o) => o.disconnect());
+  }, []);
+
+  useEffect(() => {
+    function handleScroll() {
+      if (window.scrollY < 200) setActive(null);
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleClick = useCallback((item: NavItem) => {
+    setActive(item.id);
+    const el = document.querySelector(item.target);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  const handleLogoClick = useCallback(() => {
+    setActive(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
   return (
-    <header className="fixed top-0 w-full z-50 bg-white/80 dark:bg-[#09090b]/80 backdrop-blur-md border-b border-zinc-200 dark:border-[#27272a] transition-colors duration-300">
-      <div className="max-w-[1200px] mx-auto w-full px-6 py-4 flex items-center justify-between">
-        {/* Logo */}
-        <a href="#" className="flex items-center gap-2.5 shrink-0">
-          <svg
-            className="w-6 h-6 text-zinc-900 dark:text-white"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="4 17 10 11 4 5" />
-            <line x1="12" y1="19" x2="20" y2="19" />
-          </svg>
-          <span className="text-zinc-900 dark:text-white font-bold text-xl tracking-tight">
-            MLOps Platform
-          </span>
-        </a>
-
-        {/* Desktop Nav Links */}
-        <nav className="hidden md:flex items-center gap-8">
-          {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="text-zinc-500 dark:text-[#a1a1aa] hover:text-zinc-900 dark:hover:text-white transition-colors text-sm font-medium"
-            >
-              {link.label}
-            </a>
-          ))}
-        </nav>
-
-        {/* CTA + Theme Toggle */}
-        <div className="hidden md:flex items-center gap-3">
-          <ThemeToggle />
-          <Link
-            to="/login"
-            className="bg-zinc-900 dark:bg-[#fafafa] text-white dark:text-[#09090b] px-6 py-2 rounded-xl font-semibold text-sm hover:bg-zinc-700 dark:hover:bg-[#e5e7eb] transition-colors"
-          >
-            Comenzar
-          </Link>
-        </div>
-
-        {/* Mobile Hamburger */}
-        <div className="md:hidden flex items-center gap-2">
-          <ThemeToggle />
-          <button
-            className="flex flex-col gap-1.5 p-2"
-            onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label="Menú de navegación"
-          >
-            <span
-              className={`block w-6 h-0.5 bg-zinc-900 dark:bg-white transition-transform duration-300 ${
-                mobileOpen ? "rotate-45 translate-y-2" : ""
-              }`}
-            />
-            <span
-              className={`block w-6 h-0.5 bg-zinc-900 dark:bg-white transition-opacity duration-300 ${
-                mobileOpen ? "opacity-0" : ""
-              }`}
-            />
-            <span
-              className={`block w-6 h-0.5 bg-zinc-900 dark:bg-white transition-transform duration-300 ${
-                mobileOpen ? "-rotate-45 -translate-y-2" : ""
-              }`}
-            />
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile Menu */}
-      <div
-        className={`md:hidden overflow-hidden transition-all duration-300 ${
-          mobileOpen ? "max-h-80" : "max-h-0"
-        }`}
+    <header
+      className="fixed top-4 left-0 right-0 z-50 flex items-center justify-between px-6 md:px-10 animate-[navFadeIn_0.4s_ease-out_both]"
+    >
+      {/* Logo - Left */}
+      <button
+        onClick={handleLogoClick}
+        className="flex items-center gap-2 text-white shrink-0 cursor-pointer"
       >
-        <nav className="flex flex-col gap-1 px-6 pb-6 bg-white/95 dark:bg-[#09090b]/95 backdrop-blur-md border-t border-zinc-200 dark:border-[#27272a]">
-          {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              onClick={() => setMobileOpen(false)}
-              className="text-zinc-500 dark:text-[#a1a1aa] hover:text-zinc-900 dark:hover:text-white transition-colors text-sm font-medium py-3 border-b border-zinc-100 dark:border-[#27272a]/50"
+        <Terminal size={20} />
+        <span className="font-bold text-lg tracking-tight hidden sm:block">MLOps</span>
+      </button>
+
+      {/* Nav pill - Center */}
+      <nav
+        className="flex items-center gap-1 h-[44px] rounded-full bg-[#18181b]/80 backdrop-blur-xl border border-[#27272a] shadow-xl px-1.5"
+        onMouseLeave={() => setHovered(null)}
+      >
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = active === item.id;
+          const isHovered = hovered === item.id;
+          const showLabel = isActive || isHovered;
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => handleClick(item)}
+              onMouseEnter={() => setHovered(item.id)}
+              className={`
+                relative flex items-center h-8 rounded-full px-3 text-sm font-medium transition-colors cursor-pointer shrink-0
+                ${isActive ? 'bg-white/10 text-white' : 'text-[#a1a1aa] hover:bg-[#27272a]/50 hover:text-white'}
+              `}
             >
-              {link.label}
-            </a>
-          ))}
-          <Link
-            to="/login"
-            onClick={() => setMobileOpen(false)}
-            className="mt-3 bg-zinc-900 dark:bg-[#fafafa] text-white dark:text-[#09090b] px-6 py-2.5 rounded-xl font-semibold text-sm text-center hover:bg-zinc-700 dark:hover:bg-[#e5e7eb] transition-colors"
-          >
-            Comenzar
-          </Link>
-        </nav>
-      </div>
+              <Icon size={15} className="shrink-0" />
+
+              <motion.span
+                className="overflow-hidden whitespace-nowrap hidden md:block"
+                initial={false}
+                animate={{
+                  width: showLabel ? 'auto' : 0,
+                  opacity: showLabel ? 1 : 0,
+                  marginLeft: showLabel ? 6 : 0,
+                }}
+                transition={spring}
+              >
+                {item.label}
+              </motion.span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* CTA - Right */}
+      <Link
+        to="/register"
+        className="hidden md:flex items-center bg-[#fafafa] text-[#09090b] rounded-full px-5 py-2 text-sm font-semibold hover:bg-[#e5e7eb] transition-colors shrink-0"
+      >
+        Comenzar
+      </Link>
+
+      {/* CTA Mobile - Right */}
+      <Link
+        to="/register"
+        className="md:hidden flex items-center justify-center w-9 h-9 bg-[#fafafa] text-[#09090b] rounded-full hover:bg-[#e5e7eb] transition-colors shrink-0"
+      >
+        <LogIn size={16} />
+      </Link>
+      <style>{`
+        @keyframes navFadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </header>
   );
 }
