@@ -153,6 +153,12 @@ export function HeroSection() {
             custom={3}
           >
             <Link
+              to="/dashboard"
+              className="bg-transparent px-8 py-4 rounded-xl font-bold text-base transition-colors text-center border text-white border-white/20 hover:bg-white/10"
+            >
+              Ir al Dashboard
+            </Link>
+            <Link
               to="/login"
               className="px-8 py-4 rounded-xl font-bold text-base transition-colors text-center bg-[#fafafa] text-[#09090b] hover:bg-[#e5e7eb]"
             >

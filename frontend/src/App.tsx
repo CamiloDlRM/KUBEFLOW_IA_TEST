@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import AddRepository from './pages/AddRepository';
 import PipelineDetail from './pages/PipelineDetail';
 import Models from './pages/Models';
+import ModelDetail from './pages/ModelDetail';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/repos/new" element={<AddRepository />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
+        <Route path="/models/:name" element={<ModelDetail />} />
       </Route>
     </Routes>
   );

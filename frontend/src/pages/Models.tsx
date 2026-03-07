@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getModels, predict, rollbackModel, deleteModel } from '../api/client';
 import type { ModelDeployment } from '../types';
@@ -128,7 +129,11 @@ export default function Models() {
             <tbody>
               {models.map((m) => (
                 <tr key={m.model_name} className="border-b border-slate-800 hover:bg-slate-800/40 transition">
-                  <td className="px-4 py-3 font-medium text-slate-100">{m.model_name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-100">
+                    <Link to={`/models/${m.model_name}`} className="hover:underline">
+                      {m.model_name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-slate-300">v{m.version}</td>
                   <td className="px-4 py-3 font-mono text-slate-300">
                     {(m.accuracy * 100).toFixed(1)}%
