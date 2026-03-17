@@ -1,6 +1,6 @@
 """FastAPI application entrypoint for the MLOps backend.
 
-Configures structlog, CORS, SQLModel tables, and mounts all routers.
+Configures structlog, CORS, ROBLE table initialization, and mounts all routers.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from core.config import get_settings
 from models.schemas import (
     HealthResponse,
     ReadyResponse,
+    ROBLE_TABLES,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,20 +64,49 @@ logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Lifespan: create tables on startup
+# Lifespan: initialize ROBLE tables on startup
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler.
 
-    Creates SQLModel tables on startup and logs shutdown.
+    Connects to ROBLE, creates tables if they don't exist, and stores
+    the client on app.state for use by routers.
     """
-    from sqlmodel import SQLModel, create_engine
+    from core.roble_client import RobleClient
 
-    engine = create_engine(settings.database_url, echo=False)
-    SQLModel.metadata.create_all(engine)
-    logger.info("app.startup", database_url=settings.database_url)
+    client = RobleClient(
+        auth_base_url=settings.roble_auth_url,
+        db_base_url=settings.roble_db_url,
+        email=settings.roble_email,
+        password=settings.roble_password,
+    )
+
+    # Authenticate
+    await client._ensure_authenticated()
+
+    # Create tables if they don't exist
+    for table_name, table_def in ROBLE_TABLES.items():
+        if not await client.table_exists(table_name):
+            try:
+                await client.create_table(
+                    table_name=table_name,
+                    description=table_def["description"],
+                    columns=table_def["columns"],
+                )
+                logger.info("roble.table_created", table=table_name)
+            except Exception as exc:
+                logger.warning(
+                    "roble.table_create_skipped",
+                    table=table_name,
+                    error=str(exc),
+                )
+        else:
+            logger.info("roble.table_exists", table=table_name)
+
+    app.state.roble = client
+    logger.info("app.startup", roble="connected")
     yield
     logger.info("app.shutdown")
 

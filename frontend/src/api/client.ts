@@ -50,7 +50,7 @@ export async function createRepo(payload: CreateRepoPayload): Promise<Repository
   return data;
 }
 
-export async function deleteRepo(repoId: number): Promise<void> {
+export async function deleteRepo(repoId: string): Promise<void> {
   await apiClient.delete(`/repos/${repoId}`);
 }
 

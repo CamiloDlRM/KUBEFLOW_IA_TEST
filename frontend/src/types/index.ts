@@ -3,7 +3,7 @@
 /* ------------------------------------------------------------------ */
 
 export interface Repository {
-  id: number;
+  id: string;
   github_url: string;
   github_token_masked: string;
   branch: string;
@@ -40,7 +40,7 @@ export interface PipelineMetrics {
 
 export interface Pipeline {
   id: string;
-  repo_id: number;
+  repo_id: string;
   status: PipelineStatus;
   commit_sha: string;
   started_at: string;

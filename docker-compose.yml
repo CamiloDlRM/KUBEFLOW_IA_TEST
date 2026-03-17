@@ -8,11 +8,8 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
-    environment:
-      - DATABASE_URL=sqlite:////data/mlops.db
     volumes:
-      - mlops-models:/app/models
-      - mlops-db:/data
+      - mlops-models:/data/models
     depends_on:
       redis:
         condition: service_healthy
@@ -37,11 +34,9 @@ services:
     command: celery -A tasks.celery_tasks worker --loglevel=info -Q pipelines,celery --concurrency=2
     env_file: .env
     environment:
-      - DATABASE_URL=sqlite:////data/mlops.db
       - PYTHONPATH=/app
     volumes:
-      - mlops-models:/app/models
-      - mlops-db:/data
+      - mlops-models:/data/models
       - mlflow-data:/mlflow
     depends_on:
       redis:
@@ -136,4 +131,3 @@ volumes:
   mlops-models:
   mlflow-data:
   redis-data:
-  mlops-db:

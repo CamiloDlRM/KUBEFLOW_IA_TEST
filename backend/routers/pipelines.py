@@ -5,28 +5,24 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from sqlmodel import Session, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.roble_client import RobleClient
 from models.schemas import (
-    Pipeline,
     PipelineListResponse,
     PipelineLogsResponse,
     PipelineResponse,
+    pipeline_from_roble,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 
 
-def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
-    from sqlmodel import create_engine
-
-    engine = create_engine(settings.database_url, echo=False)
-    with Session(engine) as session:
-        yield session
+def _get_roble(request: Request) -> RobleClient:
+    return request.app.state.roble
 
 
 @router.get(
@@ -37,19 +33,14 @@ def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
 async def list_pipelines(
     page: int = Query(default=1, ge=1, description="Page number."),
     size: int = Query(default=20, ge=1, le=100, description="Page size."),
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
 ) -> PipelineListResponse:
     """Return a paginated list of all pipeline runs, newest first."""
-    total_stmt = select(func.count()).select_from(Pipeline)
-    total: int = session.exec(total_stmt).one()
-
-    offset = (page - 1) * size
-    pipelines = session.exec(
-        select(Pipeline).order_by(Pipeline.started_at.desc()).offset(offset).limit(size)  # type: ignore[union-attr]
-    ).all()
-
-    items = [PipelineResponse.model_validate(p) for p in pipelines]
-    return PipelineListResponse(items=items, total=total, page=page, size=size)
+    items, total = await roble.read_paginated(
+        "pipelines", page, size, sort_key="started_at", sort_reverse=True,
+    )
+    pipeline_responses = [pipeline_from_roble(p) for p in items]
+    return PipelineListResponse(items=pipeline_responses, total=total, page=page, size=size)
 
 
 @router.get(
@@ -59,20 +50,20 @@ async def list_pipelines(
 )
 async def get_pipeline(
     pipeline_id: str,
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
 ) -> PipelineResponse:
-    """Return full status, phases, and metrics for a single pipeline run.
-
-    Args:
-        pipeline_id: UUID of the pipeline.
-    """
-    pipeline = session.get(Pipeline, pipeline_id)
-    if not pipeline:
+    """Return full status, phases, and metrics for a single pipeline run."""
+    # Search by pipeline_uuid (the UUID used for Celery/WebSocket)
+    records = await roble.read("pipelines", {"pipeline_uuid": pipeline_id})
+    if not records:
+        # Fallback: search by ROBLE _id
+        records = await roble.read("pipelines", {"_id": pipeline_id})
+    if not records:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline {pipeline_id} not found.",
         )
-    return PipelineResponse.model_validate(pipeline)
+    return pipeline_from_roble(records[0])
 
 
 @router.get(
@@ -83,18 +74,14 @@ async def get_pipeline(
 async def get_pipeline_logs(
     pipeline_id: str,
     settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
 ) -> PipelineLogsResponse:
-    """Return all stored log entries for a pipeline.
-
-    Reads accumulated phase logs from Redis (stored as a list).
-
-    Args:
-        pipeline_id: UUID of the pipeline.
-    """
+    """Return all stored log entries for a pipeline."""
     # Verify pipeline exists
-    pipeline = session.get(Pipeline, pipeline_id)
-    if not pipeline:
+    records = await roble.read("pipelines", {"pipeline_uuid": pipeline_id})
+    if not records:
+        records = await roble.read("pipelines", {"_id": pipeline_id})
+    if not records:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pipeline {pipeline_id} not found.",
@@ -115,11 +102,7 @@ async def ws_pipeline_logs(
     pipeline_id: str,
     settings: AppSettings = Depends(get_settings),
 ) -> None:
-    """WebSocket endpoint for real-time pipeline log streaming.
-
-    Subscribes to the Redis pub/sub channel for the given pipeline and
-    forwards every message to the connected WebSocket client.
-    """
+    """WebSocket endpoint for real-time pipeline log streaming."""
     await websocket.accept()
     logger.info("ws.connected", pipeline_id=pipeline_id)
 
