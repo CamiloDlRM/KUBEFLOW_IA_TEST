@@ -1,6 +1,7 @@
-"""Pydantic v2 and SQLModel schemas for the MLOps platform.
+"""Pydantic v2 schemas for the MLOps platform.
 
-Defines database tables (SQLModel) and request/response DTOs (BaseModel).
+Defines request/response DTOs (BaseModel) and helpers to convert
+ROBLE REST API dicts into response schemas.
 """
 from __future__ import annotations
 
@@ -9,7 +10,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
 # ---------------------------------------------------------------------------
@@ -25,56 +25,49 @@ def _new_uuid() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Database tables (SQLModel with table=True)
+# ROBLE table definitions (used for table creation at startup)
 # ---------------------------------------------------------------------------
 
-class Repository(SQLModel, table=True):
-    """Registered GitHub repository."""
-
-    __tablename__ = "repositories"
-
-    id: int | None = SQLField(default=None, primary_key=True)
-    github_url: str = SQLField(index=True)
-    github_token_masked: str = SQLField(
-        default="",
-        description="Masked token stored for display only (last 4 chars).",
-    )
-    branch: str = SQLField(default="main")
-    notebook_path: str = SQLField(description="Path to the notebook file within the repository.")
-    webhook_id: int | None = SQLField(default=None)
-    webhook_url: str | None = SQLField(default=None)
-    created_at: datetime = SQLField(default_factory=_utcnow)
-    is_active: bool = SQLField(default=True)
-
-
-class Pipeline(SQLModel, table=True):
-    """A single pipeline execution record."""
-
-    __tablename__ = "pipelines"
-
-    id: str = SQLField(default_factory=_new_uuid, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id")
-    status: str = SQLField(default="queued")  # queued | running | success | failed
-    commit_sha: str = SQLField(default="")
-    started_at: datetime | None = SQLField(default=None)
-    finished_at: datetime | None = SQLField(default=None)
-    phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
-    metrics: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
-
-
-class ModelDeployment(SQLModel, table=True):
-    """A deployed model version."""
-
-    __tablename__ = "model_deployments"
-
-    id: int | None = SQLField(default=None, primary_key=True)
-    model_name: str = SQLField(index=True)
-    version: str = SQLField(default="1")
-    accuracy: float = SQLField(default=0.0)
-    endpoint_url: str = SQLField(default="")
-    deployed_at: datetime = SQLField(default_factory=_utcnow)
-    is_active: bool = SQLField(default=True)
-    pipeline_id: str | None = SQLField(default=None, foreign_key="pipelines.id")
+ROBLE_TABLES = {
+    "repositories": {
+        "description": "Registered GitHub repositories",
+        "columns": [
+            {"name": "github_url", "type": "TEXT", "isNullable": False, "isPrimary": False},
+            {"name": "github_token_masked", "type": "VARCHAR", "isNullable": True, "isPrimary": False},
+            {"name": "branch", "type": "VARCHAR", "isNullable": True, "isPrimary": False},
+            {"name": "notebook_path", "type": "TEXT", "isNullable": False, "isPrimary": False},
+            {"name": "webhook_id", "type": "INTEGER", "isNullable": True, "isPrimary": False},
+            {"name": "webhook_url", "type": "TEXT", "isNullable": True, "isPrimary": False},
+            {"name": "created_at", "type": "TIMESTAMP", "isNullable": True, "isPrimary": False},
+            {"name": "is_active", "type": "BOOLEAN", "isNullable": True, "isPrimary": False},
+        ],
+    },
+    "pipelines": {
+        "description": "Pipeline execution records",
+        "columns": [
+            {"name": "pipeline_uuid", "type": "VARCHAR", "isNullable": False, "isPrimary": False},
+            {"name": "repo_id", "type": "VARCHAR", "isNullable": False, "isPrimary": False},
+            {"name": "status", "type": "VARCHAR", "isNullable": False, "isPrimary": False},
+            {"name": "commit_sha", "type": "VARCHAR", "isNullable": True, "isPrimary": False},
+            {"name": "started_at", "type": "TIMESTAMP", "isNullable": True, "isPrimary": False},
+            {"name": "finished_at", "type": "TIMESTAMP", "isNullable": True, "isPrimary": False},
+            {"name": "phases", "type": "JSON", "isNullable": True, "isPrimary": False},
+            {"name": "metrics", "type": "JSON", "isNullable": True, "isPrimary": False},
+        ],
+    },
+    "model_deployments": {
+        "description": "Deployed model versions",
+        "columns": [
+            {"name": "model_name", "type": "VARCHAR", "isNullable": False, "isPrimary": False},
+            {"name": "version", "type": "VARCHAR", "isNullable": True, "isPrimary": False},
+            {"name": "accuracy", "type": "DOUBLE PRECISION", "isNullable": True, "isPrimary": False},
+            {"name": "endpoint_url", "type": "TEXT", "isNullable": True, "isPrimary": False},
+            {"name": "deployed_at", "type": "TIMESTAMP", "isNullable": True, "isPrimary": False},
+            {"name": "is_active", "type": "BOOLEAN", "isNullable": True, "isPrimary": False},
+            {"name": "pipeline_id", "type": "VARCHAR", "isNullable": True, "isPrimary": False},
+        ],
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -146,21 +139,21 @@ class RepoResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     github_url: str
     github_token_masked: str
     branch: str
     notebook_path: str
     webhook_id: int | None
     webhook_url: str | None
-    created_at: datetime
+    created_at: datetime | str
     is_active: bool
 
 
 class RepoCreatedResponse(BaseModel):
     """Response after creating a repo."""
 
-    repo_id: int
+    repo_id: str
     webhook_url: str
     status: str = "webhook_created"
 
@@ -171,11 +164,11 @@ class PipelineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    repo_id: int
+    repo_id: str
     status: str
     commit_sha: str
-    started_at: datetime | None
-    finished_at: datetime | None
+    started_at: datetime | str | None
+    finished_at: datetime | str | None
     phases: list[dict[str, Any]]
     metrics: dict[str, Any]
 
@@ -212,7 +205,7 @@ class ModelDeploymentResponse(BaseModel):
     version: str
     accuracy: float
     endpoint_url: str
-    deployed_at: datetime
+    deployed_at: datetime | str
     is_active: bool
     pipeline_id: str | None
 
@@ -246,3 +239,49 @@ class MessageResponse(BaseModel):
     """Generic message response."""
 
     message: str
+
+
+# ---------------------------------------------------------------------------
+# ROBLE dict -> Response schema converters
+# ---------------------------------------------------------------------------
+
+def repo_from_roble(data: dict) -> RepoResponse:
+    """Convert a ROBLE repositories dict to RepoResponse."""
+    return RepoResponse(
+        id=data["_id"],
+        github_url=data.get("github_url", ""),
+        github_token_masked=data.get("github_token_masked", ""),
+        branch=data.get("branch", "main"),
+        notebook_path=data.get("notebook_path", ""),
+        webhook_id=data.get("webhook_id"),
+        webhook_url=data.get("webhook_url"),
+        created_at=data.get("created_at", ""),
+        is_active=data.get("is_active", True),
+    )
+
+
+def pipeline_from_roble(data: dict) -> PipelineResponse:
+    """Convert a ROBLE pipelines dict to PipelineResponse."""
+    return PipelineResponse(
+        id=data.get("pipeline_uuid", data.get("_id", "")),
+        repo_id=data.get("repo_id", ""),
+        status=data.get("status", "queued"),
+        commit_sha=data.get("commit_sha", ""),
+        started_at=data.get("started_at"),
+        finished_at=data.get("finished_at"),
+        phases=data.get("phases") or [],
+        metrics=data.get("metrics") or {},
+    )
+
+
+def deployment_from_roble(data: dict) -> ModelDeploymentResponse:
+    """Convert a ROBLE model_deployments dict to ModelDeploymentResponse."""
+    return ModelDeploymentResponse(
+        model_name=data.get("model_name", ""),
+        version=data.get("version", "1"),
+        accuracy=float(data.get("accuracy", 0.0)),
+        endpoint_url=data.get("endpoint_url", ""),
+        deployed_at=data.get("deployed_at", ""),
+        is_active=data.get("is_active", True),
+        pipeline_id=data.get("pipeline_id"),
+    )

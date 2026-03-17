@@ -21,14 +21,14 @@ class PipelineRunner(ABC):
     async def run(
         self,
         pipeline_id: str,
-        repo_id: int,
+        repo_id: str,
         commit_sha: str,
     ) -> None:
         """Enqueue or launch a pipeline execution.
 
         Args:
-            pipeline_id: UUID of the pipeline record.
-            repo_id: Database ID of the associated repository.
+            pipeline_id: UUID of the pipeline (pipeline_uuid).
+            repo_id: ROBLE _id of the associated repository.
             commit_sha: Git commit SHA that triggered the run.
         """
         ...
@@ -50,7 +50,7 @@ class CeleryPipelineRunner(PipelineRunner):
     async def run(
         self,
         pipeline_id: str,
-        repo_id: int,
+        repo_id: str,
         commit_sha: str,
     ) -> None:
         """Send the pipeline task to the Celery worker queue."""
@@ -90,7 +90,7 @@ class KubernetesPipelineRunner(PipelineRunner):
     async def run(
         self,
         pipeline_id: str,
-        repo_id: int,
+        repo_id: str,
         commit_sha: str,
     ) -> None:
         raise NotImplementedError("Kubernetes runner not yet implemented.")

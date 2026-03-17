@@ -6,7 +6,7 @@ import { repoNameFromUrl, formatDate } from '../utils/format';
 interface RepoCardProps {
   repo: Repository;
   latestPipeline?: Pipeline;
-  onDelete: (repoId: number) => void;
+  onDelete: (repoId: string) => void;
 }
 
 export default function RepoCard({ repo, latestPipeline, onDelete }: RepoCardProps) {

@@ -5,27 +5,25 @@ push events that modify notebook files on the configured branch.
 """
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
 from core.github import verify_webhook_signature
 from core.pipeline import get_pipeline_runner
-from models.schemas import Pipeline, Repository, WebhookAccepted
+from core.roble_client import RobleClient
+from models.schemas import WebhookAccepted
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
-def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
-    from sqlmodel import create_engine
-
-    engine = create_engine(settings.database_url, echo=False)
-    with Session(engine) as session:
-        yield session
+def _get_roble(request: Request) -> RobleClient:
+    return request.app.state.roble
 
 
 @router.post(
@@ -37,15 +35,11 @@ def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
 async def github_webhook(
     request: Request,
     settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
     x_hub_signature_256: str = Header(default=""),
     x_github_event: str = Header(default=""),
 ) -> WebhookAccepted:
-    """Receive and process a GitHub push webhook event.
-
-    Verifies the HMAC-SHA256 signature, checks if the push modifies a
-    notebook file on the monitored branch, and enqueues a pipeline run.
-    """
+    """Receive and process a GitHub push webhook event."""
     body = await request.body()
 
     # Verify signature
@@ -80,21 +74,11 @@ async def github_webhook(
     )
 
     # Find matching repository
-    repos = session.exec(
-        select(Repository).where(
-            Repository.github_url == repo_url,
-            Repository.is_active == True,
-        )
-    ).all()
+    repos = await roble.read("repositories", {"github_url": repo_url, "is_active": "true"})
 
     if not repos:
         # Try with .git suffix variant
-        repos = session.exec(
-            select(Repository).where(
-                Repository.github_url == f"{repo_url}.git",
-                Repository.is_active == True,
-            )
-        ).all()
+        repos = await roble.read("repositories", {"github_url": f"{repo_url}.git", "is_active": "true"})
 
     if not repos:
         logger.info("webhook.no_matching_repo", repo_url=repo_url)
@@ -106,15 +90,15 @@ async def github_webhook(
     repo = repos[0]
 
     # Check branch
-    if repo.branch != branch:
+    if repo.get("branch") != branch:
         logger.info(
             "webhook.branch_mismatch",
-            expected=repo.branch,
+            expected=repo.get("branch"),
             received=branch,
         )
         raise HTTPException(
             status_code=status.HTTP_200_OK,
-            detail=f"Push to branch '{branch}' ignored (monitoring '{repo.branch}').",
+            detail=f"Push to branch '{branch}' ignored (monitoring '{repo.get('branch')}').",
         )
 
     # Check if push modifies a .ipynb file
@@ -131,45 +115,53 @@ async def github_webhook(
             detail="No notebook files modified in this push.",
         )
 
+    repo_id = repo["_id"]
+
     # Deduplication: skip if an identical run is already queued or running
-    existing = session.exec(
-        select(Pipeline).where(
-            Pipeline.repo_id == repo.id,
-            Pipeline.commit_sha == commit_sha,
-            Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
-        )
-    ).first()
+    existing_pipelines = await roble.read("pipelines", {
+        "repo_id": repo_id,
+        "commit_sha": commit_sha,
+    })
+    existing = [
+        p for p in existing_pipelines
+        if p.get("status") in ("queued", "running")
+    ]
 
     if existing:
+        existing_uuid = existing[0].get("pipeline_uuid", existing[0].get("_id"))
         logger.info(
             "webhook.duplicate_pipeline_skipped",
-            existing_pipeline_id=existing.id,
-            repo_id=repo.id,
+            existing_pipeline_id=existing_uuid,
+            repo_id=repo_id,
             commit_sha=commit_sha,
         )
         return WebhookAccepted(
             status="already_queued",
-            pipeline_id=existing.id,
+            pipeline_id=existing_uuid,
         )
 
     # Create pipeline record
-    pipeline = Pipeline(
-        repo_id=repo.id,  # type: ignore[arg-type]
-        status="queued",
-        commit_sha=commit_sha,
-    )
-    session.add(pipeline)
-    session.commit()
-    session.refresh(pipeline)
+    pipeline_uuid = str(uuid.uuid4())
+    pipeline_record = {
+        "pipeline_uuid": pipeline_uuid,
+        "repo_id": repo_id,
+        "status": "queued",
+        "commit_sha": commit_sha,
+        "started_at": None,
+        "finished_at": None,
+        "phases": [],
+        "metrics": {},
+    }
+    await roble.insert("pipelines", [pipeline_record])
 
-    # Enqueue pipeline run
+    # Enqueue pipeline run (use pipeline_uuid as Celery task_id)
     runner = get_pipeline_runner()
-    await runner.run(pipeline.id, repo.id, commit_sha)  # type: ignore[arg-type]
+    await runner.run(pipeline_uuid, repo_id, commit_sha)
 
     logger.info(
         "webhook.pipeline_queued",
-        pipeline_id=pipeline.id,
-        repo_id=repo.id,
+        pipeline_id=pipeline_uuid,
+        repo_id=repo_id,
     )
 
-    return WebhookAccepted(pipeline_id=pipeline.id)
+    return WebhookAccepted(pipeline_id=pipeline_uuid)

@@ -20,6 +20,7 @@ class AppSettings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        protected_namespaces=("settings_",),
     )
 
     # --- GitHub Integration ---
@@ -30,6 +31,24 @@ class AppSettings(BaseSettings):
     github_token: str = Field(
         default="",
         description="GitHub personal-access token for API calls.",
+    )
+
+    # --- ROBLE Database ---
+    roble_auth_url: str = Field(
+        default="https://roble-api.openlab.uninorte.edu.co/auth/mlops_platform_1d2a289c51",
+        description="URL base de autenticación de ROBLE.",
+    )
+    roble_db_url: str = Field(
+        default="https://roble-api.openlab.uninorte.edu.co/database/mlops_platform_1d2a289c51",
+        description="URL base de la API de database de ROBLE.",
+    )
+    roble_email: str = Field(
+        default="",
+        description="Email para autenticación en ROBLE.",
+    )
+    roble_password: str = Field(
+        default="",
+        description="Password para autenticación en ROBLE.",
     )
 
     # --- Infrastructure ---
@@ -45,14 +64,10 @@ class AppSettings(BaseSettings):
         default="http://model-server:8001",
         description="Internal URL of the model-server service.",
     )
-    database_url: str = Field(
-        default="sqlite:///./mlops.db",
-        description="SQLModel / SQLAlchemy database URL.",
-    )
 
     # --- Storage ---
     models_base_path: str = Field(
-        default="/app/models",
+        default="/data/models",
         description="Base directory where trained model artifacts are stored.",
     )
 

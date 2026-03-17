@@ -1,6 +1,6 @@
 """Model management endpoints.
 
-Proxies requests to the model-server and manages deployment records.
+Proxies requests to the model-server and manages deployment records via ROBLE.
 """
 from __future__ import annotations
 
@@ -8,29 +8,25 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from core.config import AppSettings, get_settings
+from core.roble_client import RobleClient
 from models.schemas import (
     MessageResponse,
-    ModelDeployment,
     ModelDeploymentResponse,
     PredictRequest,
     PredictResponse,
     RollbackRequest,
+    deployment_from_roble,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
-    from sqlmodel import create_engine
-
-    engine = create_engine(settings.database_url, echo=False)
-    with Session(engine) as session:
-        yield session
+def _get_roble(request: Request) -> RobleClient:
+    return request.app.state.roble
 
 
 @router.get(
@@ -39,18 +35,11 @@ def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
     summary="List deployed models",
 )
 async def list_models(
-    settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
 ) -> list[ModelDeploymentResponse]:
-    """Return all deployed models from the database and verify against model-server.
-
-    Queries the local database for deployment records. Optionally cross-
-    references with the model-server for live status.
-    """
-    deployments = session.exec(
-        select(ModelDeployment).where(ModelDeployment.is_active == True)
-    ).all()
-    return [ModelDeploymentResponse.model_validate(d) for d in deployments]
+    """Return all active deployed models."""
+    records = await roble.read("model_deployments", {"is_active": "true"})
+    return [deployment_from_roble(d) for d in records]
 
 
 @router.post(
@@ -63,12 +52,7 @@ async def predict(
     body: PredictRequest,
     settings: AppSettings = Depends(get_settings),
 ) -> PredictResponse:
-    """Proxy a prediction request to the model-server.
-
-    Args:
-        model_name: Name of the deployed model.
-        body: Input features as a 2-D array.
-    """
+    """Proxy a prediction request to the model-server."""
     url = f"{settings.model_server_url}/predict/{model_name}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -102,30 +86,22 @@ async def rollback_model(
     model_name: str,
     body: RollbackRequest,
     settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
 ) -> MessageResponse:
-    """Rollback a model to a specific MLflow version.
-
-    Finds the deployment record for the requested version and reloads
-    it in the model-server.
-
-    Args:
-        model_name: Name of the deployed model.
-        body: Contains the target version string.
-    """
+    """Rollback a model to a specific MLflow version."""
     # Find the deployment record for the target version
-    deployment = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.version == body.version,
-        )
-    ).first()
+    records = await roble.read("model_deployments", {
+        "model_name": model_name,
+        "version": body.version,
+    })
 
-    if not deployment:
+    if not records:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No deployment found for {model_name} version {body.version}.",
         )
+
+    deployment = records[0]
 
     # Reload in model-server
     url = f"{settings.model_server_url}/internal/load/{model_name}"
@@ -134,7 +110,7 @@ async def rollback_model(
             resp = await client.post(
                 url,
                 json={
-                    "mlflow_run_id": deployment.pipeline_id or "",
+                    "mlflow_run_id": deployment.get("pipeline_id", ""),
                     "version": body.version,
                 },
             )
@@ -145,20 +121,16 @@ async def rollback_model(
             detail=f"Failed to reload model: {exc}",
         )
 
-    # Update active flags
-    current_active = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.is_active == True,
-        )
-    ).all()
+    # Deactivate all current active deployments for this model
+    current_active = await roble.read("model_deployments", {
+        "model_name": model_name,
+        "is_active": "true",
+    })
     for d in current_active:
-        d.is_active = False
-        session.add(d)
+        await roble.update("model_deployments", "_id", d["_id"], {"is_active": False})
 
-    deployment.is_active = True
-    session.add(deployment)
-    session.commit()
+    # Activate the target deployment
+    await roble.update("model_deployments", "_id", deployment["_id"], {"is_active": True})
 
     logger.info(
         "model.rollback",
@@ -178,13 +150,9 @@ async def rollback_model(
 async def delete_model(
     model_name: str,
     settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    roble: RobleClient = Depends(_get_roble),
 ) -> MessageResponse:
-    """Unload a model from the model-server and deactivate its deployment records.
-
-    Args:
-        model_name: Name of the model to remove.
-    """
+    """Unload a model from the model-server and deactivate its deployment records."""
     # Unload from model-server
     url = f"{settings.model_server_url}/models/{model_name}"
     try:
@@ -198,17 +166,13 @@ async def delete_model(
             error=str(exc),
         )
 
-    # Deactivate in DB
-    deployments = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.is_active == True,
-        )
-    ).all()
+    # Deactivate in ROBLE
+    deployments = await roble.read("model_deployments", {
+        "model_name": model_name,
+        "is_active": "true",
+    })
     for d in deployments:
-        d.is_active = False
-        session.add(d)
-    session.commit()
+        await roble.update("model_deployments", "_id", d["_id"], {"is_active": False})
 
     logger.info("model.deleted", model_name=model_name)
     return MessageResponse(message=f"Model {model_name} unregistered.")
