@@ -32,7 +32,7 @@ jobs:
   test-frontend:
     runs-on: ubuntu-22.04
     container:
-      image: node:18-alpine
+      image: node:20-alpine
     needs: test-backend
     steps:
       - name: Checkout code
