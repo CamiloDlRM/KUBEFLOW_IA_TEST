@@ -4,28 +4,30 @@ Register, list, and delete GitHub repositories with automatic webhook setup.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
-from core.roble_client import RobleClient
 from models.schemas import (
     MessageResponse,
     RepoCreateRequest,
     RepoCreatedResponse,
     RepoResponse,
-    repo_from_roble,
+    Repository,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/repos", tags=["repositories"])
 
 
-def _get_roble(request: Request) -> RobleClient:
-    """Return the ROBLE client from app state."""
-    return request.app.state.roble
+def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
+    """Yield a SQLModel session."""
+    from sqlmodel import create_engine
+
+    engine = create_engine(settings.database_url, echo=False)
+    with Session(engine) as session:
+        yield session
 
 
 @router.post(
@@ -37,11 +39,16 @@ def _get_roble(request: Request) -> RobleClient:
 async def create_repo(
     body: RepoCreateRequest,
     settings: AppSettings = Depends(get_settings),
-    roble: RobleClient = Depends(_get_roble),
+    session: Session = Depends(_get_session),
 ) -> RepoCreatedResponse:
-    """Register a GitHub repository and create a push webhook."""
+    """Register a GitHub repository and create a push webhook.
+
+    The webhook URL is constructed from the backend's public URL.
+    The GitHub token is masked before storage.
+    """
     from core.github import create_webhook
 
+    # Validate notebook_path is not empty/whitespace-only
     clean_notebook_path = body.notebook_path.strip().strip("/")
     if not clean_notebook_path:
         raise HTTPException(
@@ -74,24 +81,23 @@ async def create_repo(
 
     masked_token = f"****{token[-4:]}" if len(token) >= 4 else "****"
 
-    record = {
-        "github_url": body.github_url,
-        "github_token_masked": masked_token,
-        "branch": body.branch,
-        "notebook_path": body.notebook_path,
-        "webhook_id": hook_data.get("id"),
-        "webhook_url": webhook_url,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "is_active": True,
-    }
+    repo = Repository(
+        github_url=body.github_url,
+        github_token_masked=masked_token,
+        branch=body.branch,
+        notebook_path=body.notebook_path,
+        webhook_id=hook_data.get("id"),
+        webhook_url=webhook_url,
+        is_active=True,
+    )
+    session.add(repo)
+    session.commit()
+    session.refresh(repo)
 
-    result = await roble.insert("repositories", [record])
-    repo_id = result[0]["_id"] if result and "_id" in result[0] else ""
-
-    logger.info("repo.created", repo_id=repo_id, github_url=body.github_url)
+    logger.info("repo.created", repo_id=repo.id, github_url=body.github_url)
 
     return RepoCreatedResponse(
-        repo_id=repo_id,
+        repo_id=repo.id,  # type: ignore[arg-type]
         webhook_url=webhook_url,
     )
 
@@ -102,11 +108,11 @@ async def create_repo(
     summary="List repositories",
 )
 async def list_repos(
-    roble: RobleClient = Depends(_get_roble),
+    session: Session = Depends(_get_session),
 ) -> list[RepoResponse]:
     """Return all registered repositories."""
-    records = await roble.read("repositories")
-    return [repo_from_roble(r) for r in records]
+    repos = session.exec(select(Repository)).all()
+    return [RepoResponse.model_validate(r) for r in repos]
 
 
 @router.delete(
@@ -115,12 +121,16 @@ async def list_repos(
     summary="Delete a repository",
 )
 async def delete_repo(
-    repo_id: str,
+    repo_id: int,
     settings: AppSettings = Depends(get_settings),
-    roble: RobleClient = Depends(_get_roble),
+    session: Session = Depends(_get_session),
 ) -> MessageResponse:
-    """Delete a repository and remove its GitHub webhook."""
-    repo = await roble.read_one("repositories", "_id", repo_id)
+    """Delete a repository and remove its GitHub webhook.
+
+    Args:
+        repo_id: Database ID of the repository.
+    """
+    repo = session.get(Repository, repo_id)
     if not repo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -128,13 +138,12 @@ async def delete_repo(
         )
 
     # Attempt to delete GitHub webhook
-    webhook_id = repo.get("webhook_id")
-    if webhook_id:
+    if repo.webhook_id:
         try:
             from core.github import delete_webhook
 
             token = settings.github_token
-            await delete_webhook(repo["github_url"], token, webhook_id)
+            await delete_webhook(repo.github_url, token, repo.webhook_id)
         except Exception as exc:
             logger.warning(
                 "repo.webhook_delete_failed",
@@ -142,7 +151,8 @@ async def delete_repo(
                 error=str(exc),
             )
 
-    await roble.delete("repositories", "_id", repo_id)
+    session.delete(repo)
+    session.commit()
     logger.info("repo.deleted", repo_id=repo_id)
 
     return MessageResponse(message=f"Repository {repo_id} deleted.")

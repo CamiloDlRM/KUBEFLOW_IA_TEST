@@ -21,14 +21,14 @@ export default function Dashboard() {
 
   const pipelines = pipelinesPage?.items ?? [];
 
-  function handleDelete(repoId: string) {
+  function handleDelete(repoId: number) {
     if (window.confirm('Are you sure you want to delete this repository?')) {
       deleteMutation.mutate(repoId);
     }
   }
 
   /** Find latest pipeline for a given repo id */
-  function latestPipelineForRepo(repoId: string): Pipeline | undefined {
+  function latestPipelineForRepo(repoId: number): Pipeline | undefined {
     return pipelines.find((p) => p.repo_id === repoId);
   }
 

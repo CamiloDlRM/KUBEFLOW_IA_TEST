@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code
 COPY . .
 
-# Create models directory (outside /app to avoid conflict with Python models package)
-RUN mkdir -p /data/models
+# Create models directory
+RUN mkdir -p /app/models
 
 EXPOSE 8000
 

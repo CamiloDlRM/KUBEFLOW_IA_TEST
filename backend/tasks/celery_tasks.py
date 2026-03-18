@@ -8,7 +8,6 @@ The main task ``run_pipeline`` orchestrates:
   5. Optional auto-deployment to the model-server
 
 All state is stored in Redis (pipeline phases) and MLflow (model artifacts).
-Database persistence uses ROBLE REST API via RobleClientSync.
 """
 from __future__ import annotations
 
@@ -100,18 +99,6 @@ def _publish_phase(
     r.expire(f"pipeline:{pipeline_id}:phases", 86400)
 
 
-def _get_roble_sync():
-    """Create a RobleClientSync instance."""
-    from core.roble_client import RobleClientSync
-
-    return RobleClientSync(
-        auth_base_url=settings.roble_auth_url,
-        db_base_url=settings.roble_db_url,
-        email=settings.roble_email,
-        password=settings.roble_password,
-    )
-
-
 def _update_pipeline_db(
     pipeline_id: str,
     *,
@@ -121,32 +108,29 @@ def _update_pipeline_db(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
 ) -> None:
-    """Update pipeline record in ROBLE via sync client."""
-    roble = _get_roble_sync()
+    """Update pipeline record in SQLite via SQLModel (sync context)."""
+    from sqlmodel import Session, create_engine, select
+    from models.schemas import Pipeline
 
-    updates: dict[str, Any] = {}
-    if status is not None:
-        updates["status"] = status
-    if phases is not None:
-        updates["phases"] = phases
-    if metrics is not None:
-        updates["metrics"] = metrics
-    if started_at is not None:
-        updates["started_at"] = started_at.isoformat()
-    if finished_at is not None:
-        updates["finished_at"] = finished_at.isoformat()
-
-    if not updates:
-        return
-
-    # Find the pipeline by pipeline_uuid
-    records = roble.read("pipelines", {"pipeline_uuid": pipeline_id})
-    if not records:
-        logger.error("pipeline.not_found_in_db", pipeline_id=pipeline_id)
-        return
-
-    roble_id = records[0]["_id"]
-    roble.update("pipelines", "_id", roble_id, updates)
+    engine = create_engine(settings.database_url, echo=False)
+    with Session(engine) as session:
+        stmt = select(Pipeline).where(Pipeline.id == pipeline_id)
+        pipeline = session.exec(stmt).first()
+        if not pipeline:
+            logger.error("pipeline.not_found_in_db", pipeline_id=pipeline_id)
+            return
+        if status is not None:
+            pipeline.status = status
+        if phases is not None:
+            pipeline.phases = phases
+        if metrics is not None:
+            pipeline.metrics = metrics
+        if started_at is not None:
+            pipeline.started_at = started_at
+        if finished_at is not None:
+            pipeline.finished_at = finished_at
+        session.add(pipeline)
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +147,7 @@ def _update_pipeline_db(
 def run_pipeline(
     self: Any,
     pipeline_id: str,
-    repo_id: str,
+    repo_id: int,
     commit_sha: str,
 ) -> dict[str, Any]:
     """Execute a full ML pipeline for a given repository and commit.
@@ -176,8 +160,8 @@ def run_pipeline(
         5. Auto-deploy if criteria met
 
     Args:
-        pipeline_id: UUID of the pipeline (pipeline_uuid).
-        repo_id: ROBLE _id of the associated repository.
+        pipeline_id: UUID of the pipeline record.
+        repo_id: Repository database ID.
         commit_sha: Git commit SHA that triggered the run.
 
     Returns:
@@ -187,13 +171,15 @@ def run_pipeline(
     import nbformat
     import papermill as pm
 
+    from sqlmodel import Session, create_engine, select
+    from models.schemas import Repository, ModelDeployment
     from core.notebook_parser import validate_required_tags, extract_config
 
     log = logger.bind(pipeline_id=pipeline_id, repo_id=repo_id, commit_sha=commit_sha)
     phases: list[dict[str, Any]] = []
     metrics: dict[str, Any] = {}
 
-    roble = _get_roble_sync()
+    engine = create_engine(settings.database_url, echo=False)
 
     def _phase(name: str, status: str, logs: str = "") -> None:
         ts = datetime.now(timezone.utc).isoformat()
@@ -214,21 +200,26 @@ def run_pipeline(
         _phase("download", "running", "Downloading notebook from GitHub...")
         log.info("pipeline.phase.download.start")
 
-        repo = roble.read_one("repositories", "_id", repo_id)
-        if not repo:
-            raise ValueError(f"Repository {repo_id} not found.")
+        with Session(engine) as session:
+            repo = session.exec(
+                select(Repository).where(Repository.id == repo_id)
+            ).first()
+            if not repo:
+                raise ValueError(f"Repository {repo_id} not found.")
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
         import base64
 
-        owner, repo_name = parse_repo_url(repo["github_url"])
+        owner, repo_name = parse_repo_url(repo.github_url)
         token = settings.github_token or ""
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
         }
-        clean_nb_path = repo["notebook_path"].strip("/")
+        # Sanitise notebook_path: strip leading/trailing slashes to avoid
+        # double-slash in the URL (e.g. /contents//?ref=main).
+        clean_nb_path = repo.notebook_path.strip("/")
         if not clean_nb_path:
             raise ValueError(
                 f"Repository {repo_id} has an empty notebook_path. "
@@ -241,7 +232,7 @@ def run_pipeline(
         resp = httpx.get(
             nb_url,
             headers=headers,
-            params={"ref": repo.get("branch", "main")},
+            params={"ref": repo.branch},
             timeout=60,
             follow_redirects=True,
         )
@@ -251,13 +242,13 @@ def run_pipeline(
             if exc.response.status_code == 404:
                 raise ValueError(
                     f"Notebook not found at '{clean_nb_path}' in repo "
-                    f"{owner}/{repo_name} (branch: {repo.get('branch', 'main')}). "
+                    f"{owner}/{repo_name} (branch: {repo.branch}). "
                     f"Check the notebook_path setting for repository {repo_id}."
                 ) from exc
             raise
         nb_content = base64.b64decode(resp.json()["content"])
         notebook = json.loads(nb_content)
-        _phase("download", "success", f"Notebook '{clean_nb_path}' downloaded successfully from {owner}/{repo_name}@{repo.get('branch', 'main')}")
+        _phase("download", "success", f"Notebook '{clean_nb_path}' downloaded successfully from {owner}/{repo_name}@{repo.branch}")
         log.info("pipeline.phase.download.done")
 
         if _shutting_down:
@@ -291,10 +282,20 @@ def run_pipeline(
             with open(input_path, "w") as f:
                 json.dump(notebook, f)
 
+            # Start the MLflow run BEFORE papermill so the notebook logs
+            # metrics into this same run (avoids the 0.0 accuracy bug).
+            #
+            # IMPORTANT: We use MlflowClient for all post-papermill
+            # operations (log_artifact, set_tag, get_run) because the
+            # notebook's `with mlflow.start_run(run_id=...)` block calls
+            # mlflow.end_run() when it exits, which closes our active run.
+            # MlflowClient operates by run_id directly and does not depend
+            # on an active run context.
             mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
             mlflow.set_experiment(f"mlops-{model_name}")
 
-            # Guard: end any lingering active run
+            # Guard: end any lingering active run left by a previous task
+            # in this reused worker process (Celery forks share global state).
             if mlflow.active_run():
                 log.warning(
                     "pipeline.mlflow.stale_run_cleanup",
@@ -316,6 +317,8 @@ def run_pipeline(
                 mlflow_run_id=mlflow_run_id,
             )
 
+            # Execute with papermill — pass run_id so the notebook
+            # logs metrics into the same MLflow run.
             pm.execute_notebook(
                 input_path,
                 output_path,
@@ -350,9 +353,14 @@ def run_pipeline(
                 raise SystemExit("Worker shutting down")
 
             # Phase 4: Register in MLflow
+            # Re-use the run that was started before papermill — the
+            # notebook already logged metrics (accuracy, etc.) into it.
             _phase("register", "running", "Registering model artifact in MLflow...")
             log.info("pipeline.phase.register.start")
 
+            # Log model artifact via MlflowClient (run_id-based, does not
+            # require an active run context — safe after papermill ends the
+            # run the notebook opened with `with mlflow.start_run()`).
             if os.path.exists(model_output_path):
                 client.log_artifact(mlflow_run_id, model_output_path, artifact_path="model")
                 log.info(
@@ -376,6 +384,8 @@ def run_pipeline(
 
             accuracy = metrics.get("accuracy", 0.0)
 
+            # Ensure the MLflow run is terminated (no-op if already ended
+            # by the notebook).
             try:
                 client.set_terminated(mlflow_run_id)
             except Exception:
@@ -412,24 +422,30 @@ def run_pipeline(
                         f"{settings.model_server_url}/predict/{model_name}"
                     )
 
-                    # Deactivate previous deployments of same model
-                    prev = roble.read("model_deployments", {
-                        "model_name": model_name,
-                        "is_active": "true",
-                    })
-                    for p in prev:
-                        roble.update("model_deployments", "_id", p["_id"], {"is_active": False})
-
                     # Save deployment record
-                    roble.insert("model_deployments", [{
-                        "model_name": model_name,
-                        "version": model_version,
-                        "accuracy": accuracy,
-                        "endpoint_url": endpoint_url,
-                        "deployed_at": datetime.now(timezone.utc).isoformat(),
-                        "is_active": True,
-                        "pipeline_id": pipeline_id,
-                    }])
+                    with Session(engine) as session:
+                        # Deactivate previous deployments of same model
+                        from sqlmodel import select as sel
+                        prev = session.exec(
+                            sel(ModelDeployment).where(
+                                ModelDeployment.model_name == model_name,
+                                ModelDeployment.is_active == True,
+                            )
+                        ).all()
+                        for p in prev:
+                            p.is_active = False
+                            session.add(p)
+
+                        deployment = ModelDeployment(
+                            model_name=model_name,
+                            version=model_version,
+                            accuracy=accuracy,
+                            endpoint_url=endpoint_url,
+                            is_active=True,
+                            pipeline_id=pipeline_id,
+                        )
+                        session.add(deployment)
+                        session.commit()
 
                     deployed = True
                     _phase("deploy", "success", f"Model deployed successfully. Endpoint: {endpoint_url}")
