@@ -1,6 +1,6 @@
 """Shared pytest fixtures for the MLOps backend test suite.
 
-Provides a mock RobleClient, FastAPI test client,
+Provides a clean in-memory SQLite database, FastAPI test client,
 mock Redis, mock Celery tasks, and sample data fixtures.
 """
 from __future__ import annotations
@@ -9,17 +9,19 @@ import hashlib
 import hmac
 import json
 import os
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy.pool import StaticPool
 
 # ---------------------------------------------------------------------------
 # Environment overrides (must be set before importing app modules)
 # ---------------------------------------------------------------------------
+os.environ["DATABASE_URL"] = "sqlite:///./test_mlops.db"
 os.environ["GITHUB_WEBHOOK_SECRET"] = "test-secret"
 os.environ["GITHUB_TOKEN"] = "ghp_test1234567890abcdef"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
@@ -29,10 +31,6 @@ os.environ["FRONTEND_URL"] = "http://localhost:3000"
 os.environ["AUTO_DEPLOY_ON_SUCCESS"] = "true"
 os.environ["MIN_ACCURACY_THRESHOLD"] = "0.70"
 os.environ["RUNNER_BACKEND"] = "celery"
-os.environ["ROBLE_AUTH_URL"] = "https://roble-api.openlab.uninorte.edu.co/auth/:mlops_platform_1d2a289c51"
-os.environ["ROBLE_DB_URL"] = "https://roble-api.openlab.uninorte.edu.co/database/:mlops_platform_1d2a289c51"
-os.environ["ROBLE_EMAIL"] = "test@test.com"
-os.environ["ROBLE_PASSWORD"] = "testpass"
 
 # Clear lru_cache so settings reload with test env vars
 from core.config import get_settings
@@ -41,98 +39,36 @@ get_settings.cache_clear()
 
 
 # ---------------------------------------------------------------------------
-# Mock ROBLE client
+# Database fixtures
 # ---------------------------------------------------------------------------
 
-class MockRobleClient:
-    """In-memory mock of RobleClient for testing."""
+@pytest.fixture(scope="function")
+def db_engine():
+    """Create a shared in-memory SQLite engine usable across threads.
 
-    def __init__(self):
-        self._tables: dict[str, list[dict]] = {
-            "repositories": [],
-            "pipelines": [],
-            "model_deployments": [],
-        }
-        self._id_counter = 0
+    Uses StaticPool and check_same_thread=False so FastAPI's sync
+    dependency injection (running in a threadpool) can share the same
+    in-memory database with the test thread.
+    """
+    # Import all SQLModel table classes so metadata knows about them
+    from models.schemas import Repository, Pipeline, ModelDeployment  # noqa: F401
 
-    def _next_id(self) -> str:
-        self._id_counter += 1
-        return f"roble_{self._id_counter:04d}"
-
-    async def _ensure_authenticated(self) -> None:
-        pass
-
-    async def create_table(self, table_name, description, columns):
-        if table_name not in self._tables:
-            self._tables[table_name] = []
-        return {}
-
-    async def table_exists(self, table_name) -> bool:
-        return table_name in self._tables
-
-    async def insert(self, table_name: str, records: list[dict]) -> list[dict]:
-        result = []
-        for record in records:
-            record = dict(record)
-            record["_id"] = self._next_id()
-            self._tables.setdefault(table_name, []).append(record)
-            result.append(record)
-        return result
-
-    async def read(self, table_name: str, filters: dict | None = None) -> list[dict]:
-        records = self._tables.get(table_name, [])
-        if not filters:
-            return list(records)
-        result = []
-        for r in records:
-            match = True
-            for k, v in filters.items():
-                val = r.get(k)
-                # Handle bool comparison with string "true"/"false"
-                if isinstance(val, bool) and isinstance(v, str):
-                    if v.lower() == "true" and not val:
-                        match = False
-                    elif v.lower() == "false" and val:
-                        match = False
-                elif str(val) != str(v):
-                    match = False
-            if match:
-                result.append(r)
-        return result
-
-    async def read_one(self, table_name: str, id_column: str, id_value: str) -> dict | None:
-        records = await self.read(table_name, {id_column: id_value})
-        return records[0] if records else None
-
-    async def update(self, table_name: str, id_column: str, id_value: str, updates: dict) -> dict:
-        records = self._tables.get(table_name, [])
-        for r in records:
-            if str(r.get(id_column)) == str(id_value):
-                r.update(updates)
-                return r
-        return {}
-
-    async def delete(self, table_name: str, id_column: str, id_value: str) -> dict:
-        records = self._tables.get(table_name, [])
-        self._tables[table_name] = [
-            r for r in records if str(r.get(id_column)) != str(id_value)
-        ]
-        return {}
-
-    async def read_paginated(self, table_name, page, size, sort_key=None, sort_reverse=True):
-        all_records = await self.read(table_name)
-        total = len(all_records)
-        if sort_key:
-            all_records.sort(key=lambda r: r.get(sort_key) or "", reverse=sort_reverse)
-        offset = (page - 1) * size
-        items = all_records[offset:offset + size]
-        return items, total
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    yield engine
+    SQLModel.metadata.drop_all(engine)
+    engine.dispose()
 
 
 @pytest.fixture(scope="function")
-def mock_roble_client():
-    """Return a fresh MockRobleClient for each test."""
-    return MockRobleClient()
+def db_session(db_engine) -> Generator[Session, None, None]:
+    """Yield a SQLModel Session bound to the shared in-memory engine."""
+    with Session(db_engine) as session:
+        yield session
 
 
 # ---------------------------------------------------------------------------
@@ -140,23 +76,28 @@ def mock_roble_client():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="function")
-def test_app(mock_roble_client):
-    """Return a FastAPI TestClient with the mock RobleClient on app.state."""
+def test_app(db_engine):
+    """Return a FastAPI TestClient with dependency overrides for the DB session.
+
+    All routers' _get_session dependencies are overridden to yield sessions
+    from the shared in-memory engine.
+    """
     from main import app
 
-    # Override _get_roble dependency in all routers
-    from routers.repos import _get_roble as repos_get_roble
-    from routers.pipelines import _get_roble as pipelines_get_roble
-    from routers.webhook import _get_roble as webhook_get_roble
-    from routers.models import _get_roble as models_get_roble
+    def _override_session():
+        with Session(db_engine) as session:
+            yield session
 
-    app.dependency_overrides[repos_get_roble] = lambda: mock_roble_client
-    app.dependency_overrides[pipelines_get_roble] = lambda: mock_roble_client
-    app.dependency_overrides[webhook_get_roble] = lambda: mock_roble_client
-    app.dependency_overrides[models_get_roble] = lambda: mock_roble_client
+    # Override all session dependencies across routers
+    from routers.repos import _get_session as repos_get_session
+    from routers.pipelines import _get_session as pipelines_get_session
+    from routers.webhook import _get_session as webhook_get_session
+    from routers.models import _get_session as models_get_session
 
-    # Also set on app.state for any code that accesses it directly
-    app.state.roble = mock_roble_client
+    app.dependency_overrides[repos_get_session] = _override_session
+    app.dependency_overrides[pipelines_get_session] = _override_session
+    app.dependency_overrides[webhook_get_session] = _override_session
+    app.dependency_overrides[models_get_session] = _override_session
 
     client = TestClient(app, raise_server_exceptions=False)
     yield client
@@ -291,8 +232,10 @@ def make_webhook_signature(payload: bytes, secret: str = "test-secret") -> str:
     return f"sha256={digest}"
 
 
-async def seed_repo(mock_roble: MockRobleClient, **kwargs) -> dict:
-    """Insert a Repository record into the mock ROBLE and return it."""
+def seed_repo(session: Session, **kwargs) -> "Repository":
+    """Insert a Repository record into the session and return it."""
+    from models.schemas import Repository
+
     defaults = {
         "github_url": "https://github.com/testuser/testrepo",
         "github_token_masked": "****cdef",
@@ -300,42 +243,50 @@ async def seed_repo(mock_roble: MockRobleClient, **kwargs) -> dict:
         "notebook_path": "notebooks/train.ipynb",
         "webhook_id": 12345,
         "webhook_url": "http://localhost:3000/api/webhook/github",
-        "created_at": datetime.now(timezone.utc).isoformat(),
         "is_active": True,
     }
     defaults.update(kwargs)
-    result = await mock_roble.insert("repositories", [defaults])
-    return result[0]
+    repo = Repository(**defaults)
+    session.add(repo)
+    session.commit()
+    session.refresh(repo)
+    return repo
 
 
-async def seed_pipeline(mock_roble: MockRobleClient, repo_id: str, **kwargs) -> dict:
-    """Insert a Pipeline record into the mock ROBLE and return it."""
+def seed_pipeline(session: Session, repo_id: int, **kwargs) -> "Pipeline":
+    """Insert a Pipeline record into the session and return it."""
+    from models.schemas import Pipeline
+
     defaults = {
-        "pipeline_uuid": str(uuid.uuid4()),
         "repo_id": repo_id,
         "status": "queued",
         "commit_sha": "abc123def456789",
-        "started_at": None,
-        "finished_at": None,
         "phases": [],
         "metrics": {},
     }
     defaults.update(kwargs)
-    result = await mock_roble.insert("pipelines", [defaults])
-    return result[0]
+    pipeline = Pipeline(**defaults)
+    session.add(pipeline)
+    session.commit()
+    session.refresh(pipeline)
+    return pipeline
 
 
-async def seed_model_deployment(mock_roble: MockRobleClient, **kwargs) -> dict:
-    """Insert a ModelDeployment record into the mock ROBLE and return it."""
+def seed_model_deployment(session: Session, **kwargs) -> "ModelDeployment":
+    """Insert a ModelDeployment record into the session and return it."""
+    from models.schemas import ModelDeployment
+
     defaults = {
         "model_name": "iris-classifier",
         "version": "1",
         "accuracy": 0.95,
         "endpoint_url": "http://localhost:8001/predict/iris-classifier",
-        "deployed_at": datetime.now(timezone.utc).isoformat(),
         "is_active": True,
         "pipeline_id": None,
     }
     defaults.update(kwargs)
-    result = await mock_roble.insert("model_deployments", [defaults])
-    return result[0]
+    deployment = ModelDeployment(**defaults)
+    session.add(deployment)
+    session.commit()
+    session.refresh(deployment)
+    return deployment

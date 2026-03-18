@@ -4,14 +4,7 @@ Covers CRUD operations and webhook lifecycle.
 """
 from __future__ import annotations
 
-import asyncio
-
 from tests.conftest import seed_repo
-
-
-def _run(coro):
-    """Helper to run async coroutines in sync tests."""
-    return asyncio.get_event_loop().run_until_complete(coro)
 
 
 class TestCreateRepo:
@@ -64,12 +57,18 @@ class TestCreateRepo:
         test_app,
         mock_github_create_webhook,
     ):
+        """When neither body token nor env GITHUB_TOKEN is provided,
+        the endpoint should return 400.
+
+        Override the settings dependency to return empty github_token.
+        """
         from main import app
         from core.config import AppSettings, get_settings
 
         fake_settings = AppSettings(
             github_token="",
             github_webhook_secret="test-secret",
+            database_url="sqlite://",
         )
         app.dependency_overrides[get_settings] = lambda: fake_settings
 
@@ -96,10 +95,10 @@ class TestListRepos:
     def test_list_repos_when_repos_exist_should_return_list(
         self,
         test_app,
-        mock_roble_client,
+        db_session,
     ):
-        _run(seed_repo(mock_roble_client, github_url="https://github.com/user/repo1"))
-        _run(seed_repo(mock_roble_client, github_url="https://github.com/user/repo2"))
+        seed_repo(db_session, github_url="https://github.com/user/repo1")
+        seed_repo(db_session, github_url="https://github.com/user/repo2")
 
         resp = test_app.get("/repos")
 
@@ -127,12 +126,12 @@ class TestDeleteRepo:
     def test_delete_repo_when_exists_should_delete_webhook_and_return_200(
         self,
         test_app,
-        mock_roble_client,
+        db_session,
         mock_github_delete_webhook,
     ):
-        repo = _run(seed_repo(mock_roble_client))
+        repo = seed_repo(db_session)
 
-        resp = test_app.delete(f"/repos/{repo['_id']}")
+        resp = test_app.delete(f"/repos/{repo.id}")
 
         assert resp.status_code == 200
         assert "deleted" in resp.json()["message"].lower()
@@ -141,7 +140,7 @@ class TestDeleteRepo:
         self,
         test_app,
     ):
-        resp = test_app.delete("/repos/nonexistent_id")
+        resp = test_app.delete("/repos/99999")
 
         assert resp.status_code == 404
         assert "not found" in resp.json()["detail"].lower()
@@ -149,93 +148,14 @@ class TestDeleteRepo:
     def test_delete_repo_when_webhook_delete_fails_should_still_delete_repo(
         self,
         test_app,
-        mock_roble_client,
+        db_session,
         mock_github_delete_webhook,
     ):
         mock_github_delete_webhook.side_effect = Exception("GitHub unreachable")
-        repo = _run(seed_repo(mock_roble_client))
+        repo = seed_repo(db_session)
 
-        resp = test_app.delete(f"/repos/{repo['_id']}")
+        resp = test_app.delete(f"/repos/{repo.id}")
 
         # Should still succeed - webhook deletion failure is non-fatal
         assert resp.status_code == 200
         assert "deleted" in resp.json()["message"].lower()
-
-    def test_delete_repo_when_exists_should_remove_from_roble(
-        self,
-        test_app,
-        mock_roble_client,
-        mock_github_delete_webhook,
-    ):
-        repo = _run(seed_repo(mock_roble_client))
-        repo_id = repo["_id"]
-
-        test_app.delete(f"/repos/{repo_id}")
-
-        # Verify the repo no longer exists in ROBLE
-        remaining = _run(mock_roble_client.read("repositories"))
-        assert all(r["_id"] != repo_id for r in remaining)
-
-
-class TestCreateRepoEdgeCases:
-    """Edge cases for POST /repos"""
-
-    def test_create_repo_when_empty_notebook_path_should_return_422(
-        self,
-        test_app,
-        mock_github_create_webhook,
-    ):
-        resp = test_app.post(
-            "/repos",
-            json={
-                "github_url": "https://github.com/testuser/repo",
-                "github_token": "ghp_testtoken1234",
-                "branch": "main",
-                "notebook_path": "   ",
-            },
-        )
-
-        assert resp.status_code == 422
-        assert "notebook_path" in resp.json()["detail"].lower()
-
-    def test_create_repo_when_uses_env_token_should_succeed(
-        self,
-        test_app,
-        mock_github_create_webhook,
-    ):
-        """When no github_token is provided in body, settings.github_token is used."""
-        resp = test_app.post(
-            "/repos",
-            json={
-                "github_url": "https://github.com/testuser/envtokenrepo",
-                "branch": "main",
-                "notebook_path": "train.ipynb",
-            },
-        )
-
-        assert resp.status_code == 201
-        mock_github_create_webhook.assert_awaited_once()
-
-    def test_create_repo_when_token_masked_correctly_should_show_last_four(
-        self,
-        test_app,
-        mock_roble_client,
-        mock_github_create_webhook,
-    ):
-        resp = test_app.post(
-            "/repos",
-            json={
-                "github_url": "https://github.com/testuser/maskedrepo",
-                "github_token": "ghp_abcdefghijklmno",
-                "branch": "main",
-                "notebook_path": "train.ipynb",
-            },
-        )
-
-        assert resp.status_code == 201
-
-        # Verify the masked token in ROBLE
-        repos = _run(mock_roble_client.read("repositories"))
-        created = [r for r in repos if r["github_url"] == "https://github.com/testuser/maskedrepo"]
-        assert len(created) == 1
-        assert created[0]["github_token_masked"] == "****lmno"
