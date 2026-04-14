@@ -4,30 +4,26 @@ Register, list, and delete GitHub repositories with automatic webhook setup.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.security import get_current_user
+from db import get_session
 from models.schemas import (
     MessageResponse,
     RepoCreateRequest,
     RepoCreatedResponse,
     RepoResponse,
     Repository,
+    User,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/repos", tags=["repositories"])
-
-
-def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
-    """Yield a SQLModel session."""
-    from sqlmodel import create_engine
-
-    engine = create_engine(settings.database_url, echo=False)
-    with Session(engine) as session:
-        yield session
 
 
 @router.post(
@@ -38,8 +34,9 @@ def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
 )
 async def create_repo(
     body: RepoCreateRequest,
-    settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
 ) -> RepoCreatedResponse:
     """Register a GitHub repository and create a push webhook.
 
@@ -108,7 +105,8 @@ async def create_repo(
     summary="List repositories",
 )
 async def list_repos(
-    session: Session = Depends(_get_session),
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
 ) -> list[RepoResponse]:
     """Return all registered repositories."""
     repos = session.exec(select(Repository)).all()
@@ -122,8 +120,9 @@ async def list_repos(
 )
 async def delete_repo(
     repo_id: int,
-    settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
 ) -> MessageResponse:
     """Delete a repository and remove its GitHub webhook.
 

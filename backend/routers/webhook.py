@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlmodel import Session, select
 import structlog
@@ -14,18 +16,11 @@ import structlog
 from core.config import AppSettings, get_settings
 from core.github import verify_webhook_signature
 from core.pipeline import get_pipeline_runner
+from db import get_session
 from models.schemas import Pipeline, Repository, WebhookAccepted
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/webhook", tags=["webhook"])
-
-
-def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
-    from sqlmodel import create_engine
-
-    engine = create_engine(settings.database_url, echo=False)
-    with Session(engine) as session:
-        yield session
 
 
 @router.post(
@@ -36,8 +31,8 @@ def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
 )
 async def github_webhook(
     request: Request,
-    settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
     x_hub_signature_256: str = Header(default=""),
     x_github_event: str = Header(default=""),
 ) -> WebhookAccepted:

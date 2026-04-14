@@ -3,30 +3,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlmodel import Session, func, select
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.security import get_current_user
+from db import get_session
 from models.schemas import (
     Pipeline,
     PipelineListResponse,
     PipelineLogsResponse,
     PipelineResponse,
+    User,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
-
-
-def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
-    from sqlmodel import create_engine
-
-    engine = create_engine(settings.database_url, echo=False)
-    with Session(engine) as session:
-        yield session
 
 
 @router.get(
@@ -37,7 +32,8 @@ def _get_session(settings: AppSettings = Depends(get_settings)) -> Session:
 async def list_pipelines(
     page: int = Query(default=1, ge=1, description="Page number."),
     size: int = Query(default=20, ge=1, le=100, description="Page size."),
-    session: Session = Depends(_get_session),
+    session: Session = Depends(get_session),
+    _: User = Depends(get_current_user),
 ) -> PipelineListResponse:
     """Return a paginated list of all pipeline runs, newest first."""
     total_stmt = select(func.count()).select_from(Pipeline)
@@ -59,7 +55,8 @@ async def list_pipelines(
 )
 async def get_pipeline(
     pipeline_id: str,
-    session: Session = Depends(_get_session),
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
 ) -> PipelineResponse:
     """Return full status, phases, and metrics for a single pipeline run.
 
@@ -82,8 +79,9 @@ async def get_pipeline(
 )
 async def get_pipeline_logs(
     pipeline_id: str,
-    settings: AppSettings = Depends(get_settings),
-    session: Session = Depends(_get_session),
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
 ) -> PipelineLogsResponse:
     """Return all stored log entries for a pipeline.
 
@@ -92,7 +90,6 @@ async def get_pipeline_logs(
     Args:
         pipeline_id: UUID of the pipeline.
     """
-    # Verify pipeline exists
     pipeline = session.get(Pipeline, pipeline_id)
     if not pipeline:
         raise HTTPException(

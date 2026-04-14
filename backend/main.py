@@ -70,12 +70,14 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler.
 
-    Creates SQLModel tables on startup and logs shutdown.
+    Creates all SQLModel tables on startup using the shared engine.
     """
-    from sqlmodel import SQLModel, create_engine
+    from sqlmodel import SQLModel
 
-    engine = create_engine(settings.database_url, echo=False)
-    SQLModel.metadata.create_all(engine)
+    import db  # noqa: F401 — ensures engine is initialised
+    import models.schemas  # noqa: F401 — registers all table metadata
+
+    SQLModel.metadata.create_all(db.engine)
     logger.info("app.startup", database_url=settings.database_url)
     yield
     logger.info("app.shutdown")
@@ -180,14 +182,13 @@ async def ready() -> ReadyResponse:
 # Mount routers
 # ---------------------------------------------------------------------------
 
+from routers.auth import router as auth_router
 from routers.repos import router as repos_router
 from routers.pipelines import router as pipelines_router
 from routers.models import router as models_router
 from routers.webhook import router as webhook_router
 
-# WebSocket router is mounted from pipelines module
-from routers.pipelines import router as pipelines_ws_router
-
+app.include_router(auth_router)
 app.include_router(repos_router)
 app.include_router(pipelines_router)
 app.include_router(models_router)

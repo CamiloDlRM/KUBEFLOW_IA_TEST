@@ -46,8 +46,22 @@ class AppSettings(BaseSettings):
         description="Internal URL of the model-server service.",
     )
     database_url: str = Field(
-        default="sqlite:///./mlops.db",
-        description="SQLModel / SQLAlchemy database URL.",
+        default="postgresql://mlops:mlops@postgres:5432/mlops",
+        description="SQLAlchemy database URL (PostgreSQL).",
+    )
+
+    # --- Auth ---
+    jwt_secret_key: str = Field(
+        default="change-me-in-production",
+        description="Secret key for signing JWT tokens.",
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="Algorithm used to sign JWT tokens.",
+    )
+    access_token_expire_minutes: int = Field(
+        default=60,
+        description="JWT access token TTL in minutes.",
     )
 
     # --- Storage ---

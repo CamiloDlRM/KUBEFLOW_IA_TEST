@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 # ---------------------------------------------------------------------------
 # Environment overrides (must be set before importing app modules)
 # ---------------------------------------------------------------------------
-os.environ["DATABASE_URL"] = "sqlite:///./test_mlops.db"
+os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["GITHUB_WEBHOOK_SECRET"] = "test-secret"
 os.environ["GITHUB_TOKEN"] = "ghp_test1234567890abcdef"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
@@ -31,6 +31,7 @@ os.environ["FRONTEND_URL"] = "http://localhost:3000"
 os.environ["AUTO_DEPLOY_ON_SUCCESS"] = "true"
 os.environ["MIN_ACCURACY_THRESHOLD"] = "0.70"
 os.environ["RUNNER_BACKEND"] = "celery"
+os.environ["JWT_SECRET_KEY"] = "test-jwt-secret"
 
 # Clear lru_cache so settings reload with test env vars
 from core.config import get_settings
@@ -50,8 +51,7 @@ def db_engine():
     dependency injection (running in a threadpool) can share the same
     in-memory database with the test thread.
     """
-    # Import all SQLModel table classes so metadata knows about them
-    from models.schemas import Repository, Pipeline, ModelDeployment  # noqa: F401
+    from models.schemas import Repository, Pipeline, ModelDeployment, User  # noqa: F401
 
     engine = create_engine(
         "sqlite://",
@@ -79,25 +79,24 @@ def db_session(db_engine) -> Generator[Session, None, None]:
 def test_app(db_engine):
     """Return a FastAPI TestClient with dependency overrides for the DB session.
 
-    All routers' _get_session dependencies are overridden to yield sessions
-    from the shared in-memory engine.
+    Overrides:
+    - db.get_session → in-memory SQLite session
+    - core.security.get_current_user → dummy authenticated user
     """
     from main import app
+    import db as db_module
+    from core.security import get_current_user
+    from models.schemas import User
 
     def _override_session():
         with Session(db_engine) as session:
             yield session
 
-    # Override all session dependencies across routers
-    from routers.repos import _get_session as repos_get_session
-    from routers.pipelines import _get_session as pipelines_get_session
-    from routers.webhook import _get_session as webhook_get_session
-    from routers.models import _get_session as models_get_session
+    def _override_current_user():
+        return User(id=1, username="testuser", hashed_password="", is_active=True)
 
-    app.dependency_overrides[repos_get_session] = _override_session
-    app.dependency_overrides[pipelines_get_session] = _override_session
-    app.dependency_overrides[webhook_get_session] = _override_session
-    app.dependency_overrides[models_get_session] = _override_session
+    app.dependency_overrides[db_module.get_session] = _override_session
+    app.dependency_overrides[get_current_user] = _override_current_user
 
     client = TestClient(app, raise_server_exceptions=False)
     yield client
