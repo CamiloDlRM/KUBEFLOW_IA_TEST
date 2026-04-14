@@ -9,8 +9,8 @@ services:
       POSTGRES_USER: mlops
       POSTGRES_PASSWORD: mlops
       POSTGRES_DB: mlops
-    ports:
-      - "5432:5432"
+    expose:
+      - 5432
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
