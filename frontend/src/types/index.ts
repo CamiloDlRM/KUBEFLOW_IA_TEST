@@ -122,8 +122,23 @@ export interface UserResponse {
   id: number;
   username: string;
   role: 'admin' | 'member';
+  email: string | null;
   is_active: boolean;
   created_at: string;
+}
+
+export interface ChangePasswordPayload {
+  current_password: string;
+  new_password: string;
+}
+
+export interface ChangeUsernamePayload {
+  new_username: string;
+}
+
+export interface ChangeRequestedResponse {
+  message: string;
+  email: string;
 }
 
 export interface InviteCreatePayload {

@@ -37,8 +37,23 @@ class User(SQLModel, table=True):
     username: str = SQLField(index=True, unique=True)
     hashed_password: str
     role: str = SQLField(default="member")  # "admin" | "member"
+    email: str | None = SQLField(default=None)
     is_active: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=_utcnow)
+
+
+class ChangeToken(SQLModel, table=True):
+    """Pending credential change awaiting email confirmation."""
+
+    __tablename__ = "change_tokens"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    token: str = SQLField(index=True, unique=True)
+    user_id: int = SQLField(foreign_key="users.id")
+    change_type: str = SQLField()  # "password" | "username"
+    new_value: str = SQLField()    # hashed password OR new username
+    expires_at: datetime
+    used_at: datetime | None = SQLField(default=None)
 
 
 class InviteToken(SQLModel, table=True):
@@ -322,5 +337,30 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: str
+    email: str | None
     is_active: bool
     created_at: datetime
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=72)
+
+
+class ChangeUsernameRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    new_username: str = Field(..., min_length=3, max_length=64)
+
+
+class ConfirmChangeRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    token: str
+
+
+class ChangeRequestedResponse(BaseModel):
+    message: str
+    email: str

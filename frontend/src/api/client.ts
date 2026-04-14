@@ -15,6 +15,9 @@ import type {
   UserResponse,
   InviteCreatePayload,
   InviteTokenResponse,
+  ChangePasswordPayload,
+  ChangeUsernamePayload,
+  ChangeRequestedResponse,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -84,6 +87,21 @@ export async function getMe(): Promise<UserResponse> {
 
 export async function createInvite(payload: InviteCreatePayload): Promise<InviteTokenResponse> {
   const { data } = await apiClient.post<InviteTokenResponse>('/auth/invite', payload);
+  return data;
+}
+
+export async function requestChangePassword(payload: ChangePasswordPayload): Promise<ChangeRequestedResponse> {
+  const { data } = await apiClient.post<ChangeRequestedResponse>('/auth/me/change-password', payload);
+  return data;
+}
+
+export async function requestChangeUsername(payload: ChangeUsernamePayload): Promise<ChangeRequestedResponse> {
+  const { data } = await apiClient.post<ChangeRequestedResponse>('/auth/me/change-username', payload);
+  return data;
+}
+
+export async function confirmChange(token: string): Promise<UserResponse> {
+  const { data } = await apiClient.post<UserResponse>('/auth/confirm-change', { token });
   return data;
 }
 
