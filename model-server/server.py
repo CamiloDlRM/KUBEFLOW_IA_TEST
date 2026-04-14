@@ -34,7 +34,7 @@ class ModelServerSettings(BaseSettings):
     )
 
     mlflow_tracking_uri: str = Field(default="http://mlflow:5000")
-    models_base_path: str = Field(default="/app/models")
+    models_base_path: str = Field(default="/app/model_artifacts")
     log_level: str = Field(default="INFO")
     port: int = Field(default=8001)
 

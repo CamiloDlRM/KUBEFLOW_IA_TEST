@@ -32,7 +32,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
     volumes:
-      - mlops-models:/app/models
+      - mlops-models:/app/model_artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,7 +62,7 @@ services:
       - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
       - PYTHONPATH=/app
     volumes:
-      - mlops-models:/app/models
+      - mlops-models:/app/model_artifacts
       - mlflow-data:/mlflow
     depends_on:
       postgres:
@@ -120,7 +120,7 @@ services:
       - "8001:8001"
     env_file: .env
     volumes:
-      - mlops-models:/app/models
+      - mlops-models:/app/model_artifacts
       - mlflow-data:/mlflow
     depends_on:
       mlflow:
