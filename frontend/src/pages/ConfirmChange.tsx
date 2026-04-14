@@ -12,8 +12,6 @@ export default function ConfirmChange() {
 
   const [state, setState] = useState<State>('loading');
   const [message, setMessage] = useState('');
-  const [changeType, setChangeType] = useState('');
-
   useEffect(() => {
     if (!token) {
       setState('error');
@@ -22,12 +20,8 @@ export default function ConfirmChange() {
     }
 
     confirmChange(token)
-      .then((user) => {
+      .then(() => {
         setState('success');
-        // Detect what changed based on context isn't possible here,
-        // so we show a generic success message
-        setChangeType('credentials');
-        // Force re-login so the new token reflects updated username/password
         logout();
       })
       .catch((err) => {
