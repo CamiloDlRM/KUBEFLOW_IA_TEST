@@ -108,11 +108,11 @@ def _update_pipeline_db(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
 ) -> None:
-    """Update pipeline record in SQLite via SQLModel (sync context)."""
-    from sqlmodel import Session, create_engine, select
+    """Update pipeline record in the database via SQLModel (sync context)."""
+    from sqlmodel import Session, select
     from models.schemas import Pipeline
+    from db import engine
 
-    engine = create_engine(settings.database_url, echo=False)
     with Session(engine) as session:
         stmt = select(Pipeline).where(Pipeline.id == pipeline_id)
         pipeline = session.exec(stmt).first()
@@ -171,15 +171,14 @@ def run_pipeline(
     import nbformat
     import papermill as pm
 
-    from sqlmodel import Session, create_engine, select
+    from sqlmodel import Session, select
     from models.schemas import Repository, ModelDeployment
     from core.notebook_parser import validate_required_tags, extract_config
+    from db import engine
 
     log = logger.bind(pipeline_id=pipeline_id, repo_id=repo_id, commit_sha=commit_sha)
     phases: list[dict[str, Any]] = []
     metrics: dict[str, Any] = {}
-
-    engine = create_engine(settings.database_url, echo=False)
 
     def _phase(name: str, status: str, logs: str = "") -> None:
         ts = datetime.now(timezone.utc).isoformat()

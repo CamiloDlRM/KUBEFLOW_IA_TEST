@@ -1,6 +1,27 @@
 version: "3.9"
 
 services:
+  # ---------- PostgreSQL ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: mlops-postgres
+    environment:
+      POSTGRES_USER: mlops
+      POSTGRES_PASSWORD: mlops
+      POSTGRES_DB: mlops
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U mlops -d mlops" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ---------- Backend API ----------
   backend:
     build: ./backend
@@ -9,11 +30,12 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      - DATABASE_URL=sqlite:////data/mlops.db
+      - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
     volumes:
       - mlops-models:/app/models
-      - mlops-db:/data
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       mlflow:
@@ -37,13 +59,14 @@ services:
     command: celery -A tasks.celery_tasks worker --loglevel=info -Q pipelines,celery --concurrency=2
     env_file: .env
     environment:
-      - DATABASE_URL=sqlite:////data/mlops.db
+      - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
       - PYTHONPATH=/app
     volumes:
       - mlops-models:/app/models
-      - mlops-db:/data
       - mlflow-data:/mlflow
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       mlflow:
@@ -136,4 +159,4 @@ volumes:
   mlops-models:
   mlflow-data:
   redis-data:
-  mlops-db:
+  postgres-data:

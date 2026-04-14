@@ -8,6 +8,11 @@ pydantic-settings==2.6.0
 
 # Database ORM
 sqlmodel==0.0.22
+psycopg2-binary==2.9.10
+
+# Auth
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
 
 # Task Queue
 celery==5.4.0

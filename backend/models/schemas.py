@@ -28,6 +28,18 @@ def _new_uuid() -> str:
 # Database tables (SQLModel with table=True)
 # ---------------------------------------------------------------------------
 
+class User(SQLModel, table=True):
+    """Application user for authentication."""
+
+    __tablename__ = "users"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    username: str = SQLField(index=True, unique=True)
+    hashed_password: str
+    is_active: bool = SQLField(default=True)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+
+
 class Repository(SQLModel, table=True):
     """Registered GitHub repository."""
 
@@ -246,3 +258,34 @@ class MessageResponse(BaseModel):
     """Generic message response."""
 
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Auth schemas
+# ---------------------------------------------------------------------------
+
+class UserRegisterRequest(BaseModel):
+    """Payload to register a new user."""
+
+    model_config = ConfigDict(strict=True)
+
+    username: str = Field(..., min_length=3, max_length=64)
+    password: str = Field(..., min_length=8)
+
+
+class TokenResponse(BaseModel):
+    """JWT access token response."""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+    """Public user representation (no password)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    is_active: bool
+    created_at: datetime
