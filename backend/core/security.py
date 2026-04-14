@@ -1,6 +1,4 @@
 """Authentication helpers: password hashing, JWT creation/verification."""
-from __future__ import annotations
-
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -12,6 +10,7 @@ from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
 from db import get_session
+from models.schemas import User
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -53,10 +52,8 @@ def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[AppSettings, Depends(get_settings)],
-) -> "User":  # noqa: F821  — resolved at runtime
+) -> User:
     """Validate the JWT and return the authenticated User record."""
-    from models.schemas import User
-
     credentials_exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials.",
@@ -81,8 +78,8 @@ def get_current_user(
 
 
 def require_admin(
-    current_user: Annotated["User", Depends(get_current_user)],  # noqa: F821
-) -> "User":  # noqa: F821
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
     """Dependency that requires the authenticated user to have the 'admin' role."""
     if current_user.role != "admin":
         raise HTTPException(
