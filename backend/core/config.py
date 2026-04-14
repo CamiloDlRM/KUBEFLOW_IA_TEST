@@ -66,7 +66,7 @@ class AppSettings(BaseSettings):
 
     # --- Storage ---
     models_base_path: str = Field(
-        default="/app/models",
+        default="/app/model_artifacts",
         description="Base directory where trained model artifacts are stored.",
     )
 

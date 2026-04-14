@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code
 COPY . .
 
-# Create models directory
-RUN mkdir -p /app/models
+# Create model artifacts directory
+RUN mkdir -p /app/model_artifacts
 
 EXPOSE 8001
 
