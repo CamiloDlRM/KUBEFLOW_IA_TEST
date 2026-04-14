@@ -1,4 +1,4 @@
-"""Authentication endpoints: register (invite-only), login, invite generation, and /me."""
+"""Authentication endpoints: register, login, invite, /me, and credential changes."""
 from __future__ import annotations
 
 import secrets
@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.email import send_change_confirmation_email
 from core.security import (
     create_access_token,
     get_current_user,
@@ -20,6 +21,11 @@ from core.security import (
 )
 from db import get_session
 from models.schemas import (
+    ChangePasswordRequest,
+    ChangeRequestedResponse,
+    ChangeToken,
+    ChangeUsernameRequest,
+    ConfirmChangeRequest,
     InviteCreateRequest,
     InviteToken,
     InviteTokenResponse,
@@ -92,6 +98,7 @@ def register(
         username=body.username,
         hashed_password=hash_password(body.password),
         role="member",
+        email=invite.email,
     )
     session.add(user)
     session.flush()  # get user.id before commit
@@ -223,3 +230,186 @@ async def create_invite(
         email=body.email,
         email_sent=email_sent,
     )
+
+
+# ---------------------------------------------------------------------------
+# Credential changes (email-confirmed)
+# ---------------------------------------------------------------------------
+
+def _create_change_token(
+    *,
+    user: User,
+    change_type: str,
+    new_value: str,
+    session: Session,
+    settings: AppSettings,
+) -> str:
+    """Invalidate any previous pending token of the same type and create a new one."""
+    from datetime import datetime
+
+    # Invalidate previous unused tokens for this user + type
+    old_tokens = session.exec(
+        select(ChangeToken).where(
+            ChangeToken.user_id == user.id,
+            ChangeToken.change_type == change_type,
+            ChangeToken.used_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).all()
+    for t in old_tokens:
+        t.used_at = datetime.now(timezone.utc)
+        session.add(t)
+
+    token_value = secrets.token_urlsafe(32)
+    change_token = ChangeToken(
+        token=token_value,
+        user_id=user.id,  # type: ignore[arg-type]
+        change_type=change_type,
+        new_value=new_value,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    session.add(change_token)
+    session.commit()
+    return token_value
+
+
+@router.post(
+    "/me/change-password",
+    response_model=ChangeRequestedResponse,
+    summary="Request a password change (sends confirmation email)",
+)
+async def request_change_password(
+    body: ChangePasswordRequest,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> ChangeRequestedResponse:
+    """Verify the current password and send a confirmation email to apply the new one."""
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect.")
+
+    if not current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address on your account. Ask an admin to update it.",
+        )
+
+    token_value = _create_change_token(
+        user=current_user,
+        change_type="password",
+        new_value=hash_password(body.new_password),
+        session=session,
+        settings=settings,
+    )
+    confirm_url = f"{settings.frontend_url}/confirm-change?token={token_value}"
+
+    background_tasks.add_task(
+        send_change_confirmation_email,
+        to_address=current_user.email,
+        confirm_url=confirm_url,
+        change_type="password",
+        settings=settings,
+    )
+    logger.info("auth.change_password_requested", username=current_user.username)
+    return ChangeRequestedResponse(
+        message="Confirmation email sent. Click the link to apply the new password.",
+        email=current_user.email,
+    )
+
+
+@router.post(
+    "/me/change-username",
+    response_model=ChangeRequestedResponse,
+    summary="Request a username change (sends confirmation email)",
+)
+async def request_change_username(
+    body: ChangeUsernameRequest,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> ChangeRequestedResponse:
+    """Check the new username is available and send a confirmation email."""
+    if not current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address on your account. Ask an admin to update it.",
+        )
+
+    conflict = session.exec(
+        select(User).where(User.username == body.new_username)
+    ).first()
+    if conflict:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken.")
+
+    token_value = _create_change_token(
+        user=current_user,
+        change_type="username",
+        new_value=body.new_username,
+        session=session,
+        settings=settings,
+    )
+    confirm_url = f"{settings.frontend_url}/confirm-change?token={token_value}"
+
+    background_tasks.add_task(
+        send_change_confirmation_email,
+        to_address=current_user.email,
+        confirm_url=confirm_url,
+        change_type="username",
+        new_username=body.new_username,
+        settings=settings,
+    )
+    logger.info("auth.change_username_requested", username=current_user.username, new=body.new_username)
+    return ChangeRequestedResponse(
+        message="Confirmation email sent. Click the link to apply the new username.",
+        email=current_user.email,
+    )
+
+
+@router.post(
+    "/confirm-change",
+    response_model=UserResponse,
+    summary="Apply a pending credential change via confirmation token",
+)
+def confirm_change(
+    body: ConfirmChangeRequest,
+    session: Annotated[Session, Depends(get_session)],
+) -> UserResponse:
+    """Validate the token and apply the pending credential change."""
+    from datetime import datetime
+
+    token = session.exec(
+        select(ChangeToken).where(ChangeToken.token == body.token)
+    ).first()
+
+    if not token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token.")
+    if token.used_at is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token already used.")
+
+    expires = token.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token has expired.")
+
+    user = session.get(User, token.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    if token.change_type == "password":
+        user.hashed_password = token.new_value
+    elif token.change_type == "username":
+        conflict = session.exec(select(User).where(User.username == token.new_value)).first()
+        if conflict:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken.")
+        user.username = token.new_value
+
+    token.used_at = datetime.now(timezone.utc)
+    session.add(user)
+    session.add(token)
+    session.commit()
+    session.refresh(user)
+
+    logger.info("auth.change_confirmed", username=user.username, change_type=token.change_type)
+    return UserResponse.model_validate(user)
