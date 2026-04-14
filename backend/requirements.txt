@@ -22,6 +22,9 @@ redis==5.2.1
 # HTTP client
 httpx==0.28.0
 
+# Email
+aiosmtplib==3.0.2
+
 # Notebook execution
 papermill==2.6.0
 nbformat==5.10.4

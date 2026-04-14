@@ -70,15 +70,33 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler.
 
-    Creates all SQLModel tables on startup using the shared engine.
+    Creates all SQLModel tables on startup and seeds the first admin if configured.
     """
-    from sqlmodel import SQLModel
+    from sqlmodel import SQLModel, Session, select
 
     import db  # noqa: F401 — ensures engine is initialised
     import models.schemas  # noqa: F401 — registers all table metadata
 
     SQLModel.metadata.create_all(db.engine)
     logger.info("app.startup", database_url=settings.database_url)
+
+    # Seed first admin from env vars if no users exist yet
+    if settings.first_admin_username and settings.first_admin_password:
+        from core.security import hash_password
+        from models.schemas import User
+
+        with Session(db.engine) as session:
+            existing = session.exec(select(User)).first()
+            if not existing:
+                admin = User(
+                    username=settings.first_admin_username,
+                    hashed_password=hash_password(settings.first_admin_password),
+                    role="admin",
+                )
+                session.add(admin)
+                session.commit()
+                logger.info("auth.first_admin_created", username=settings.first_admin_username)
+
     yield
     logger.info("app.shutdown")
 

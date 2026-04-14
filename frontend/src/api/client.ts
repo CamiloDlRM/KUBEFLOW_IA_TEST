@@ -13,6 +13,8 @@ import type {
   RegisterPayload,
   TokenResponse,
   UserResponse,
+  InviteCreatePayload,
+  InviteTokenResponse,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +74,16 @@ export async function login(payload: LoginPayload): Promise<TokenResponse> {
 
 export async function register(payload: RegisterPayload): Promise<UserResponse> {
   const { data } = await apiClient.post<UserResponse>('/auth/register', payload);
+  return data;
+}
+
+export async function getMe(): Promise<UserResponse> {
+  const { data } = await apiClient.get<UserResponse>('/auth/me');
+  return data;
+}
+
+export async function createInvite(payload: InviteCreatePayload): Promise<InviteTokenResponse> {
+  const { data } = await apiClient.post<InviteTokenResponse>('/auth/invite', payload);
   return data;
 }
 

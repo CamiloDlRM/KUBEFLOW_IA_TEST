@@ -78,3 +78,15 @@ def get_current_user(
     if user is None or not user.is_active:
         raise credentials_exc
     return user
+
+
+def require_admin(
+    current_user: Annotated["User", Depends(get_current_user)],  # noqa: F821
+) -> "User":  # noqa: F821
+    """Dependency that requires the authenticated user to have the 'admin' role."""
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return current_user
