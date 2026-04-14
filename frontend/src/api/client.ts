@@ -85,6 +85,11 @@ export async function getMe(): Promise<UserResponse> {
   return data;
 }
 
+export async function updateEmail(email: string): Promise<UserResponse> {
+  const { data } = await apiClient.patch<UserResponse>('/auth/me', { email });
+  return data;
+}
+
 export async function createInvite(payload: InviteCreatePayload): Promise<InviteTokenResponse> {
   const { data } = await apiClient.post<InviteTokenResponse>('/auth/invite', payload);
   return data;

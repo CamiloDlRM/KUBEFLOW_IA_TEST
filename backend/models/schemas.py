@@ -342,6 +342,12 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class UpdateProfileRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    email: str = Field(..., min_length=3, max_length=254)
+
+
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
