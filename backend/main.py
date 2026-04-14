@@ -82,6 +82,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Seed first admin from env vars if no users exist yet
     if settings.first_admin_username and settings.first_admin_password:
+        if len(settings.first_admin_password.encode()) > 72:
+            raise ValueError(
+                "FIRST_ADMIN_PASSWORD is longer than 72 bytes (bcrypt limit). "
+                "Please shorten the password."
+            )
         from core.security import hash_password
         from models.schemas import User
 
