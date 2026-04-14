@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon },
@@ -15,10 +16,18 @@ function navLinkClass({ isActive }: { isActive: boolean }) {
 }
 
 export default function Layout() {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+
+  function handleLogout() {
+    logout();
+    navigate('/login');
+  }
+
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}
-      <aside className="hidden w-56 shrink-0 border-r border-slate-800 bg-slate-900 p-4 md:block">
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-slate-800 bg-slate-900 p-4 md:flex">
         <div className="mb-8">
           <h1 className="text-lg font-bold text-slate-100">MLOps Platform</h1>
           <p className="text-xs text-slate-500">Automation Dashboard</p>
@@ -31,6 +40,15 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <div className="mt-auto pt-4">
+          <button
+            onClick={handleLogout}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+          >
+            <LogoutIcon />
+            Sign out
+          </button>
+        </div>
       </aside>
 
       {/* Mobile top nav */}
@@ -42,6 +60,12 @@ export default function Layout() {
               <item.icon />
             </NavLink>
           ))}
+          <button
+            onClick={handleLogout}
+            className="flex items-center rounded-lg px-3 py-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+          >
+            <LogoutIcon />
+          </button>
         </nav>
       </div>
 
@@ -75,6 +99,14 @@ function PlusIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+    </svg>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
     </svg>
   );
 }

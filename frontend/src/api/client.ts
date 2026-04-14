@@ -9,6 +9,10 @@ import type {
   PredictionResult,
   HealthResponse,
   ReadyResponse,
+  LoginPayload,
+  RegisterPayload,
+  TokenResponse,
+  UserResponse,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -17,17 +21,32 @@ import type {
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+export const TOKEN_KEY = 'mlops_token';
+
 const apiClient = axios.create({
   baseURL: API_BASE,
   timeout: 15_000,
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Response interceptor - normalize errors
+// Request interceptor - attach JWT if present
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor - normalize errors + redirect on 401
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (axios.isAxiosError(error) && error.response) {
+      if (error.response.status === 401) {
+        localStorage.removeItem(TOKEN_KEY);
+        window.location.href = '/login';
+      }
       const detail = error.response.data?.detail;
       const message = typeof detail === 'string' ? detail : error.message;
       return Promise.reject(new Error(message));
@@ -35,6 +54,26 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+/* ------------------------------------------------------------------ */
+/*  Auth                                                               */
+/* ------------------------------------------------------------------ */
+
+export async function login(payload: LoginPayload): Promise<TokenResponse> {
+  // Backend uses OAuth2PasswordRequestForm (application/x-www-form-urlencoded)
+  const params = new URLSearchParams();
+  params.append('username', payload.username);
+  params.append('password', payload.password);
+  const { data } = await apiClient.post<TokenResponse>('/auth/login', params, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  });
+  return data;
+}
+
+export async function register(payload: RegisterPayload): Promise<UserResponse> {
+  const { data } = await apiClient.post<UserResponse>('/auth/register', payload);
+  return data;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Repositories                                                       */
