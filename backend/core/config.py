@@ -63,6 +63,18 @@ class AppSettings(BaseSettings):
         default=60,
         description="JWT access token TTL in minutes.",
     )
+    invite_token_expire_hours: int = Field(
+        default=48,
+        description="Default TTL in hours for invite tokens.",
+    )
+    first_admin_username: str = Field(
+        default="",
+        description="Bootstrap admin username. Created on first startup if set and no users exist.",
+    )
+    first_admin_password: str = Field(
+        default="",
+        description="Bootstrap admin password. Must be 8–72 characters.",
+    )
 
     # --- Storage ---
     models_base_path: str = Field(
@@ -82,6 +94,25 @@ class AppSettings(BaseSettings):
     runner_backend: Literal["celery", "kubernetes"] = Field(
         default="celery",
         description="Pipeline runner implementation to use.",
+    )
+
+    # --- Email (SMTP) ---
+    # Dev: point at Mailhog (smtp_host=mailhog, smtp_port=1025, no auth, no TLS)
+    # Prod (ACS): smtp_host=smtp.azurecomm.net, smtp_port=587, use_tls=true,
+    #             smtp_user=<ACS connection string user>, smtp_password=<ACS password>
+    smtp_host: str = Field(default="mailhog", description="SMTP server hostname.")
+    smtp_port: int = Field(default=1025, description="SMTP server port.")
+    smtp_use_tls: bool = Field(default=False, description="Use STARTTLS when connecting.")
+    smtp_user: str = Field(default="", description="SMTP authentication username.")
+    smtp_password: str = Field(default="", description="SMTP authentication password.")
+    email_from_address: str = Field(
+        default="noreply@mlops.local",
+        description="The From address used in outgoing emails.",
+    )
+    email_from_name: str = Field(default="MLOps Platform", description="Display name for the From address.")
+    smtp_enabled: bool = Field(
+        default=True,
+        description="Set to false to disable email sending entirely (invite link still returned).",
     )
 
     # --- Application ---

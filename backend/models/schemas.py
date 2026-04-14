@@ -36,8 +36,23 @@ class User(SQLModel, table=True):
     id: int | None = SQLField(default=None, primary_key=True)
     username: str = SQLField(index=True, unique=True)
     hashed_password: str
+    role: str = SQLField(default="member")  # "admin" | "member"
     is_active: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=_utcnow)
+
+
+class InviteToken(SQLModel, table=True):
+    """Single-use invitation token created by admins."""
+
+    __tablename__ = "invite_tokens"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    token: str = SQLField(index=True, unique=True)
+    email: str | None = SQLField(default=None, description="Email address the invite was sent to.")
+    created_by: int = SQLField(foreign_key="users.id")
+    used_by: int | None = SQLField(default=None, foreign_key="users.id")
+    expires_at: datetime
+    used_at: datetime | None = SQLField(default=None)
 
 
 class Repository(SQLModel, table=True):
@@ -270,7 +285,26 @@ class UserRegisterRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     username: str = Field(..., min_length=3, max_length=64)
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=8, max_length=72)
+    invite_token: str = Field(..., description="Single-use invite token issued by an admin.")
+
+
+class InviteCreateRequest(BaseModel):
+    """Request body to generate an invite token."""
+
+    model_config = ConfigDict(strict=True)
+
+    email: str = Field(..., description="Email address to send the invite to.")
+    expires_in_hours: int = Field(default=48, ge=1, le=720)
+
+
+class InviteTokenResponse(BaseModel):
+    """Invite token response returned to the admin."""
+
+    token: str
+    expires_at: datetime
+    email: str
+    email_sent: bool
 
 
 class TokenResponse(BaseModel):
@@ -287,5 +321,6 @@ class UserResponse(BaseModel):
 
     id: int
     username: str
+    role: str
     is_active: bool
     created_at: datetime

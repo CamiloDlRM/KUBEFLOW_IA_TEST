@@ -134,6 +134,18 @@ services:
       timeout: 5s
       retries: 3
 
+  # ---------- Mailhog (dev SMTP) ----------
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mlops-mailhog
+    expose:
+      - 1025   # SMTP (internal only — backend connects here)
+    ports:
+      - "8025:8025"   # Web UI: http://localhost:8025
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

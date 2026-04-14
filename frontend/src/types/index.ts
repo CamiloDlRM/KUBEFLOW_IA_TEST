@@ -110,6 +110,7 @@ export interface LoginPayload {
 export interface RegisterPayload {
   username: string;
   password: string;
+  invite_token: string;
 }
 
 export interface TokenResponse {
@@ -120,5 +121,19 @@ export interface TokenResponse {
 export interface UserResponse {
   id: number;
   username: string;
+  role: 'admin' | 'member';
   is_active: boolean;
+  created_at: string;
+}
+
+export interface InviteCreatePayload {
+  email: string;
+  expires_in_hours: number;
+}
+
+export interface InviteTokenResponse {
+  token: string;
+  expires_at: string;
+  email: string;
+  email_sent: boolean;
 }
