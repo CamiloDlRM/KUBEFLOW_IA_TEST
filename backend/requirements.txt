@@ -9,6 +9,7 @@ pydantic-settings==2.6.0
 # Database ORM
 sqlmodel==0.0.22
 psycopg2-binary==2.9.10
+alembic==1.13.3
 
 # Auth
 passlib[bcrypt]==1.7.4

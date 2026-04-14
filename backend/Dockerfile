@@ -14,9 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code
 COPY . .
 
-# Create model artifacts directory
-RUN mkdir -p /app/model_artifacts
+# Create model artifacts directory and make entrypoint executable
+RUN mkdir -p /app/model_artifacts && chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/entrypoint.sh"]

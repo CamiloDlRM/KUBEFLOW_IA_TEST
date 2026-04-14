@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import sys
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 import structlog
 import uvicorn
@@ -63,21 +63,21 @@ logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Lifespan: create tables on startup
+# Lifespan
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler.
 
-    Creates all SQLModel tables on startup and seeds the first admin if configured.
+    Schema migrations are handled by Alembic (entrypoint.sh runs
+    `alembic upgrade head` before uvicorn starts).
+    This lifespan only seeds the first admin when configured.
     """
-    from sqlmodel import SQLModel, Session, select
+    from sqlmodel import Session, select
 
     import db  # noqa: F401 — ensures engine is initialised
-    import models.schemas  # noqa: F401 — registers all table metadata
 
-    SQLModel.metadata.create_all(db.engine)
     logger.info("app.startup", database_url=settings.database_url)
 
     # Seed first admin from env vars if no users exist yet
