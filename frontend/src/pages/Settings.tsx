@@ -160,8 +160,10 @@ function UsernameForm() {
 
 function EmailForm() {
   const { currentUser } = useAuth();
+  const hasEmail = !!currentUser?.email;
   const [email, setEmail] = useState(currentUser?.email ?? '');
-  const [saved, setSaved] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [status, setStatus] = useState<'idle' | 'pending'>('idle');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -171,8 +173,8 @@ function EmailForm() {
     setLoading(true);
     try {
       await updateEmail(email);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setPendingEmail(email);
+      setStatus('pending');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
@@ -182,9 +184,9 @@ function EmailForm() {
 
   return (
     <form onSubmit={handle} className="space-y-4">
-      {!currentUser?.email && (
+      {!hasEmail && (
         <div className="rounded-lg bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
-          Your account has no email. Set one to enable password and username change confirmations.
+          No email on this account. Set one to enable password and username change confirmations.
         </div>
       )}
       <div>
@@ -193,19 +195,26 @@ function EmailForm() {
           type="email"
           required
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => { setEmail(e.target.value); setStatus('idle'); }}
           placeholder="you@example.com"
           className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
         />
       </div>
       {error && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>}
-      {saved && <p className="rounded-lg bg-green-500/10 px-3 py-2 text-sm text-green-400">Email updated.</p>}
+      {status === 'pending' && (
+        <div className="rounded-lg bg-blue-500/10 px-3 py-2 text-sm text-blue-400">
+          Confirmation sent to <strong>{hasEmail ? currentUser?.email : pendingEmail}</strong>.{' '}
+          {hasEmail
+            ? 'Click the link in your current inbox to apply the new email.'
+            : 'Check your inbox and click the link to verify this address.'}
+        </div>
+      )}
       <button
         type="submit"
         disabled={loading}
         className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-50"
       >
-        {loading ? 'Saving…' : 'Save email'}
+        {loading ? 'Saving…' : hasEmail ? 'Update email' : 'Save email'}
       </button>
     </form>
   );

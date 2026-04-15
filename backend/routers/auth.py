@@ -169,21 +169,47 @@ def me(
     response_model=UserResponse,
     summary="Update profile (email)",
 )
-def update_me(
+async def update_me(
     body: UpdateProfileRequest,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> UserResponse:
     """Set or update the account email address.
 
-    No confirmation required when setting an email for the first time.
-    Once set, the email is used for credential-change confirmations.
+    - No email on account → saves directly (bootstrapping case).
+    - Email already set → sends a confirmation link to the current email;
+      the new address is applied only after the user clicks it.
     """
-    current_user.email = body.email
-    session.add(current_user)
-    session.commit()
-    session.refresh(current_user)
-    logger.info("auth.profile_updated", username=current_user.username)
+    first_time = not current_user.email
+    # Send to new address when setting for first time (verify it exists),
+    # send to current address when changing (verify identity).
+    recipient = body.email if first_time else current_user.email
+
+    token_value = _create_change_token(
+        user=current_user,
+        change_type="email",
+        new_value=body.email,
+        session=session,
+        settings=settings,
+    )
+    confirm_url = f"{settings.frontend_url}/confirm-change?token={token_value}"
+
+    background_tasks.add_task(
+        send_change_confirmation_email,
+        to_address=recipient,
+        confirm_url=confirm_url,
+        change_type="email",
+        new_username=body.email,
+        settings=settings,
+    )
+    logger.info(
+        "auth.change_email_requested",
+        username=current_user.username,
+        recipient=recipient,
+        first_time=first_time,
+    )
     return UserResponse.model_validate(current_user)
 
 
@@ -428,6 +454,8 @@ def confirm_change(
         if conflict:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken.")
         user.username = token.new_value
+    elif token.change_type == "email":
+        user.email = token.new_value
 
     token.used_at = datetime.now(timezone.utc)
     session.add(user)
