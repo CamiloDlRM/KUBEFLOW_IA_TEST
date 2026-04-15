@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { requestChangePassword, requestChangeUsername } from '../api/client';
+import { requestChangePassword, requestChangeUsername, updateEmail } from '../api/client';
 import type { ChangeRequestedResponse } from '../types';
 
-type Tab = 'password' | 'username';
+type Tab = 'password' | 'username' | 'email';
 
 function SuccessBanner({ res }: { res: ChangeRequestedResponse }) {
   return (
@@ -158,9 +158,62 @@ function UsernameForm() {
   );
 }
 
+function EmailForm() {
+  const { currentUser } = useAuth();
+  const [email, setEmail] = useState(currentUser?.email ?? '');
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handle(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await updateEmail(email);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handle} className="space-y-4">
+      {!currentUser?.email && (
+        <div className="rounded-lg bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
+          Your account has no email. Set one to enable password and username change confirmations.
+        </div>
+      )}
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-400">Email address</label>
+        <input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+        />
+      </div>
+      {error && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>}
+      {saved && <p className="rounded-lg bg-green-500/10 px-3 py-2 text-sm text-green-400">Email updated.</p>}
+      <button
+        type="submit"
+        disabled={loading}
+        className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-50"
+      >
+        {loading ? 'Saving…' : 'Save email'}
+      </button>
+    </form>
+  );
+}
+
 export default function Settings() {
   const { currentUser } = useAuth();
-  const [tab, setTab] = useState<Tab>('password');
+  const [tab, setTab] = useState<Tab>(() => (currentUser?.email ? 'password' : 'email'));
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
@@ -177,7 +230,7 @@ export default function Settings() {
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
         {/* Tabs */}
         <div className="mb-6 flex rounded-lg bg-slate-800 p-1">
-          {(['password', 'username'] as Tab[]).map((t) => (
+          {(['email', 'password', 'username'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -187,12 +240,14 @@ export default function Settings() {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {t === 'password' ? 'Change password' : 'Change username'}
+              {t === 'email' ? 'Email' : t === 'password' ? 'Password' : 'Username'}
             </button>
           ))}
         </div>
 
-        {tab === 'password' ? <PasswordForm /> : <UsernameForm />}
+        {tab === 'email' && <EmailForm />}
+        {tab === 'password' && <PasswordForm />}
+        {tab === 'username' && <UsernameForm />}
       </div>
     </div>
   );

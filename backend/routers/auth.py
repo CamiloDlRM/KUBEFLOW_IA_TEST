@@ -30,6 +30,7 @@ from models.schemas import (
     InviteToken,
     InviteTokenResponse,
     TokenResponse,
+    UpdateProfileRequest,
     User,
     UserRegisterRequest,
     UserResponse,
@@ -160,6 +161,29 @@ def me(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserResponse:
     """Return the profile of the currently authenticated user."""
+    return UserResponse.model_validate(current_user)
+
+
+@router.patch(
+    "/me",
+    response_model=UserResponse,
+    summary="Update profile (email)",
+)
+def update_me(
+    body: UpdateProfileRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+) -> UserResponse:
+    """Set or update the account email address.
+
+    No confirmation required when setting an email for the first time.
+    Once set, the email is used for credential-change confirmations.
+    """
+    current_user.email = body.email
+    session.add(current_user)
+    session.commit()
+    session.refresh(current_user)
+    logger.info("auth.profile_updated", username=current_user.username)
     return UserResponse.model_validate(current_user)
 
 
