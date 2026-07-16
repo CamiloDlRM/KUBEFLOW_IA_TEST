@@ -1,10 +1,18 @@
-"""AI training advisor powered by the Anthropic API.
+"""AI training advisor with pluggable model providers.
 
 After each pipeline run, this module sends the training notebook source code,
-the run's metrics/logs, and the metric history of previous runs to Claude and
+the run's metrics/logs, and the metric history of previous runs to an LLM and
 asks for concrete, actionable feedback: which features to engineer, which
 hyperparameters to tune, and which parts of the code to change to get better
 results on the next run.
+
+Supported providers (selected via ``AI_ADVISOR_PROVIDER``):
+
+- ``anthropic`` — Claude via the Anthropic API (needs ``ANTHROPIC_API_KEY``)
+- ``gemini``    — Google Gemini via the Generative Language API
+                  (needs ``GEMINI_API_KEY``)
+- ``ollama``    — any local model served by Ollama (needs a reachable
+                  ``OLLAMA_BASE_URL``; no API key)
 """
 from __future__ import annotations
 
@@ -13,9 +21,16 @@ from typing import Any
 
 import structlog
 
-from core.config import get_settings
+from core.config import AppSettings, get_settings
 
 logger = structlog.get_logger(__name__)
+
+# Default model per provider, used when AI_ADVISOR_MODEL is left empty.
+DEFAULT_MODELS = {
+    "anthropic": "claude-opus-4-8",
+    "gemini": "gemini-2.5-pro",
+    "ollama": "llama3.1",
+}
 
 SYSTEM_PROMPT = """\
 You are an expert ML engineer reviewing automated training pipeline runs for an \
@@ -52,6 +67,43 @@ If the run FAILED, focus the whole analysis on the root cause of the failure and
 how to fix it.\
 """
 
+
+# ---------------------------------------------------------------------------
+# Provider configuration helpers
+# ---------------------------------------------------------------------------
+
+def resolve_model(settings: AppSettings | None = None) -> str:
+    """Return the configured model, falling back to the provider default."""
+    settings = settings or get_settings()
+    return settings.ai_advisor_model or DEFAULT_MODELS.get(
+        settings.ai_advisor_provider, ""
+    )
+
+
+def advisor_configured(settings: AppSettings | None = None) -> bool:
+    """Return True when the configured provider has what it needs to run."""
+    settings = settings or get_settings()
+    if not settings.ai_advisor_enabled:
+        return False
+    provider = settings.ai_advisor_provider
+    if provider == "anthropic":
+        return bool(settings.anthropic_api_key)
+    if provider == "gemini":
+        return bool(settings.gemini_api_key)
+    if provider == "ollama":
+        return bool(settings.ollama_base_url)
+    return False
+
+
+def advisor_label(settings: AppSettings | None = None) -> str:
+    """Human-readable ``provider:model`` label stored with each insight."""
+    settings = settings or get_settings()
+    return f"{settings.ai_advisor_provider}:{resolve_model(settings)}"
+
+
+# ---------------------------------------------------------------------------
+# Prompt building
+# ---------------------------------------------------------------------------
 
 def _extract_code_cells(notebook: dict[str, Any]) -> str:
     """Return the notebook's code cells as a single annotated source listing."""
@@ -111,6 +163,100 @@ def build_analysis_prompt(
     )
 
 
+# ---------------------------------------------------------------------------
+# Provider backends
+# ---------------------------------------------------------------------------
+
+def _generate_anthropic(settings: AppSettings, model: str, prompt: str) -> str:
+    """Claude via the official Anthropic SDK."""
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+    with client.messages.stream(
+        model=model,
+        max_tokens=16000,
+        thinking={"type": "adaptive"},
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        message = stream.get_final_message()
+
+    if message.stop_reason == "refusal":
+        raise RuntimeError("The AI advisor refused to analyze this pipeline.")
+
+    return "".join(block.text for block in message.content if block.type == "text")
+
+
+def _generate_gemini(settings: AppSettings, model: str, prompt: str) -> str:
+    """Google Gemini via the Generative Language REST API."""
+    import httpx
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{model}:generateContent"
+    )
+    resp = httpx.post(
+        url,
+        headers={"x-goog-api-key": settings.gemini_api_key},
+        json={
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 16000},
+        },
+        timeout=300,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(
+            f"Gemini returned no candidates (blocked?): {json.dumps(data)[:500]}"
+        )
+    parts = candidates[0].get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in parts)
+    if not text.strip():
+        raise RuntimeError("Gemini returned an empty response.")
+    return text
+
+
+def _generate_ollama(settings: AppSettings, model: str, prompt: str) -> str:
+    """Any local model served by Ollama (/api/chat)."""
+    import httpx
+
+    base = settings.ollama_base_url.rstrip("/")
+    resp = httpx.post(
+        f"{base}/api/chat",
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+        },
+        # Local models can be slow, especially on CPU.
+        timeout=600,
+    )
+    resp.raise_for_status()
+    text = resp.json().get("message", {}).get("content", "")
+    if not text.strip():
+        raise RuntimeError("Ollama returned an empty response.")
+    return text
+
+
+_BACKENDS = {
+    "anthropic": _generate_anthropic,
+    "gemini": _generate_gemini,
+    "ollama": _generate_ollama,
+}
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
 def generate_insight(
     *,
     notebook: dict[str, Any],
@@ -120,20 +266,20 @@ def generate_insight(
     history: list[dict[str, Any]],
     commit_sha: str,
 ) -> str:
-    """Call Claude and return the feedback report as Markdown.
+    """Call the configured provider and return the feedback report as Markdown.
 
     Raises:
-        RuntimeError: if no Anthropic API key is configured.
+        RuntimeError: if the configured provider is missing credentials/config.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not advisor_configured(settings):
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not configured; cannot generate AI insights."
+            f"AI advisor provider '{settings.ai_advisor_provider}' is not "
+            "configured (missing API key or base URL)."
         )
 
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    backend = _BACKENDS[settings.ai_advisor_provider]
+    model = resolve_model(settings)
 
     prompt = build_analysis_prompt(
         notebook=notebook,
@@ -144,26 +290,10 @@ def generate_insight(
         commit_sha=commit_sha,
     )
 
-    log = logger.bind(model=settings.ai_advisor_model)
+    log = logger.bind(provider=settings.ai_advisor_provider, model=model)
     log.info("ai_advisor.request.start", prompt_chars=len(prompt))
 
-    with client.messages.stream(
-        model=settings.ai_advisor_model,
-        max_tokens=16000,
-        thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        message = stream.get_final_message()
+    report = backend(settings, model, prompt)
 
-    if message.stop_reason == "refusal":
-        log.warning("ai_advisor.request.refused")
-        raise RuntimeError("The AI advisor refused to analyze this pipeline.")
-
-    report = "".join(block.text for block in message.content if block.type == "text")
-    log.info(
-        "ai_advisor.request.done",
-        output_tokens=message.usage.output_tokens,
-        report_chars=len(report),
-    )
+    log.info("ai_advisor.request.done", report_chars=len(report))
     return report

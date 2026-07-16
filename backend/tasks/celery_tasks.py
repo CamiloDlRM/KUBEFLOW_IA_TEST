@@ -164,7 +164,9 @@ def _download_notebook_for_analysis(repo: Any, ref: str) -> dict[str, Any]:
 
 def _enqueue_analysis(pipeline_id: str) -> None:
     """Create an insight record and queue the AI analysis task."""
-    if not settings.ai_advisor_enabled or not settings.anthropic_api_key:
+    from core.ai_advisor import advisor_configured
+
+    if not advisor_configured(settings):
         logger.info("ai_advisor.skipped", pipeline_id=pipeline_id)
         return
 
@@ -225,7 +227,9 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
             session.commit()
 
     try:
-        _update_insight(status="generating", model=settings.ai_advisor_model)
+        from core.ai_advisor import advisor_label
+
+        _update_insight(status="generating", model=advisor_label(settings))
 
         with Session(engine) as session:
             pipeline = session.get(Pipeline, pipeline_id)

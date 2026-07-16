@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 import structlog
 
+from core.ai_advisor import advisor_configured
 from core.config import AppSettings, get_settings
 from core.security import get_current_user
 from db import get_session
@@ -69,10 +70,13 @@ async def generate_insights(
             status_code=status.HTTP_409_CONFLICT,
             detail="Pipeline is still running; wait for it to finish.",
         )
-    if not settings.anthropic_api_key:
+    if not advisor_configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ANTHROPIC_API_KEY is not configured on the server.",
+            detail=(
+                f"AI advisor provider '{settings.ai_advisor_provider}' is not "
+                "configured on the server (missing API key or base URL)."
+            ),
         )
 
     insight = PipelineInsight(pipeline_id=pipeline_id, status="pending")

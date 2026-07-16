@@ -45,6 +45,10 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    extra_hosts:
+      # Lets the container reach an Ollama server running on the Docker host
+      # via http://host.docker.internal:11434 (needed on Linux).
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
@@ -76,7 +80,24 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    extra_hosts:
+      # The worker is the one that actually calls the AI advisor provider.
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
+
+  # ---------- Ollama (optional, for AI_ADVISOR_PROVIDER=ollama) ----------
+  # Uncomment to run Ollama as a compose service instead of on the host,
+  # and set OLLAMA_BASE_URL=http://ollama:11434 in .env.
+  # After starting, pull a model once:  docker compose exec ollama ollama pull llama3.1
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: mlops-ollama
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   networks:
+  #     - mlops-network
+  #   restart: unless-stopped
 
   # ---------- Redis ----------
   redis:
@@ -172,3 +193,5 @@ volumes:
   mlflow-data:
   redis-data:
   postgres-data:
+  # Uncomment together with the ollama service above:
+  # ollama-data:
