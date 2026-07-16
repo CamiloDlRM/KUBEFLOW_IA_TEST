@@ -14,12 +14,16 @@ from core.config import AppSettings, get_settings
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
+    BranchInfo,
     MessageResponse,
+    Pipeline,
     RepoCreateRequest,
     RepoCreatedResponse,
     RepoResponse,
     Repository,
+    TriggerPipelineRequest,
     User,
+    WebhookAccepted,
 )
 
 logger = structlog.get_logger(__name__)
@@ -155,3 +159,116 @@ async def delete_repo(
     logger.info("repo.deleted", repo_id=repo_id)
 
     return MessageResponse(message=f"Repository {repo_id} deleted.")
+
+
+@router.get(
+    "/{repo_id}/branches",
+    response_model=list[BranchInfo],
+    summary="List the repository's branches",
+)
+async def list_repo_branches(
+    repo_id: int,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+) -> list[BranchInfo]:
+    """Return the branches of the repository (via the GitHub API)."""
+    from core.github import list_branches
+
+    repo = session.get(Repository, repo_id)
+    if not repo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repo_id} not found.",
+        )
+    try:
+        branches = await list_branches(repo.github_url, settings.github_token)
+    except Exception as exc:
+        logger.error("repo.list_branches_failed", repo_id=repo_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to list branches from GitHub: {exc}",
+        )
+    return [BranchInfo(**b) for b in branches]
+
+
+@router.post(
+    "/{repo_id}/trigger",
+    response_model=WebhookAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Launch a pipeline manually from a chosen branch",
+)
+async def trigger_pipeline(
+    repo_id: int,
+    body: TriggerPipelineRequest,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+) -> WebhookAccepted:
+    """Run the training pipeline on demand, from any branch of the repo.
+
+    Unlike the webhook flow, this does not require a push event: it resolves
+    the branch's HEAD commit and enqueues the run directly.
+    """
+    from core.pipeline import get_pipeline_runner
+
+    repo = session.get(Repository, repo_id)
+    if not repo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repo_id} not found.",
+        )
+
+    branch = body.branch.strip() or repo.branch
+
+    # Resolve the branch HEAD so the run is pinned to a concrete commit
+    from core.github import list_branches
+
+    try:
+        branches = await list_branches(repo.github_url, settings.github_token)
+    except Exception as exc:
+        logger.error("repo.trigger_branch_lookup_failed", repo_id=repo_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to resolve branch '{branch}' on GitHub: {exc}",
+        )
+    match = next((b for b in branches if b["name"] == branch), None)
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Branch '{branch}' does not exist in the repository.",
+        )
+    commit_sha = match["commit_sha"]
+
+    # Deduplication: skip if an identical run is already queued or running
+    existing = session.exec(
+        select(Pipeline).where(
+            Pipeline.repo_id == repo.id,
+            Pipeline.commit_sha == commit_sha,
+            Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
+        )
+    ).first()
+    if existing:
+        return WebhookAccepted(status="already_queued", pipeline_id=existing.id)
+
+    pipeline = Pipeline(
+        repo_id=repo.id,  # type: ignore[arg-type]
+        status="queued",
+        commit_sha=commit_sha,
+        branch=branch,
+    )
+    session.add(pipeline)
+    session.commit()
+    session.refresh(pipeline)
+
+    runner = get_pipeline_runner()
+    await runner.run(pipeline.id, repo.id, commit_sha)  # type: ignore[arg-type]
+
+    logger.info(
+        "pipeline.triggered_manually",
+        pipeline_id=pipeline.id,
+        repo_id=repo.id,
+        branch=branch,
+        commit_sha=commit_sha,
+    )
+    return WebhookAccepted(pipeline_id=pipeline.id)

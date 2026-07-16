@@ -167,7 +167,9 @@ def build_analysis_prompt(
 # Provider backends
 # ---------------------------------------------------------------------------
 
-def _generate_anthropic(settings: AppSettings, model: str, prompt: str) -> str:
+def _generate_anthropic(
+    settings: AppSettings, model: str, prompt: str, system: str = SYSTEM_PROMPT
+) -> str:
     """Claude via the official Anthropic SDK."""
     import anthropic
 
@@ -177,7 +179,7 @@ def _generate_anthropic(settings: AppSettings, model: str, prompt: str) -> str:
         model=model,
         max_tokens=16000,
         thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
+        system=system,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         message = stream.get_final_message()
@@ -188,7 +190,9 @@ def _generate_anthropic(settings: AppSettings, model: str, prompt: str) -> str:
     return "".join(block.text for block in message.content if block.type == "text")
 
 
-def _generate_gemini(settings: AppSettings, model: str, prompt: str) -> str:
+def _generate_gemini(
+    settings: AppSettings, model: str, prompt: str, system: str = SYSTEM_PROMPT
+) -> str:
     """Google Gemini via the Generative Language REST API."""
     import httpx
 
@@ -200,7 +204,7 @@ def _generate_gemini(settings: AppSettings, model: str, prompt: str) -> str:
         url,
         headers={"x-goog-api-key": settings.gemini_api_key},
         json={
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": 16000},
         },
@@ -221,7 +225,9 @@ def _generate_gemini(settings: AppSettings, model: str, prompt: str) -> str:
     return text
 
 
-def _generate_ollama(settings: AppSettings, model: str, prompt: str) -> str:
+def _generate_ollama(
+    settings: AppSettings, model: str, prompt: str, system: str = SYSTEM_PROMPT
+) -> str:
     """Any local model served by Ollama (/api/chat)."""
     import httpx
 
@@ -231,7 +237,7 @@ def _generate_ollama(settings: AppSettings, model: str, prompt: str) -> str:
         json={
             "model": model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
@@ -297,3 +303,115 @@ def generate_insight(
 
     log.info("ai_advisor.request.done", report_chars=len(report))
     return report
+
+
+# ---------------------------------------------------------------------------
+# Apply suggestions: generate an improved notebook
+# ---------------------------------------------------------------------------
+
+APPLY_SYSTEM_PROMPT = """\
+You are an expert ML engineer. You receive a training notebook (its code cells, \
+each with an index) and a review report with improvement recommendations.
+
+Apply the recommendations from the report directly to the notebook code. Keep \
+the notebook's overall structure and the `mlops:*` cell tags working: do NOT \
+remove or rename MODEL_NAME, VERSION, MODEL_OUTPUT_PATH, or the joblib.dump \
+export. Only change what the report justifies.
+
+Respond ONLY with a JSON object, no prose and no Markdown fences, with exactly \
+this shape:
+
+{
+  "commit_message": "<one-line conventional commit message in Spanish>",
+  "cells": [
+    {"index": <int, index of an existing code cell>, "source": "<the FULL new source code of that cell>"}
+  ]
+}
+
+Rules:
+- Include only the cells you actually changed.
+- "source" must be the complete replacement source for the cell, not a diff.
+- The code must be valid Python that runs top-to-bottom in the notebook.\
+"""
+
+
+def _extract_json(text: str) -> dict[str, Any]:
+    """Parse a JSON object from model output, tolerating Markdown fences."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        # Strip a leading ```json / ``` fence and the trailing fence
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[: -3]
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"Model did not return a JSON object: {text[:300]}")
+    return json.loads(cleaned[start : end + 1])
+
+
+def apply_cells_patch(
+    notebook: dict[str, Any], cells: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Return a copy of the notebook with the given cell sources replaced."""
+    import copy
+
+    patched = copy.deepcopy(notebook)
+    nb_cells = patched.get("cells", [])
+    for change in cells:
+        index = change.get("index")
+        source = change.get("source", "")
+        if not isinstance(index, int) or index < 0 or index >= len(nb_cells):
+            raise ValueError(f"Patch references invalid cell index: {index}")
+        if nb_cells[index].get("cell_type") != "code":
+            raise ValueError(f"Patch targets non-code cell at index {index}")
+        # nbformat stores source as a list of lines with trailing newlines
+        nb_cells[index]["source"] = source.splitlines(keepends=True)
+        nb_cells[index]["outputs"] = []
+        nb_cells[index]["execution_count"] = None
+    return patched
+
+
+def generate_improved_notebook(
+    *,
+    notebook: dict[str, Any],
+    report: str,
+) -> tuple[dict[str, Any], str]:
+    """Ask the configured provider to apply the report's suggestions.
+
+    Returns:
+        (patched notebook dict, commit message)
+
+    Raises:
+        RuntimeError: if the provider is not configured.
+        ValueError: if the model response cannot be parsed or applied.
+    """
+    settings = get_settings()
+    if not advisor_configured(settings):
+        raise RuntimeError(
+            f"AI advisor provider '{settings.ai_advisor_provider}' is not "
+            "configured (missing API key or base URL)."
+        )
+
+    backend = _BACKENDS[settings.ai_advisor_provider]
+    model = resolve_model(settings)
+
+    prompt = (
+        f"## Informe de revision\n{report}\n\n"
+        f"## Codigo actual del notebook\n```python\n{_extract_code_cells(notebook)}\n```"
+    )
+
+    log = logger.bind(provider=settings.ai_advisor_provider, model=model)
+    log.info("ai_advisor.apply.start", prompt_chars=len(prompt))
+
+    raw = backend(settings, model, prompt, APPLY_SYSTEM_PROMPT)
+    patch = _extract_json(raw)
+
+    cells = patch.get("cells") or []
+    if not cells:
+        raise ValueError("The model returned no cell changes to apply.")
+    commit_message = patch.get("commit_message") or "ai: aplica sugerencias del advisor"
+
+    patched = apply_cells_patch(notebook, cells)
+    log.info("ai_advisor.apply.done", cells_changed=len(cells))
+    return patched, commit_message

@@ -107,7 +107,13 @@ export default function PipelineDetail() {
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-slate-400">
               <span>Repo: <span className="text-slate-200">{repoName}</span></span>
-              <span>Branch: <span className="text-slate-200">{repo?.branch ?? '--'}</span></span>
+              <span>
+                Branch:{' '}
+                <span className={pipeline.branch === 'testing-ia-agent' ? 'text-fuchsia-300' : 'text-slate-200'}>
+                  {pipeline.branch || repo?.branch || '--'}
+                  {pipeline.branch === 'testing-ia-agent' && ' 🤖'}
+                </span>
+              </span>
               <span>Commit: <code className="text-slate-200">{truncate(pipeline.commit_sha)}</code></span>
             </div>
           </div>

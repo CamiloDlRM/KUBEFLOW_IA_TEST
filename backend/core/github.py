@@ -177,6 +177,119 @@ async def download_notebook(
         return notebook
 
 
+async def list_branches(
+    repo_url: str,
+    token: str,
+) -> list[dict[str, str]]:
+    """List branches of the repository as ``{name, commit_sha}`` dicts."""
+    owner, repo = parse_repo_url(repo_url)
+    url = f"{_GITHUB_API}/repos/{owner}/{repo}/branches"
+    branches: list[dict[str, str]] = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        page = 1
+        while True:
+            resp = await client.get(
+                url,
+                headers=_headers(token),
+                params={"per_page": 100, "page": page},
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            branches.extend(
+                {"name": b["name"], "commit_sha": b["commit"]["sha"]} for b in batch
+            )
+            if len(batch) < 100:
+                break
+            page += 1
+    return branches
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers (used from Celery workers)
+# ---------------------------------------------------------------------------
+
+def get_branch_head(repo_url: str, token: str, branch: str) -> str:
+    """Return the HEAD commit SHA of a branch (sync)."""
+    owner, repo = parse_repo_url(repo_url)
+    resp = httpx.get(
+        f"{_GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}",
+        headers=_headers(token),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["object"]["sha"]
+
+
+def upsert_branch(repo_url: str, token: str, branch: str, sha: str) -> None:
+    """Create ``branch`` pointing at ``sha``, or force-move it if it exists (sync)."""
+    owner, repo = parse_repo_url(repo_url)
+    create = httpx.post(
+        f"{_GITHUB_API}/repos/{owner}/{repo}/git/refs",
+        headers=_headers(token),
+        json={"ref": f"refs/heads/{branch}", "sha": sha},
+        timeout=30,
+    )
+    if create.status_code == 422:
+        # Branch already exists — move it to the new base commit
+        update = httpx.patch(
+            f"{_GITHUB_API}/repos/{owner}/{repo}/git/refs/heads/{branch}",
+            headers=_headers(token),
+            json={"sha": sha, "force": True},
+            timeout=30,
+        )
+        update.raise_for_status()
+        logger.info("github.branch_reset", branch=branch, sha=sha)
+        return
+    create.raise_for_status()
+    logger.info("github.branch_created", branch=branch, sha=sha)
+
+
+def commit_file(
+    repo_url: str,
+    token: str,
+    branch: str,
+    path: str,
+    content: bytes,
+    message: str,
+) -> str:
+    """Create or update ``path`` on ``branch`` via the Contents API (sync).
+
+    Returns the SHA of the new commit.
+    """
+    import base64
+
+    owner, repo = parse_repo_url(repo_url)
+    contents_url = f"{_GITHUB_API}/repos/{owner}/{repo}/contents/{path.strip('/')}"
+
+    # Fetch the current blob SHA on the target branch (required for updates)
+    existing = httpx.get(
+        contents_url,
+        headers=_headers(token),
+        params={"ref": branch},
+        timeout=30,
+    )
+    payload: dict[str, Any] = {
+        "message": message,
+        "content": base64.b64encode(content).decode(),
+        "branch": branch,
+    }
+    if existing.status_code == 200:
+        payload["sha"] = existing.json()["sha"]
+
+    resp = httpx.put(contents_url, headers=_headers(token), json=payload, timeout=60)
+    resp.raise_for_status()
+    commit_sha: str = resp.json()["commit"]["sha"]
+    logger.info(
+        "github.file_committed",
+        owner=owner,
+        repo=repo,
+        branch=branch,
+        path=path,
+        commit_sha=commit_sha,
+    )
+    return commit_sha
+
+
 def verify_webhook_signature(
     payload: bytes,
     signature: str,

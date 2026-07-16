@@ -43,10 +43,21 @@ export interface Pipeline {
   repo_id: number;
   status: PipelineStatus;
   commit_sha: string;
+  branch: string;
   started_at: string;
   finished_at: string | null;
   phases: PipelinePhase[];
   metrics: PipelineMetrics;
+}
+
+export interface BranchInfo {
+  name: string;
+  commit_sha: string;
+}
+
+export interface TriggerAccepted {
+  status: string;
+  pipeline_id: string;
 }
 
 export interface PaginatedPipelines {
@@ -159,6 +170,8 @@ export interface InviteTokenResponse {
 
 export type InsightStatus = 'pending' | 'generating' | 'ready' | 'failed';
 
+export type InsightApplyStatus = 'none' | 'queued' | 'applying' | 'pushed' | 'failed';
+
 export interface Insight {
   id: number;
   pipeline_id: string;
@@ -168,4 +181,8 @@ export interface Insight {
   error: string;
   created_at: string;
   finished_at: string | null;
+  apply_status: InsightApplyStatus;
+  apply_error: string;
+  apply_branch: string;
+  apply_commit_sha: string;
 }

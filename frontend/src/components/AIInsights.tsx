@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { generateInsight, getInsights } from '../api/client';
+import { applyInsight, generateInsight, getInsights } from '../api/client';
 import Markdown from './Markdown';
 import Spinner from './Spinner';
 import { formatDate } from '../utils/format';
@@ -11,9 +11,10 @@ interface Props {
 }
 
 /**
- * AI advisor panel for a pipeline run. Shows the latest Claude-generated
- * feedback report, polls while one is being generated, and lets the user
- * request a new analysis on demand.
+ * AI advisor panel for a pipeline run. Shows the latest AI-generated
+ * feedback report, polls while one is being generated, lets the user
+ * request a new analysis, and can push the suggested code changes to the
+ * `testing-ia-agent` branch of the repository.
  */
 export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
   const queryClient = useQueryClient();
@@ -21,10 +22,16 @@ export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
   const { data: insights, isLoading } = useQuery({
     queryKey: ['insights', pipelineId],
     queryFn: () => getInsights(pipelineId),
-    // Poll while an analysis is in flight
+    // Poll while an analysis or an apply/push is in flight
     refetchInterval: (query) => {
       const items = query.state.data;
-      const busy = items?.some((i) => i.status === 'pending' || i.status === 'generating');
+      const busy = items?.some(
+        (i) =>
+          i.status === 'pending' ||
+          i.status === 'generating' ||
+          i.apply_status === 'queued' ||
+          i.apply_status === 'applying',
+      );
       return busy ? 5_000 : false;
     },
   });
@@ -34,8 +41,14 @@ export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['insights', pipelineId] }),
   });
 
+  const applyMutation = useMutation({
+    mutationFn: (insightId: number) => applyInsight(pipelineId, insightId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['insights', pipelineId] }),
+  });
+
   const latest = insights?.[0];
   const busy = latest?.status === 'pending' || latest?.status === 'generating';
+  const applying = latest?.apply_status === 'queued' || latest?.apply_status === 'applying';
   const pipelineFinished = pipelineStatus === 'success' || pipelineStatus === 'failed';
 
   return (
@@ -67,7 +80,7 @@ export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
         {!isLoading && !latest && (
           <p className="py-4 text-center text-sm text-slate-500">
             {pipelineFinished
-              ? 'No AI analysis yet. Click "Analyze this run" to have Claude review the training code, metrics, and history.'
+              ? 'No AI analysis yet. Click "Analyze this run" to have the advisor review the training code, metrics, and history.'
               : 'The AI advisor will analyze this run automatically once the pipeline finishes.'}
           </p>
         )}
@@ -81,7 +94,7 @@ export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
         {latest && busy && (
           <div className="flex items-center gap-3 py-6 text-sm text-slate-400">
             <Spinner size="sm" />
-            Claude is reviewing the notebook code and metrics... this usually takes under a minute.
+            The advisor is reviewing the notebook code and metrics... this usually takes under a minute.
           </div>
         )}
 
@@ -94,6 +107,62 @@ export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
         {latest?.status === 'ready' && (
           <div>
             <Markdown content={latest.content} />
+
+            {/* Apply suggestions & push */}
+            <div className="mt-5 rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-200">
+                    Apply suggestions to the code
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    The advisor rewrites the notebook with its recommendations and pushes
+                    it to the <code className="text-amber-300">testing-ia-agent</code> branch.
+                  </p>
+                </div>
+                <button
+                  onClick={() => applyMutation.mutate(latest.id)}
+                  disabled={applying || applyMutation.isPending}
+                  className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-fuchsia-600 to-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-fuchsia-600/20 transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {(applying || applyMutation.isPending) && <Spinner size="sm" />}
+                  {latest.apply_status === 'pushed'
+                    ? 'Push again'
+                    : applying
+                      ? 'Applying...'
+                      : 'Apply & push'}
+                </button>
+              </div>
+
+              {applyMutation.isError && (
+                <p className="mt-3 text-xs text-red-400">
+                  {(applyMutation.error as Error).message}
+                </p>
+              )}
+
+              {applying && (
+                <p className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+                  <Spinner size="sm" />
+                  Rewriting the notebook and pushing to GitHub... you can leave this page.
+                </p>
+              )}
+
+              {latest.apply_status === 'failed' && (
+                <p className="mt-3 rounded border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-300">
+                  Push failed: {latest.apply_error || 'unknown error'}
+                </p>
+              )}
+
+              {latest.apply_status === 'pushed' && (
+                <div className="mt-3 rounded border border-emerald-700 bg-emerald-900/20 px-3 py-2 text-xs text-emerald-300">
+                  Pushed to branch <code className="font-semibold">{latest.apply_branch}</code>{' '}
+                  (commit <code>{latest.apply_commit_sha.slice(0, 8)}</code>). Review the diff
+                  on GitHub, then use <span className="font-semibold">Run pipeline</span> on the
+                  Dashboard selecting that branch to train with the improved code.
+                </div>
+              )}
+            </div>
+
             <p className="mt-5 border-t border-slate-700/60 pt-3 text-xs text-slate-500">
               Generated by <span className="text-slate-400">{latest.model}</span> ·{' '}
               {formatDate(latest.finished_at)}

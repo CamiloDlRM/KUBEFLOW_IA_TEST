@@ -22,6 +22,11 @@ GitHub Push  -->  Backend API  -->  Celery Worker  -->  MLflow  -->  Model Serve
   Markdown report with a diagnosis, prioritized improvements with code snippets,
   suggested features, and pipeline risks. Failed runs get root-cause analysis.
   Pick the provider with `AI_ADVISOR_PROVIDER` (see below).
+- **AI applies its own suggestions** — one click ("Apply & push") makes the advisor
+  rewrite the notebook per its recommendations and push it to the
+  `testing-ia-agent` branch, ready to review as a diff on GitHub.
+- **Run from any branch** — launch a pipeline manually from the Dashboard picking
+  any branch of the repo (e.g. `testing-ia-agent`), without needing a push event.
 - **Landing page + authentication** — public landing at `/`, JWT login, user invites
   with email confirmation, and an admin panel
 - **Real-time observability** — WebSocket log streaming, phase timeline, metric charts
@@ -176,6 +181,19 @@ curl -X POST http://localhost:8000/pipelines/{pipeline_id}/insights \
 
 Insights are generated automatically when a pipeline finishes if the configured
 provider is ready and `AI_ADVISOR_ENABLED=true`.
+
+```bash
+# Apply the insight's suggestions: the AI rewrites the notebook and pushes it
+# to the testing-ia-agent branch (poll the GET endpoint for apply_status)
+curl -X POST http://localhost:8000/pipelines/{pipeline_id}/insights/{insight_id}/apply \
+  -H "Authorization: Bearer <token>"
+
+# List repo branches / launch a pipeline manually from any branch
+curl http://localhost:8000/repos/{repo_id}/branches -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8000/repos/{repo_id}/trigger \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"branch": "testing-ia-agent"}'
+```
 
 #### Choosing the AI provider
 

@@ -296,6 +296,102 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
+# Apply-suggestions task (AI pushes an improved notebook to a branch)
+# ---------------------------------------------------------------------------
+
+AI_BRANCH_NAME = "testing-ia-agent"
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.apply_insight",
+    max_retries=0,
+)
+def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any]:
+    """Apply an insight's recommendations to the notebook and push them.
+
+    The configured LLM rewrites the affected notebook cells based on the
+    stored feedback report; the result is committed to the
+    ``testing-ia-agent`` branch (created from the run's branch, or reset to
+    it if it already exists) so the user can review the diff and launch a
+    pipeline from that branch.
+    """
+    from sqlmodel import Session, create_engine
+
+    from core.ai_advisor import generate_improved_notebook
+    from core.github import commit_file, get_branch_head, upsert_branch
+    from models.schemas import Pipeline, PipelineInsight, Repository
+
+    log = logger.bind(pipeline_id=pipeline_id, insight_id=insight_id)
+    engine = create_engine(settings.database_url, echo=False)
+
+    def _update_insight(**fields: Any) -> None:
+        with Session(engine) as session:
+            insight = session.get(PipelineInsight, insight_id)
+            if not insight:
+                return
+            for key, value in fields.items():
+                setattr(insight, key, value)
+            session.add(insight)
+            session.commit()
+
+    try:
+        _update_insight(apply_status="applying", apply_error="")
+
+        with Session(engine) as session:
+            insight = session.get(PipelineInsight, insight_id)
+            if not insight or insight.status != "ready" or not insight.content:
+                raise ValueError("Insight is not ready; nothing to apply.")
+            pipeline = session.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found.")
+            repo = session.get(Repository, pipeline.repo_id)
+            if not repo:
+                raise ValueError(f"Repository {pipeline.repo_id} not found.")
+            report = insight.content
+            base_branch = pipeline.branch or repo.branch
+            commit_ref = pipeline.commit_sha or base_branch
+
+        token = settings.github_token
+        if not token:
+            raise ValueError("GITHUB_TOKEN is not configured; cannot push.")
+
+        # 1. Notebook as it was for this run
+        notebook = _download_notebook_for_analysis(repo, commit_ref)
+
+        # 2. LLM applies the report's recommendations
+        patched, commit_message = generate_improved_notebook(
+            notebook=notebook, report=report
+        )
+
+        # 3. Create/reset the AI branch from the run's base branch and push
+        base_sha = get_branch_head(repo.github_url, token, base_branch)
+        upsert_branch(repo.github_url, token, AI_BRANCH_NAME, base_sha)
+        commit_sha = commit_file(
+            repo.github_url,
+            token,
+            AI_BRANCH_NAME,
+            repo.notebook_path,
+            json.dumps(patched, indent=1, ensure_ascii=False).encode("utf-8"),
+            f"{commit_message}\n\nGenerado por el AI Training Advisor "
+            f"(insight #{insight_id}, pipeline {pipeline_id[:8]})",
+        )
+
+        _update_insight(
+            apply_status="pushed",
+            apply_branch=AI_BRANCH_NAME,
+            apply_commit_sha=commit_sha,
+        )
+        log.info("ai_advisor.apply.pushed", branch=AI_BRANCH_NAME, commit_sha=commit_sha)
+        return {"status": "pushed", "branch": AI_BRANCH_NAME, "commit_sha": commit_sha}
+
+    except Exception as exc:
+        log.exception("ai_advisor.apply.failed", error=str(exc))
+        _update_insight(apply_status="failed", apply_error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Main pipeline task
 # ---------------------------------------------------------------------------
 
@@ -334,7 +430,7 @@ def run_pipeline(
     import papermill as pm
 
     from sqlmodel import Session, select
-    from models.schemas import Repository, ModelDeployment
+    from models.schemas import Pipeline, Repository, ModelDeployment
     from core.notebook_parser import validate_required_tags, extract_config
     from db import engine
 
@@ -367,6 +463,8 @@ def run_pipeline(
             ).first()
             if not repo:
                 raise ValueError(f"Repository {repo_id} not found.")
+            pipeline_row = session.get(Pipeline, pipeline_id)
+            run_branch = (pipeline_row.branch if pipeline_row else "") or repo.branch
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
@@ -393,7 +491,7 @@ def run_pipeline(
         resp = httpx.get(
             nb_url,
             headers=headers,
-            params={"ref": repo.branch},
+            params={"ref": run_branch},
             timeout=60,
             follow_redirects=True,
         )
@@ -403,13 +501,13 @@ def run_pipeline(
             if exc.response.status_code == 404:
                 raise ValueError(
                     f"Notebook not found at '{clean_nb_path}' in repo "
-                    f"{owner}/{repo_name} (branch: {repo.branch}). "
+                    f"{owner}/{repo_name} (branch: {run_branch}). "
                     f"Check the notebook_path setting for repository {repo_id}."
                 ) from exc
             raise
         nb_content = base64.b64decode(resp.json()["content"])
         notebook = json.loads(nb_content)
-        _phase("download", "success", f"Notebook '{clean_nb_path}' downloaded successfully from {owner}/{repo_name}@{repo.branch}")
+        _phase("download", "success", f"Notebook '{clean_nb_path}' downloaded successfully from {owner}/{repo_name}@{run_branch}")
         log.info("pipeline.phase.download.done")
 
         if _shutting_down:
@@ -602,6 +700,7 @@ def run_pipeline(
                             version=model_version,
                             accuracy=accuracy,
                             endpoint_url=endpoint_url,
+                            mlflow_run_id=mlflow_run_id,
                             is_active=True,
                             pipeline_id=pipeline_id,
                         )
