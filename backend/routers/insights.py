@@ -89,3 +89,65 @@ async def generate_insights(
     analyze_pipeline.apply_async(args=[pipeline_id, insight.id])
     logger.info("insight.enqueued", pipeline_id=pipeline_id, insight_id=insight.id)
     return InsightResponse.model_validate(insight)
+
+
+@router.post(
+    "/{pipeline_id}/insights/{insight_id}/apply",
+    response_model=InsightResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Apply the insight's suggestions and push them to the AI branch",
+)
+async def apply_insight_endpoint(
+    pipeline_id: str,
+    insight_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    _: Annotated[User, Depends(get_current_user)],
+) -> InsightResponse:
+    """Have the AI rewrite the notebook per its own recommendations and push
+    the result to the ``testing-ia-agent`` branch of the repository.
+
+    Runs asynchronously in a Celery worker; poll the insights GET endpoint
+    until ``apply_status`` becomes ``pushed`` or ``failed``.
+    """
+    insight = session.get(PipelineInsight, insight_id)
+    if not insight or insight.pipeline_id != pipeline_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Insight {insight_id} not found for pipeline {pipeline_id}.",
+        )
+    if insight.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The insight is not ready yet; wait for the analysis to finish.",
+        )
+    if insight.apply_status in ("queued", "applying"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Suggestions are already being applied for this insight.",
+        )
+    if not advisor_configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"AI advisor provider '{settings.ai_advisor_provider}' is not "
+                "configured on the server (missing API key or base URL)."
+            ),
+        )
+    if not settings.github_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GITHUB_TOKEN is not configured on the server; cannot push.",
+        )
+
+    insight.apply_status = "queued"
+    insight.apply_error = ""
+    session.add(insight)
+    session.commit()
+    session.refresh(insight)
+
+    from tasks.celery_tasks import apply_insight
+
+    apply_insight.apply_async(args=[pipeline_id, insight_id])
+    logger.info("insight.apply_enqueued", pipeline_id=pipeline_id, insight_id=insight_id)
+    return InsightResponse.model_validate(insight)

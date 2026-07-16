@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import RepoCard from '../../src/components/RepoCard';
 import type { Repository, Pipeline } from '../../src/types';
@@ -22,6 +23,7 @@ const mockPipeline: Pipeline = {
   repo_id: 1,
   status: 'success',
   commit_sha: 'abc123def456',
+  branch: 'main',
   started_at: '2026-02-23T10:05:00Z',
   finished_at: '2026-02-23T10:10:00Z',
   phases: [],
@@ -33,10 +35,15 @@ function renderCard(
   latestPipeline?: Pipeline,
   onDelete = vi.fn(),
 ) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter>
-      <RepoCard repo={repo} latestPipeline={latestPipeline} onDelete={onDelete} />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <RepoCard repo={repo} latestPipeline={latestPipeline} onDelete={onDelete} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

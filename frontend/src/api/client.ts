@@ -19,6 +19,8 @@ import type {
   ChangeUsernamePayload,
   ChangeRequestedResponse,
   Insight,
+  BranchInfo,
+  TriggerAccepted,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -129,6 +131,22 @@ export async function deleteRepo(repoId: number): Promise<void> {
   await apiClient.delete(`/repos/${repoId}`);
 }
 
+export async function getRepoBranches(repoId: number): Promise<BranchInfo[]> {
+  const { data } = await apiClient.get<BranchInfo[]>(`/repos/${repoId}/branches`);
+  return data;
+}
+
+export async function triggerPipeline(
+  repoId: number,
+  branch = '',
+): Promise<TriggerAccepted> {
+  const { data } = await apiClient.post<TriggerAccepted>(
+    `/repos/${repoId}/trigger`,
+    { branch },
+  );
+  return data;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Pipelines                                                          */
 /* ------------------------------------------------------------------ */
@@ -169,6 +187,16 @@ export async function getInsights(pipelineId: string): Promise<Insight[]> {
 export async function generateInsight(pipelineId: string): Promise<Insight> {
   const { data } = await apiClient.post<Insight>(
     `/pipelines/${pipelineId}/insights`,
+  );
+  return data;
+}
+
+export async function applyInsight(
+  pipelineId: string,
+  insightId: number,
+): Promise<Insight> {
+  const { data } = await apiClient.post<Insight>(
+    `/pipelines/${pipelineId}/insights/${insightId}/apply`,
   );
   return data;
 }

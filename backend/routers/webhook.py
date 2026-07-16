@@ -152,6 +152,7 @@ async def github_webhook(
         repo_id=repo.id,  # type: ignore[arg-type]
         status="queued",
         commit_sha=commit_sha,
+        branch=branch,
     )
     session.add(pipeline)
     session.commit()

@@ -34,6 +34,7 @@ export const mockPipelines = {
       repo_id: 1,
       status: 'success' as const,
       commit_sha: 'abc123def456',
+      branch: 'main',
       started_at: '2026-02-23T10:05:00Z',
       finished_at: '2026-02-23T10:10:00Z',
       phases: [
@@ -50,6 +51,7 @@ export const mockPipelines = {
       repo_id: 2,
       status: 'running' as const,
       commit_sha: 'def456abc789',
+      branch: 'main',
       started_at: '2026-02-23T11:05:00Z',
       finished_at: null,
       phases: [

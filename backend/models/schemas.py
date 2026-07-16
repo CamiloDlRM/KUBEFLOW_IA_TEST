@@ -98,6 +98,7 @@ class Pipeline(SQLModel, table=True):
     repo_id: int = SQLField(foreign_key="repositories.id")
     status: str = SQLField(default="queued")  # queued | running | success | failed
     commit_sha: str = SQLField(default="")
+    branch: str = SQLField(default="")  # branch the run was launched from ("" = repo default)
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
     phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
@@ -114,6 +115,7 @@ class ModelDeployment(SQLModel, table=True):
     version: str = SQLField(default="1")
     accuracy: float = SQLField(default=0.0)
     endpoint_url: str = SQLField(default="")
+    mlflow_run_id: str = SQLField(default="")  # needed to (re)load the model artifact
     deployed_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
     pipeline_id: str | None = SQLField(default=None, foreign_key="pipelines.id")
@@ -132,6 +134,11 @@ class PipelineInsight(SQLModel, table=True):
     error: str = SQLField(default="")
     created_at: datetime = SQLField(default_factory=_utcnow)
     finished_at: datetime | None = SQLField(default=None)
+    # State of "apply suggestions and push to a branch"
+    apply_status: str = SQLField(default="none")  # none | queued | applying | pushed | failed
+    apply_error: str = SQLField(default="")
+    apply_branch: str = SQLField(default="")
+    apply_commit_sha: str = SQLField(default="")
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +238,7 @@ class PipelineResponse(BaseModel):
     repo_id: int
     status: str
     commit_sha: str
+    branch: str = ""
     started_at: datetime | None
     finished_at: datetime | None
     phases: list[dict[str, Any]]
@@ -404,3 +412,22 @@ class InsightResponse(BaseModel):
     error: str
     created_at: datetime
     finished_at: datetime | None
+    apply_status: str = "none"
+    apply_error: str = ""
+    apply_branch: str = ""
+    apply_commit_sha: str = ""
+
+
+class TriggerPipelineRequest(BaseModel):
+    """Payload to launch a pipeline manually from a chosen branch."""
+
+    model_config = ConfigDict(strict=True)
+
+    branch: str = Field(default="", description="Branch to run from (empty = repo default).")
+
+
+class BranchInfo(BaseModel):
+    """A repository branch."""
+
+    name: str
+    commit_sha: str
