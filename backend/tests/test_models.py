@@ -107,6 +107,62 @@ class TestPredict:
 
         assert resp.status_code == 422
 
+    def test_predict_when_model_not_loaded_should_reload_and_retry(
+        self, test_app, db_session
+    ):
+        """A model-server restart loses in-memory models: predict must reload
+        the model from MLflow using the stored run id and retry."""
+        seed_model_deployment(
+            db_session,
+            model_name="iris",
+            version="1",
+            is_active=True,
+            mlflow_run_id="run-abc",
+        )
+
+        mock_client = _mock_async_client(
+            post=AsyncMock(
+                side_effect=[
+                    _resp(404, {"detail": "Model 'iris' is not loaded."}),
+                    _resp(200, {"status": "loaded"}),
+                    _resp(
+                        200,
+                        {"prediction": [0], "model_name": "iris", "version": "1"},
+                    ),
+                ]
+            ),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            resp = test_app.post(
+                "/models/iris/predict",
+                json={"data": [[5.1, 3.5, 1.4, 0.2]]},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["prediction"] == [0]
+        # 3 calls: failed predict, reload, successful retry
+        assert mock_client.post.call_count == 3
+        reload_call = mock_client.post.call_args_list[1]
+        assert "/internal/load/iris" in reload_call.args[0]
+        assert reload_call.kwargs["json"]["mlflow_run_id"] == "run-abc"
+
+    def test_predict_when_not_loaded_and_no_deployment_should_return_404(
+        self, test_app
+    ):
+        mock_client = _mock_async_client(
+            post=AsyncMock(return_value=_resp(404, {"detail": "not loaded"})),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            resp = test_app.post(
+                "/models/ghost/predict",
+                json={"data": [[1.0]]},
+            )
+
+        assert resp.status_code == 404
+        assert "No active deployment" in resp.json()["detail"]
+
     def test_predict_when_model_server_unreachable_should_return_503(self, test_app):
         mock_client = _mock_async_client(
             post=AsyncMock(side_effect=httpx.ConnectError("Connection refused")),
@@ -128,8 +184,20 @@ class TestRollbackModel:
     def test_rollback_when_version_exists_should_reload_and_update_active(
         self, test_app, db_session
     ):
-        seed_model_deployment(db_session, model_name="iris", version="1", is_active=False)
-        seed_model_deployment(db_session, model_name="iris", version="2", is_active=True)
+        seed_model_deployment(
+            db_session,
+            model_name="iris",
+            version="1",
+            is_active=False,
+            mlflow_run_id="run-v1",
+        )
+        seed_model_deployment(
+            db_session,
+            model_name="iris",
+            version="2",
+            is_active=True,
+            mlflow_run_id="run-v2",
+        )
 
         mock_client = _mock_async_client(
             post=AsyncMock(return_value=_resp(200, {"status": "loaded"})),
@@ -143,6 +211,24 @@ class TestRollbackModel:
 
         assert resp.status_code == 200
         assert "Rolled back" in resp.json()["message"]
+        # The model-server must receive the REAL MLflow run id of the target version
+        load_call = mock_client.post.call_args
+        assert load_call.kwargs["json"]["mlflow_run_id"] == "run-v1"
+
+    def test_rollback_when_run_id_unknown_should_return_409(
+        self, test_app, db_session
+    ):
+        # Legacy deployment: no mlflow_run_id stored and no pipeline_id to
+        # backfill from — the rollback cannot locate the artifact.
+        seed_model_deployment(db_session, model_name="iris", version="1", is_active=False)
+
+        resp = test_app.post(
+            "/models/iris/rollback",
+            json={"version": "1"},
+        )
+
+        assert resp.status_code == 409
+        assert "could not be determined" in resp.json()["detail"]
 
     def test_rollback_when_version_not_found_should_return_404(
         self, test_app, db_session
@@ -160,7 +246,13 @@ class TestRollbackModel:
     def test_rollback_when_model_server_fails_should_return_502(
         self, test_app, db_session
     ):
-        seed_model_deployment(db_session, model_name="iris", version="1", is_active=False)
+        seed_model_deployment(
+            db_session,
+            model_name="iris",
+            version="1",
+            is_active=False,
+            mlflow_run_id="run-v1",
+        )
 
         mock_client = _mock_async_client(
             post=AsyncMock(side_effect=Exception("Connection refused")),
