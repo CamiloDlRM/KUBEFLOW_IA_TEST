@@ -46,6 +46,12 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Serialize concurrent migration runners (backend + worker containers
+        # both run `alembic upgrade head` on startup). The advisory lock is
+        # released automatically when this connection closes.
+        if connection.dialect.name == "postgresql":
+            connection.exec_driver_sql("SELECT pg_advisory_lock(78216430)")
+
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
