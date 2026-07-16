@@ -77,17 +77,32 @@ class AppSettings(BaseSettings):
     )
 
     # --- AI Advisor ---
-    anthropic_api_key: str = Field(
-        default="",
-        description="Anthropic API key used by the AI training advisor.",
-    )
     ai_advisor_enabled: bool = Field(
         default=True,
         description="Generate AI feedback automatically after each pipeline run.",
     )
+    ai_advisor_provider: Literal["anthropic", "gemini", "ollama"] = Field(
+        default="anthropic",
+        description="LLM provider used to generate training feedback.",
+    )
     ai_advisor_model: str = Field(
-        default="claude-opus-4-8",
-        description="Claude model used to generate training feedback.",
+        default="",
+        description=(
+            "Model used to generate training feedback. Leave empty to use the "
+            "provider default (claude-opus-4-8 / gemini-2.5-pro / llama3.1)."
+        ),
+    )
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API key (provider=anthropic).",
+    )
+    gemini_api_key: str = Field(
+        default="",
+        description="Google AI Studio API key (provider=gemini).",
+    )
+    ollama_base_url: str = Field(
+        default="http://host.docker.internal:11434",
+        description="Base URL of the Ollama server (provider=ollama).",
     )
 
     # --- Storage ---

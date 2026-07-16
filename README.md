@@ -1,8 +1,8 @@
 # MLOps Automation Platform
 
 End-to-end ML pipeline automation: push a notebook to GitHub, get a deployed model —
-plus an **AI Training Advisor** (powered by Claude) that reviews every run and tells
-you how to improve the next one.
+plus an **AI Training Advisor** that reviews every run and tells you how to improve
+the next one. Works with Claude, Gemini, or any local model served by Ollama.
 
 ## Architecture
 
@@ -11,17 +11,17 @@ GitHub Push  -->  Backend API  -->  Celery Worker  -->  MLflow  -->  Model Serve
                      |                    |
                  PostgreSQL          Redis (state + pub/sub)
                                           |
-                                   AI Advisor (Claude)
+                            AI Advisor (Claude / Gemini / Ollama)
 ```
 
 ## Key Features
 
 - **Push-to-deploy pipelines** — download, validate, execute (papermill), register (MLflow), auto-deploy
-- **AI Training Advisor** — after every run, Claude analyzes the notebook source code,
+- **AI Training Advisor** — after every run, an LLM analyzes the notebook source code,
   the run's metrics/logs, and the metric history of previous runs, and produces a
   Markdown report with a diagnosis, prioritized improvements with code snippets,
   suggested features, and pipeline risks. Failed runs get root-cause analysis.
-  Enabled by setting `ANTHROPIC_API_KEY` in `.env`.
+  Pick the provider with `AI_ADVISOR_PROVIDER` (see below).
 - **Landing page + authentication** — public landing at `/`, JWT login, user invites
   with email confirmation, and an admin panel
 - **Real-time observability** — WebSocket log streaming, phase timeline, metric charts
@@ -37,7 +37,8 @@ GitHub Push  -->  Backend API  -->  Celery Worker  -->  MLflow  -->  Model Serve
 ```bash
 # 1. Clone and configure
 cp .env.example .env
-# Edit .env with your GitHub token, webhook secret, and (optionally) ANTHROPIC_API_KEY
+# Edit .env with your GitHub token, webhook secret, and (optionally) the AI
+# advisor provider credentials (ANTHROPIC_API_KEY / GEMINI_API_KEY / OLLAMA_BASE_URL)
 
 # 2. Start all services
 docker compose up -d --build
@@ -173,8 +174,31 @@ curl -X POST http://localhost:8000/pipelines/{pipeline_id}/insights \
   -H "Authorization: Bearer <token>"
 ```
 
-Insights are generated automatically when a pipeline finishes if `ANTHROPIC_API_KEY`
-is set and `AI_ADVISOR_ENABLED=true`.
+Insights are generated automatically when a pipeline finishes if the configured
+provider is ready and `AI_ADVISOR_ENABLED=true`.
+
+#### Choosing the AI provider
+
+Set these in `.env` (see `.env.example` for details):
+
+| Provider | `AI_ADVISOR_PROVIDER` | Credentials / config | Default model |
+|----------|----------------------|----------------------|---------------|
+| Claude (Anthropic) | `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-4-8` |
+| Google Gemini | `gemini` | `GEMINI_API_KEY` | `gemini-2.5-pro` |
+| Ollama (local, free) | `ollama` | `OLLAMA_BASE_URL` (no API key) | `llama3.1` |
+
+Override the model with `AI_ADVISOR_MODEL` (e.g. `AI_ADVISOR_MODEL=mistral:7b` for
+Ollama, or `AI_ADVISOR_MODEL=gemini-2.5-flash` for a faster/cheaper Gemini).
+
+For Ollama running on the Docker host, the default
+`OLLAMA_BASE_URL=http://host.docker.internal:11434` works out of the box (the
+compose file maps `host.docker.internal` to the host gateway). To run Ollama as
+a container instead, uncomment the `ollama` service in `docker-compose.yml`,
+set `OLLAMA_BASE_URL=http://ollama:11434`, and pull a model once:
+
+```bash
+docker compose exec ollama ollama pull llama3.1
+```
 
 ### Webhook (called by GitHub)
 
