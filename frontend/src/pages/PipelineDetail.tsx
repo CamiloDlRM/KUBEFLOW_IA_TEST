@@ -6,6 +6,7 @@ import { getWsUrl } from '../api/client';
 import PipelineStatusBadge from '../components/PipelineStatus';
 import LogViewer from '../components/LogViewer';
 import MetricsChart from '../components/MetricsChart';
+import AIInsights from '../components/AIInsights';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, truncate, repoNameFromUrl } from '../utils/format';
 import type { PhaseStatus, WebSocketLogMessage, ConnectionStatus } from '../types';
@@ -183,6 +184,9 @@ export default function PipelineDetail() {
           </p>
         )}
       </section>
+
+      {/* AI Training Advisor */}
+      <AIInsights pipelineId={pipeline.id} pipelineStatus={pipeline.status} />
 
       {/* Metrics */}
       <section>

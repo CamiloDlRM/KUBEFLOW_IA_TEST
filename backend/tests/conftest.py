@@ -51,7 +51,13 @@ def db_engine():
     dependency injection (running in a threadpool) can share the same
     in-memory database with the test thread.
     """
-    from models.schemas import Repository, Pipeline, ModelDeployment, User  # noqa: F401
+    from models.schemas import (  # noqa: F401
+        ModelDeployment,
+        Pipeline,
+        PipelineInsight,
+        Repository,
+        User,
+    )
 
     engine = create_engine(
         "sqlite://",

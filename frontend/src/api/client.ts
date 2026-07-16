@@ -18,6 +18,7 @@ import type {
   ChangePasswordPayload,
   ChangeUsernamePayload,
   ChangeRequestedResponse,
+  Insight,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -150,6 +151,24 @@ export async function getPipeline(pipelineId: string): Promise<Pipeline> {
 export async function getPipelineLogs(pipelineId: string): Promise<PipelineLogsResponse> {
   const { data } = await apiClient.get<PipelineLogsResponse>(
     `/pipelines/${pipelineId}/logs`,
+  );
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Insights                                                        */
+/* ------------------------------------------------------------------ */
+
+export async function getInsights(pipelineId: string): Promise<Insight[]> {
+  const { data } = await apiClient.get<Insight[]>(
+    `/pipelines/${pipelineId}/insights`,
+  );
+  return data;
+}
+
+export async function generateInsight(pipelineId: string): Promise<Insight> {
+  const { data } = await apiClient.post<Insight>(
+    `/pipelines/${pipelineId}/insights`,
   );
   return data;
 }

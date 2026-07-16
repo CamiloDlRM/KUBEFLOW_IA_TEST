@@ -76,6 +76,20 @@ class AppSettings(BaseSettings):
         description="Bootstrap admin password. Must be 8–72 characters.",
     )
 
+    # --- AI Advisor ---
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API key used by the AI training advisor.",
+    )
+    ai_advisor_enabled: bool = Field(
+        default=True,
+        description="Generate AI feedback automatically after each pipeline run.",
+    )
+    ai_advisor_model: str = Field(
+        default="claude-opus-4-8",
+        description="Claude model used to generate training feedback.",
+    )
+
     # --- Storage ---
     models_base_path: str = Field(
         default="/app/model_artifacts",

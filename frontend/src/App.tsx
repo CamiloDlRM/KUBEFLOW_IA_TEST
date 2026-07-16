@@ -1,6 +1,7 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -13,7 +14,11 @@ import ConfirmChange from './pages/ConfirmChange';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (isAuthenticated) return children;
+  // Visitors landing on the root see the marketing page; any other
+  // protected route redirects straight to the login form.
+  return location.pathname === '/' ? <Landing /> : <Navigate to="/login" replace />;
 }
 
 export default function App() {
