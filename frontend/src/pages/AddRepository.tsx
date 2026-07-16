@@ -71,7 +71,7 @@ export default function AddRepository() {
             </div>
           )}
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/dashboard')}
             className="mt-4 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500"
           >
             Go to Dashboard
@@ -171,7 +171,7 @@ export default function AddRepository() {
             </button>
             <button
               type="button"
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/dashboard')}
               className="rounded-lg border border-slate-700 px-5 py-2 text-sm font-medium text-slate-300 transition hover:bg-slate-800"
             >
               Cancel

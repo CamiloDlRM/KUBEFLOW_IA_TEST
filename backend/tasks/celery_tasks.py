@@ -133,6 +133,149 @@ def _update_pipeline_db(
         session.commit()
 
 
+def _download_notebook(repo: Any, ref: str) -> dict[str, Any]:
+    """Fetch the repo's training notebook from GitHub at a given ref."""
+    import base64
+
+    import httpx
+
+    from core.github import parse_repo_url
+
+    owner, repo_name = parse_repo_url(repo.github_url)
+    headers = {
+        "Authorization": f"Bearer {settings.github_token or ''}",
+        "Accept": "application/vnd.github+json",
+    }
+    nb_url = (
+        f"https://api.github.com/repos/{owner}/{repo_name}"
+        f"/contents/{repo.notebook_path}"
+    )
+    resp = httpx.get(nb_url, headers=headers, params={"ref": ref}, timeout=60)
+    resp.raise_for_status()
+    return json.loads(base64.b64decode(resp.json()["content"]))
+
+
+def _enqueue_analysis(pipeline_id: str) -> None:
+    """Create an insight record and queue the AI analysis task."""
+    if not settings.ai_advisor_enabled or not settings.anthropic_api_key:
+        logger.info("ai_advisor.skipped", pipeline_id=pipeline_id)
+        return
+
+    from sqlmodel import Session, create_engine
+    from models.schemas import PipelineInsight
+
+    engine = create_engine(settings.database_url, echo=False)
+    with Session(engine) as session:
+        insight = PipelineInsight(pipeline_id=pipeline_id, status="pending")
+        session.add(insight)
+        session.commit()
+        session.refresh(insight)
+        insight_id = insight.id
+
+    analyze_pipeline.apply_async(args=[pipeline_id, insight_id])
+    logger.info("ai_advisor.enqueued", pipeline_id=pipeline_id, insight_id=insight_id)
+
+
+# ---------------------------------------------------------------------------
+# AI analysis task
+# ---------------------------------------------------------------------------
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.analyze_pipeline",
+    max_retries=1,
+    default_retry_delay=30,
+)
+def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any]:
+    """Generate AI feedback for a finished pipeline run.
+
+    Gathers the run's metrics/phases, the notebook source at the run's commit,
+    and the metric history of previous runs on the same repo, then asks Claude
+    for improvement recommendations and stores the Markdown report.
+    """
+    from sqlmodel import Session, create_engine, select
+    from models.schemas import Pipeline, PipelineInsight, Repository
+
+    from core.ai_advisor import generate_insight
+
+    log = logger.bind(pipeline_id=pipeline_id, insight_id=insight_id)
+    engine = create_engine(settings.database_url, echo=False)
+
+    def _update_insight(**fields: Any) -> None:
+        with Session(engine) as session:
+            insight = session.get(PipelineInsight, insight_id)
+            if not insight:
+                return
+            for key, value in fields.items():
+                setattr(insight, key, value)
+            session.add(insight)
+            session.commit()
+
+    try:
+        _update_insight(status="generating", model=settings.ai_advisor_model)
+
+        with Session(engine) as session:
+            pipeline = session.get(Pipeline, pipeline_id)
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found.")
+            repo = session.get(Repository, pipeline.repo_id)
+            if not repo:
+                raise ValueError(f"Repository {pipeline.repo_id} not found.")
+
+            history = session.exec(
+                select(Pipeline)
+                .where(
+                    Pipeline.repo_id == pipeline.repo_id,
+                    Pipeline.id != pipeline_id,
+                )
+                .order_by(Pipeline.started_at.desc())  # type: ignore[union-attr]
+                .limit(10)
+            ).all()
+            history_data = [
+                {
+                    "id": h.id,
+                    "status": h.status,
+                    "metrics": h.metrics,
+                    "finished_at": h.finished_at.isoformat() if h.finished_at else None,
+                }
+                for h in history
+            ]
+            pipeline_data = {
+                "status": pipeline.status,
+                "metrics": pipeline.metrics,
+                "phases": pipeline.phases,
+                "commit_sha": pipeline.commit_sha,
+            }
+
+        notebook = _download_notebook(repo, pipeline_data["commit_sha"] or repo.branch)
+
+        report = generate_insight(
+            notebook=notebook,
+            status=pipeline_data["status"],
+            metrics=pipeline_data["metrics"],
+            phases=pipeline_data["phases"],
+            history=history_data,
+            commit_sha=pipeline_data["commit_sha"] or "HEAD",
+        )
+
+        _update_insight(
+            status="ready",
+            content=report,
+            finished_at=datetime.now(timezone.utc),
+        )
+        log.info("ai_advisor.completed", report_chars=len(report))
+        return {"status": "ready"}
+
+    except Exception as exc:
+        log.exception("ai_advisor.failed", error=str(exc))
+        _update_insight(
+            status="failed",
+            error=str(exc),
+            finished_at=datetime.now(timezone.utc),
+        )
+        return {"status": "failed", "error": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline task
 # ---------------------------------------------------------------------------
@@ -208,28 +351,7 @@ def run_pipeline(
                 raise ValueError(f"Repository {repo_id} not found.")
 
         # Sync download (we are in a Celery worker, not async)
-        from core.github import parse_repo_url
-        import base64
-
-        owner, repo_name = parse_repo_url(repo.github_url)
-        token = settings.github_token or ""
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        }
-        nb_url = (
-            f"https://api.github.com/repos/{owner}/{repo_name}"
-            f"/contents/{repo.notebook_path}"
-        )
-        resp = httpx.get(
-            nb_url,
-            headers=headers,
-            params={"ref": repo.branch},
-            timeout=60,
-        )
-        resp.raise_for_status()
-        nb_content = base64.b64decode(resp.json()["content"])
-        notebook = json.loads(nb_content)
+        notebook = _download_notebook(repo, repo.branch)
         _phase("download", "success")
         log.info("pipeline.phase.download.done")
 
@@ -402,6 +524,7 @@ def run_pipeline(
         )
         _publish_phase(pipeline_id, "complete", "success")
         log.info("pipeline.completed", metrics=metrics)
+        _enqueue_analysis(pipeline_id)
         return {"status": "success", "metrics": metrics}
 
     except SystemExit:
@@ -425,4 +548,5 @@ def run_pipeline(
             metrics=metrics,
             finished_at=datetime.now(timezone.utc),
         )
+        _enqueue_analysis(pipeline_id)
         return {"status": "failed", "error": str(exc)}

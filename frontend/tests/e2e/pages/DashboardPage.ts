@@ -1,4 +1,5 @@
 import type { Page, Locator } from '@playwright/test';
+import { seedAuth } from './auth';
 
 export class DashboardPage {
   readonly page: Page;
@@ -18,7 +19,8 @@ export class DashboardPage {
   }
 
   async navigate() {
-    await this.page.goto('/');
+    await seedAuth(this.page);
+    await this.page.goto('/dashboard');
   }
 
   async clickAddRepository() {

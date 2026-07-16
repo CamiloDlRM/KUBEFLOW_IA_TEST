@@ -51,7 +51,13 @@ def db_engine():
     in-memory database with the test thread.
     """
     # Import all SQLModel table classes so metadata knows about them
-    from models.schemas import Repository, Pipeline, ModelDeployment  # noqa: F401
+    from models.schemas import (  # noqa: F401
+        ModelDeployment,
+        Pipeline,
+        PipelineInsight,
+        Repository,
+        User,
+    )
 
     engine = create_engine(
         "sqlite://",
@@ -93,11 +99,15 @@ def test_app(db_engine):
     from routers.pipelines import _get_session as pipelines_get_session
     from routers.webhook import _get_session as webhook_get_session
     from routers.models import _get_session as models_get_session
+    from routers.auth import _get_session as auth_get_session
+    from routers.insights import _get_session as insights_get_session
 
     app.dependency_overrides[repos_get_session] = _override_session
     app.dependency_overrides[pipelines_get_session] = _override_session
     app.dependency_overrides[webhook_get_session] = _override_session
     app.dependency_overrides[models_get_session] = _override_session
+    app.dependency_overrides[auth_get_session] = _override_session
+    app.dependency_overrides[insights_get_session] = _override_session
 
     client = TestClient(app, raise_server_exceptions=False)
     yield client

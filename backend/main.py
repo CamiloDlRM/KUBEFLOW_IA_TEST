@@ -72,10 +72,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     Creates SQLModel tables on startup and logs shutdown.
     """
-    from sqlmodel import SQLModel, create_engine
+    from sqlmodel import Session, SQLModel, create_engine, select
 
     engine = create_engine(settings.database_url, echo=False)
     SQLModel.metadata.create_all(engine)
+
+    # Seed the admin user if it doesn't exist yet
+    from core.security import hash_password
+    from models.schemas import User
+
+    with Session(engine) as session:
+        existing = session.exec(
+            select(User).where(User.email == settings.admin_email)
+        ).first()
+        if not existing:
+            session.add(
+                User(
+                    email=settings.admin_email,
+                    password_hash=hash_password(settings.admin_password),
+                    full_name="Administrator",
+                )
+            )
+            session.commit()
+            logger.info("app.admin_user_seeded", email=settings.admin_email)
+
     logger.info("app.startup", database_url=settings.database_url)
     yield
     logger.info("app.shutdown")
@@ -184,6 +204,8 @@ from routers.repos import router as repos_router
 from routers.pipelines import router as pipelines_router
 from routers.models import router as models_router
 from routers.webhook import router as webhook_router
+from routers.auth import router as auth_router
+from routers.insights import router as insights_router
 
 # WebSocket router is mounted from pipelines module
 from routers.pipelines import router as pipelines_ws_router
@@ -192,6 +214,8 @@ app.include_router(repos_router)
 app.include_router(pipelines_router)
 app.include_router(models_router)
 app.include_router(webhook_router)
+app.include_router(auth_router)
+app.include_router(insights_router)
 
 
 # ---------------------------------------------------------------------------

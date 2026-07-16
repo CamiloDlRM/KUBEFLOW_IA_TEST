@@ -1,6 +1,8 @@
 # MLOps Automation Platform
 
-End-to-end ML pipeline automation: push a notebook to GitHub, get a deployed model.
+End-to-end ML pipeline automation: push a notebook to GitHub, get a deployed model —
+plus an **AI Training Advisor** (powered by Claude) that reviews every run and tells
+you how to improve the next one.
 
 ## Architecture
 
@@ -8,7 +10,19 @@ End-to-end ML pipeline automation: push a notebook to GitHub, get a deployed mod
 GitHub Push  -->  Backend API  -->  Celery Worker  -->  MLflow  -->  Model Server
                      |                    |
                    SQLite              Redis (state + pub/sub)
+                                          |
+                                   AI Advisor (Claude)
 ```
+
+## Key Features
+
+- **Push-to-deploy pipelines** — download, validate, execute (papermill), register (MLflow), auto-deploy
+- **AI Training Advisor** — after every run, Claude analyzes the notebook source code,
+  the run's metrics/logs, and the metric history of previous runs, and produces a
+  Markdown report with a diagnosis, prioritized improvements with code snippets,
+  suggested features, and pipeline risks. Failed runs get root-cause analysis.
+- **Authentication** — landing page + login; an admin user is seeded from `ADMIN_EMAIL`/`ADMIN_PASSWORD`
+- **Real-time observability** — WebSocket log streaming, phase timeline, metric charts
 
 ## Requirements
 
@@ -20,9 +34,8 @@ GitHub Push  -->  Backend API  -->  Celery Worker  -->  MLflow  -->  Model Serve
 
 ```bash
 # 1. Clone and configure
-cd mlops-platform
 cp .env.example .env
-# Edit .env with your GitHub token and webhook secret
+# Edit .env with your GitHub token, webhook secret, and (optionally) ANTHROPIC_API_KEY
 
 # 2. Start all services
 docker compose up -d --build
@@ -144,6 +157,31 @@ curl -X POST http://localhost:8000/models/iris-classifier/rollback \
 
 # Delete model
 curl -X DELETE http://localhost:8000/models/iris-classifier
+```
+
+### AI Insights
+
+```bash
+# List AI feedback reports for a pipeline (newest first)
+curl http://localhost:8000/pipelines/{pipeline_id}/insights
+
+# Request a new analysis (runs async in the Celery worker; poll the GET endpoint)
+curl -X POST http://localhost:8000/pipelines/{pipeline_id}/insights
+```
+
+Insights are generated automatically when a pipeline finishes if `ANTHROPIC_API_KEY`
+is set and `AI_ADVISOR_ENABLED=true`.
+
+### Authentication
+
+```bash
+# Log in (returns a bearer token; default admin user is seeded from env)
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@mlops.local", "password": "admin123"}'
+
+# Current user
+curl http://localhost:8000/auth/me -H "Authorization: Bearer <token>"
 ```
 
 ### Webhook (called by GitHub)

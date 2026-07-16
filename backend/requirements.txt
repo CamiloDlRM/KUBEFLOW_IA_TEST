@@ -28,6 +28,9 @@ mlflow==2.9.2
 # Structured logging
 structlog==24.4.0
 
+# AI advisor (Anthropic API)
+anthropic>=0.75.0
+
 # ML libraries
 scikit-learn==1.5.2
 joblib==1.4.2

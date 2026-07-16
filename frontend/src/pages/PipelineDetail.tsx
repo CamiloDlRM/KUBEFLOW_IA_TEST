@@ -6,6 +6,7 @@ import { getWsUrl } from '../api/client';
 import PipelineStatusBadge from '../components/PipelineStatus';
 import LogViewer from '../components/LogViewer';
 import MetricsChart from '../components/MetricsChart';
+import AIInsights from '../components/AIInsights';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, truncate, repoNameFromUrl } from '../utils/format';
 import type { PhaseStatus } from '../types';
@@ -51,7 +52,7 @@ export default function PipelineDetail() {
         <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
           Failed to load pipeline: {(error as Error).message}
         </div>
-        <Link to="/" className="mt-4 inline-block text-sm text-brand-400 hover:underline">
+        <Link to="/dashboard" className="mt-4 inline-block text-sm text-brand-400 hover:underline">
           Back to Dashboard
         </Link>
       </div>
@@ -83,7 +84,7 @@ export default function PipelineDetail() {
   return (
     <div className="space-y-8">
       {/* Back link */}
-      <Link to="/" className="text-sm text-brand-400 hover:underline">
+      <Link to="/dashboard" className="text-sm text-brand-400 hover:underline">
         &larr; Back to Dashboard
       </Link>
 
@@ -160,6 +161,9 @@ export default function PipelineDetail() {
           </p>
         )}
       </section>
+
+      {/* AI Training Advisor */}
+      <AIInsights pipelineId={pipeline.id} pipelineStatus={pipeline.status} />
 
       {/* Metrics */}
       <section>

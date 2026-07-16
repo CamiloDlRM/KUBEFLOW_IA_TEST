@@ -70,6 +70,38 @@ class AppSettings(BaseSettings):
         description="Pipeline runner implementation to use.",
     )
 
+    # --- AI Advisor ---
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API key used by the AI training advisor.",
+    )
+    ai_advisor_enabled: bool = Field(
+        default=True,
+        description="Generate AI feedback automatically after each pipeline run.",
+    )
+    ai_advisor_model: str = Field(
+        default="claude-opus-4-8",
+        description="Claude model used to generate training feedback.",
+    )
+
+    # --- Authentication ---
+    auth_secret_key: str = Field(
+        default="change-this-secret",
+        description="Secret used to sign session tokens (HMAC-SHA256).",
+    )
+    auth_token_ttl_hours: int = Field(
+        default=24,
+        description="Session token lifetime in hours.",
+    )
+    admin_email: str = Field(
+        default="admin@mlops.local",
+        description="Email of the seeded admin user.",
+    )
+    admin_password: str = Field(
+        default="admin123",
+        description="Password of the seeded admin user (change in production).",
+    )
+
     # --- Application ---
     log_level: str = Field(default="INFO", description="Root log level.")
     frontend_url: str = Field(

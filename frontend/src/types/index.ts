@@ -92,3 +92,31 @@ export interface ReadyResponse {
 }
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+
+/* ------------------------------------------------------------------ */
+/*  AI Insights                                                        */
+/* ------------------------------------------------------------------ */
+
+export type InsightStatus = 'pending' | 'generating' | 'ready' | 'failed';
+
+export interface Insight {
+  id: number;
+  pipeline_id: string;
+  status: InsightStatus;
+  content: string;
+  model: string;
+  error: string;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Authentication                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  email: string;
+  full_name: string;
+}

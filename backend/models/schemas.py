@@ -77,6 +77,34 @@ class ModelDeployment(SQLModel, table=True):
     pipeline_id: str | None = SQLField(default=None, foreign_key="pipelines.id")
 
 
+class PipelineInsight(SQLModel, table=True):
+    """AI-generated feedback for a pipeline run."""
+
+    __tablename__ = "pipeline_insights"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    pipeline_id: str = SQLField(foreign_key="pipelines.id", index=True)
+    status: str = SQLField(default="pending")  # pending | generating | ready | failed
+    content: str = SQLField(default="")  # Markdown report
+    model: str = SQLField(default="")
+    error: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    finished_at: datetime | None = SQLField(default=None)
+
+
+class User(SQLModel, table=True):
+    """Platform user account."""
+
+    __tablename__ = "users"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    email: str = SQLField(index=True, unique=True)
+    password_hash: str = SQLField(default="")
+    full_name: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    is_active: bool = SQLField(default=True)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline phase (embedded, not a table)
 # ---------------------------------------------------------------------------
@@ -244,3 +272,54 @@ class MessageResponse(BaseModel):
     """Generic message response."""
 
     message: str
+
+
+# ---------------------------------------------------------------------------
+# AI Insights
+# ---------------------------------------------------------------------------
+
+class InsightResponse(BaseModel):
+    """AI insight read representation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    pipeline_id: str
+    status: str
+    content: str
+    model: str
+    error: str
+    created_at: datetime
+    finished_at: datetime | None
+
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    """Credentials for /auth/login."""
+
+    model_config = ConfigDict(strict=True)
+
+    email: str = Field(..., examples=["admin@mlops.local"])
+    password: str = Field(...)
+
+
+class TokenResponse(BaseModel):
+    """Session token issued after a successful login."""
+
+    access_token: str
+    token_type: str = "bearer"
+    email: str
+    full_name: str = ""
+
+
+class UserResponse(BaseModel):
+    """Authenticated user info for /auth/me."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    email: str
+    full_name: str
+    created_at: datetime

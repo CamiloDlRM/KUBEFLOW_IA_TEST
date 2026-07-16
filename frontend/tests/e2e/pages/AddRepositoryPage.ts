@@ -1,4 +1,5 @@
 import type { Page, Locator } from '@playwright/test';
+import { seedAuth } from './auth';
 
 export class AddRepositoryPage {
   readonly page: Page;
@@ -26,6 +27,7 @@ export class AddRepositoryPage {
   }
 
   async navigate() {
+    await seedAuth(this.page);
     await this.page.goto('/repos/new');
   }
 

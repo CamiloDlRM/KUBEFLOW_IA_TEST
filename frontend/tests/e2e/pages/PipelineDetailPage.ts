@@ -1,4 +1,5 @@
 import type { Page, Locator } from '@playwright/test';
+import { seedAuth } from './auth';
 
 export class PipelineDetailPage {
   readonly page: Page;
@@ -14,6 +15,7 @@ export class PipelineDetailPage {
   }
 
   async navigate(pipelineId: string) {
+    await seedAuth(this.page);
     await this.page.goto(`/pipelines/${pipelineId}`);
   }
 }

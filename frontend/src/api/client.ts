@@ -8,7 +8,10 @@ import type {
   PredictionResult,
   HealthResponse,
   ReadyResponse,
+  Insight,
+  TokenResponse,
 } from '../types';
+import { getToken } from '../auth';
 
 /* ------------------------------------------------------------------ */
 /*  Axios instance                                                     */
@@ -20,6 +23,15 @@ const apiClient = axios.create({
   baseURL: API_BASE,
   timeout: 15_000,
   headers: { 'Content-Type': 'application/json' },
+});
+
+// Request interceptor - attach session token when present
+apiClient.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // Response interceptor - normalize errors
@@ -76,6 +88,39 @@ export async function getPipelineLogs(pipelineId: string): Promise<string[]> {
   const { data } = await apiClient.get<string[]>(
     `/pipelines/${pipelineId}/logs`,
   );
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Insights                                                        */
+/* ------------------------------------------------------------------ */
+
+export async function getInsights(pipelineId: string): Promise<Insight[]> {
+  const { data } = await apiClient.get<Insight[]>(
+    `/pipelines/${pipelineId}/insights`,
+  );
+  return data;
+}
+
+export async function generateInsight(pipelineId: string): Promise<Insight> {
+  const { data } = await apiClient.post<Insight>(
+    `/pipelines/${pipelineId}/insights`,
+  );
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Authentication                                                     */
+/* ------------------------------------------------------------------ */
+
+export async function login(
+  email: string,
+  password: string,
+): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/login', {
+    email,
+    password,
+  });
   return data;
 }
 

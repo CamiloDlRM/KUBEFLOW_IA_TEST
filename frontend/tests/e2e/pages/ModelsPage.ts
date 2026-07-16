@@ -1,4 +1,5 @@
 import type { Page, Locator } from '@playwright/test';
+import { seedAuth } from './auth';
 
 export class ModelsPage {
   readonly page: Page;
@@ -20,6 +21,7 @@ export class ModelsPage {
   }
 
   async navigate() {
+    await seedAuth(this.page);
     await this.page.goto('/models');
   }
 
