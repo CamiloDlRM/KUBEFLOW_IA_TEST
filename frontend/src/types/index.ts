@@ -152,3 +152,20 @@ export interface InviteTokenResponse {
   email: string;
   email_sent: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/*  AI Insights                                                        */
+/* ------------------------------------------------------------------ */
+
+export type InsightStatus = 'pending' | 'generating' | 'ready' | 'failed';
+
+export interface Insight {
+  id: number;
+  pipeline_id: string;
+  status: InsightStatus;
+  content: string;
+  model: string;
+  error: string;
+  created_at: string;
+  finished_at: string | null;
+}

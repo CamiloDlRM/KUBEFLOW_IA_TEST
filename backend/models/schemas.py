@@ -119,6 +119,21 @@ class ModelDeployment(SQLModel, table=True):
     pipeline_id: str | None = SQLField(default=None, foreign_key="pipelines.id")
 
 
+class PipelineInsight(SQLModel, table=True):
+    """AI-generated feedback report for a pipeline run."""
+
+    __tablename__ = "pipeline_insights"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    pipeline_id: str = SQLField(foreign_key="pipelines.id", index=True)
+    status: str = SQLField(default="pending")  # pending | generating | ready | failed
+    content: str = SQLField(default="")  # Markdown report
+    model: str = SQLField(default="")
+    error: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    finished_at: datetime | None = SQLField(default=None)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline phase (embedded, not a table)
 # ---------------------------------------------------------------------------
@@ -370,3 +385,22 @@ class ConfirmChangeRequest(BaseModel):
 class ChangeRequestedResponse(BaseModel):
     message: str
     email: str
+
+
+# ---------------------------------------------------------------------------
+# AI Insights
+# ---------------------------------------------------------------------------
+
+class InsightResponse(BaseModel):
+    """AI insight read representation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    pipeline_id: str
+    status: str
+    content: str
+    model: str
+    error: str
+    created_at: datetime
+    finished_at: datetime | None

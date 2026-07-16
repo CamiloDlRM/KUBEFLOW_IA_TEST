@@ -210,12 +210,14 @@ from routers.repos import router as repos_router
 from routers.pipelines import router as pipelines_router
 from routers.models import router as models_router
 from routers.webhook import router as webhook_router
+from routers.insights import router as insights_router
 
 app.include_router(auth_router)
 app.include_router(repos_router)
 app.include_router(pipelines_router)
 app.include_router(models_router)
 app.include_router(webhook_router)
+app.include_router(insights_router)
 
 
 # ---------------------------------------------------------------------------
