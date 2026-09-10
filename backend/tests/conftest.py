@@ -10,13 +10,23 @@ import hmac
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Generator
+from typing import TYPE_CHECKING, Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
+
+if TYPE_CHECKING:  # import-free at runtime: the env overrides below must run
+    # before any application module is imported for real.
+    from models.schemas import (
+        Dataset,
+        ModelDeployment,
+        Pipeline,
+        Repository,
+        User,
+    )
 
 # ---------------------------------------------------------------------------
 # Environment overrides (must be set before importing app modules)
@@ -82,30 +92,115 @@ def db_session(db_engine) -> Generator[Session, None, None]:
 # FastAPI test client
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="function")
-def test_app(db_engine):
-    """Return a FastAPI TestClient with dependency overrides for the DB session.
+#: Id of the member impersonated by the default ``test_app`` client. Seed
+#: helpers default their ``owner_id`` to it so a plain ``seed_repo(...)`` is
+#: owned by the user making the requests.
+DEFAULT_USER_ID = 1
 
-    Overrides:
-    - db.get_session → in-memory SQLite session
-    - core.security.get_current_user → dummy authenticated user
+#: Id of the member impersonated by ``other_member_app`` — the "other tenant".
+OTHER_USER_ID = 2
+
+#: Id of the admin impersonated by ``admin_app``.
+ADMIN_USER_ID = 3
+
+
+def make_user(user_id: int, role: str = "member", username: str | None = None) -> "User":
+    """Build an unsaved User row for the auth dependency override."""
+    from models.schemas import User
+
+    return User(
+        id=user_id,
+        username=username or f"user{user_id}",
+        hashed_password="",
+        role=role,
+        is_active=True,
+    )
+
+
+class _ClientAs(TestClient):
+    """TestClient that pins ``get_current_user`` to one user on every request.
+
+    All clients share the same FastAPI ``app`` object (and therefore the same
+    ``dependency_overrides`` dict), so a test using two clients at once — the
+    whole point of the ownership tests — cannot rely on the override being set
+    once at fixture time: the last fixture built would win for everybody.
+    Re-applying it per request keeps each client's identity stable.
     """
+
+    def __init__(self, app, user, **kwargs) -> None:
+        super().__init__(app, **kwargs)
+        self._app = app
+        self._user = user
+
+    def request(self, *args, **kwargs):  # type: ignore[override]
+        from core.security import get_current_user
+
+        self._app.dependency_overrides[get_current_user] = lambda: self._user
+        return super().request(*args, **kwargs)
+
+
+def _build_client(db_engine, user: "User") -> TestClient:
+    """Return a TestClient whose requests are authenticated as ``user``."""
     from main import app
     import db as db_module
     from core.security import get_current_user
-    from models.schemas import User
 
     def _override_session():
         with Session(db_engine) as session:
             yield session
 
-    def _override_current_user():
-        return User(id=1, username="testuser", hashed_password="", is_active=True)
-
     app.dependency_overrides[db_module.get_session] = _override_session
-    app.dependency_overrides[get_current_user] = _override_current_user
+    app.dependency_overrides[get_current_user] = lambda: user
+    return _ClientAs(app, user, raise_server_exceptions=False)
 
-    client = TestClient(app, raise_server_exceptions=False)
+
+@pytest.fixture(scope="function")
+def test_app(db_engine):
+    """TestClient authenticated as the default *member* (id ``DEFAULT_USER_ID``).
+
+    Overrides:
+    - db.get_session → in-memory SQLite session
+    - core.security.get_current_user → member user id 1 ("testuser")
+
+    Since multi-tenancy landed, this client only sees resources owned by user
+    1 — which is exactly what the seed helpers create by default.
+    """
+    from main import app
+
+    client = _build_client(
+        db_engine, make_user(DEFAULT_USER_ID, "member", "testuser")
+    )
+    yield client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+def other_member_app(db_engine):
+    """TestClient authenticated as a *different* member (id ``OTHER_USER_ID``).
+
+    Used to assert that one member cannot reach another member's resources.
+    """
+    from main import app
+
+    client = _build_client(
+        db_engine, make_user(OTHER_USER_ID, "member", "otheruser")
+    )
+    yield client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+def admin_app(db_engine):
+    """TestClient authenticated as an *admin* (id ``ADMIN_USER_ID``).
+
+    Admins bypass the ownership filter, so this fixture is also what the
+    endpoints that operate on unowned/legacy rows are exercised with.
+    """
+    from main import app
+
+    client = _build_client(db_engine, make_user(ADMIN_USER_ID, "admin", "adminuser"))
     yield client
 
     app.dependency_overrides.clear()
@@ -239,10 +334,17 @@ def make_webhook_signature(payload: bytes, secret: str = "test-secret") -> str:
 
 
 def seed_repo(session: Session, **kwargs) -> "Repository":
-    """Insert a Repository record into the session and return it."""
+    """Insert a Repository record into the session and return it.
+
+    ``owner_id`` defaults to ``DEFAULT_USER_ID`` so a seeded repository (and
+    everything derived from it) is visible to the ``test_app`` client. Pass
+    ``owner_id=OTHER_USER_ID`` to seed another tenant's repository, or
+    ``owner_id=None`` for a legacy row that no member owns.
+    """
     from models.schemas import Repository
 
     defaults = {
+        "owner_id": DEFAULT_USER_ID,
         "github_url": "https://github.com/testuser/testrepo",
         "github_token_masked": "****cdef",
         "branch": "main",
@@ -303,7 +405,14 @@ def seed_dataset(session: Session, repo_id: int, **kwargs) -> "Dataset":
 
 
 def seed_model_deployment(session: Session, **kwargs) -> "ModelDeployment":
-    """Insert a ModelDeployment record into the session and return it."""
+    """Insert a ModelDeployment record into the session and return it.
+
+    ``pipeline_id`` defaults to ``None``, i.e. a *legacy* deployment that
+    cannot be traced back to a repository owner. Those are visible to admins
+    only, so tests that seed them must drive the API through ``admin_app``;
+    pass ``pipeline_id=<a pipeline id>`` to make a deployment owned like its
+    repository.
+    """
     from models.schemas import ModelDeployment
 
     defaults = {

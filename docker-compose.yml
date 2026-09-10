@@ -93,6 +93,11 @@ services:
       - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
     volumes:
       - mlops-models:/app/model_artifacts
+      # The same dashboard JSON Grafana is provisioned from. The backend reads
+      # it to build the allow-list of queries a non-admin may run through the
+      # Grafana proxy (core/grafana_queries.py), so both sides stay in sync
+      # from one source of truth.
+      - ./grafana/dashboards:/app/grafana_dashboards:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -262,6 +267,69 @@ services:
       - mlops-network
     restart: unless-stopped
 
+  # ---------- Prometheus (operational metrics) ----------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: mlops-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
+  # ---------- Grafana (dashboards, embedded in the app) ----------
+  # Authentication is delegated to the backend: it validates the user's JWT and
+  # forwards the identity in the auth-proxy header. Grafana is NOT published
+  # with its own login — users always reach it proxied through /grafana.
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: mlops-grafana
+    environment:
+      # Served under the backend's /grafana path.
+      - GF_SERVER_ROOT_URL=${BACKEND_PUBLIC_URL:-http://localhost:8000}/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # Embedding inside our own SPA.
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=lax
+      # Trust the backend's identity header; everything else is disabled so
+      # Grafana cannot be reached with its own credentials.
+      - GF_AUTH_PROXY_ENABLED=true
+      - GF_AUTH_PROXY_HEADER_NAME=${GRAFANA_AUTH_PROXY_HEADER:-X-WEBAUTH-USER}
+      - GF_AUTH_PROXY_HEADER_PROPERTY=username
+      - GF_AUTH_PROXY_AUTO_SIGN_UP=true
+      - GF_AUTH_PROXY_SYNC_TTL=60
+      - GF_AUTH_PROXY_WHITELIST=${GRAFANA_PROXY_WHITELIST:-}
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # Auto-provisioned users get Viewer, so they cannot *save* an edited
+      # panel. Note that Viewer can still *run* arbitrary datasource queries,
+      # so this role alone does not keep tenants apart: the backend proxy
+      # enforces that (core/grafana_queries.py).
+      - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Datasource credentials (read-only DB user is created by db-init).
+      - MLOPS_DB_HOST=postgres:5432
+      - MLOPS_DB_NAME=mlops
+      - MLOPS_GRAFANA_DB_USER=${GRAFANA_DB_USER:-grafana_ro}
+      - MLOPS_GRAFANA_DB_PASSWORD=${GRAFANA_DB_PASSWORD:-grafana_ro}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
@@ -289,5 +357,7 @@ volumes:
   minio-data:       # MinIO object storage (datasets + mlflow buckets)
   redis-data:
   postgres-data:
+  grafana-data:     # Grafana internal DB (users auto-created by auth proxy)
+  prometheus-data:  # Prometheus TSDB
   # Uncomment together with the ollama service above:
   # ollama-data:

@@ -31,6 +31,7 @@ The advisor runs on **Claude, Google Gemini, or any local model served by Ollama
   - [The improvement loop](#the-improvement-loop)
 - [Notebook Structure](#notebook-structure)
 - [Datasets (MinIO)](#datasets-minio)
+- [Dashboards (Grafana)](#dashboards-grafana)
 - [Authentication](#authentication)
 - [API Reference](#api-reference)
 - [Configuration](#configuration)
@@ -69,6 +70,17 @@ Recent additions on top of the base push-to-deploy platform:
 - 🔐 **Landing page + authentication** — a public marketing landing at `/`, JWT
   login, user invites with email confirmation, self-service password/username
   changes, and an admin panel.
+- 📊 **Grafana dashboards, per user** — a **Dashboards** section embeds Grafana
+  in the app. Every panel is scoped to the signed-in user, so you see the
+  accuracy, run history and success rate of *your* models and nobody else's.
+  Admins additionally get a platform-wide operations dashboard. See
+  [Dashboards (Grafana)](#dashboards-grafana).
+- 👤 **Repositories now have an owner** — previously any authenticated user could
+  list and act on every repository, pipeline, dataset and model in the
+  installation. Repositories are now owned by the user who registers them, and
+  everything downstream inherits that ownership. Requests for somebody else's
+  resource answer `404`, not `403`, so the existence of the resource is not
+  disclosed either.
 - 📡 **Real-time observability** — live pipeline log streaming over WebSockets, a
   phase-by-phase timeline, and metric charts across runs.
 
@@ -302,6 +314,71 @@ Browse the buckets, inspect uploaded datasets and MLflow artifacts at
 Both buckets are created automatically on startup by the `minio-init` service,
 so there is nothing to set up by hand.
 
+## Dashboards (Grafana)
+
+The **Dashboards** page embeds Grafana directly in the app. It refreshes every
+30 seconds, so a run in progress updates the charts as it goes.
+
+Two dashboards are provisioned:
+
+| Dashboard | Who sees it | Contents |
+|-----------|-------------|----------|
+| **My Models** (`mlops-ml`) | everyone | Repositories, deployed models, last accuracy, success rate, accuracy over time and by branch, pipeline outcomes and durations, recent runs |
+| **Platform** (`mlops-ops`) | admins | Service health, request rate, error ratio, latency percentiles, in-flight requests, pipeline throughput and duration across the whole installation |
+
+### How each user sees only their own data
+
+Grafana is **not** published on a port of its own. It is reachable only through
+the backend, which acts as an authenticated reverse proxy under `/grafana`:
+
+1. The backend validates your JWT, then tells Grafana who you are with the
+   `X-WEBAUTH-USER` header (Grafana's `auth.proxy` mode). Any `X-WEBAUTH-*`
+   header you try to send yourself is stripped first, so you cannot claim to be
+   somebody else.
+2. Grafana exposes that identity to the dashboards as `${__user.login}`, and
+   every panel joins it to `repositories.owner_id`:
+
+   ```sql
+   FROM pipelines p
+   JOIN repositories r ON r.id = p.repo_id
+   JOIN users u ON u.id = r.owner_id
+   WHERE u.username = '${__user.login}'
+   ```
+
+3. Grafana's `Viewer` role stops a user *saving* an edited panel — but it does
+   **not** stop them *running* their own SQL against the datasource, which would
+   sidestep that filter entirely. So the proxy also checks each query against an
+   allow-list built from the provisioned dashboard files: a non-admin may run
+   the panel queries with their own username substituted, and nothing else.
+   Ad-hoc queries and Explore are refused for them (`403`).
+4. Grafana reads Postgres through a dedicated **read-only role** created on
+   startup. It can `SELECT` a fixed list of tables, never sees the password
+   hashes, and runs with `default_transaction_read_only`.
+
+Because the allow-list is generated from `grafana/dashboards/*.json`, editing a
+panel means editing that file — a panel altered only in Grafana's UI stops
+matching and is refused. That is intentional: the JSON is the source of truth.
+
+> **Usernames** are restricted to `[A-Za-z0-9_.-]`, 3–64 characters. Grafana
+> interpolates `${__user.login}` verbatim into the panel SQL with no parameter
+> binding, so a quote in a username would break out of the string literal. The
+> restriction is enforced at registration, at username change, and once more in
+> the proxy before the name is handed to Grafana.
+
+### Prometheus
+
+Prometheus scrapes the backend's `/metrics` (HTTP throughput, latency, error
+rates) and backs the request panels of the Platform dashboard. Pipeline counts
+and durations are read from Postgres instead: the Celery worker runs prefork
+with several children, each keeps its own metrics registry and only one of them
+can bind the exporter port, so the Prometheus counters would see a fraction of
+the runs. The database sees all of them.
+
+### Turning it off
+
+Set `GRAFANA_ENABLED=false` to hide the section and stop proxying, and
+`PROMETHEUS_ENABLED=false` to stop exposing `/metrics`.
+
 ## Authentication
 
 The app is protected by JWT auth. On first startup a bootstrap admin is created
@@ -445,6 +522,12 @@ full annotated list. The most relevant ones:
 | `MINIO_BUCKET_DATASETS` | `datasets` | Bucket for user-uploaded datasets |
 | `MINIO_BUCKET_MLFLOW` | `mlflow` | Bucket used as the MLflow artifact store |
 | `DATASET_MAX_SIZE_MB` | `512` | Maximum accepted size for an uploaded dataset |
+| `GRAFANA_ENABLED` | `true` | Expose the Dashboards section and proxy Grafana |
+| `GRAFANA_INTERNAL_URL` | `http://grafana:3000` | Grafana as seen from the backend (proxy target) |
+| `GRAFANA_AUTH_PROXY_HEADER` | `X-WEBAUTH-USER` | Header Grafana trusts to identify the user |
+| `GRAFANA_DB_USER` / `GRAFANA_DB_PASSWORD` | `grafana_ro` | Read-only Postgres role the dashboards query through |
+| `GRAFANA_DB_ROLE_ENABLED` | `true` | Provision that role on startup |
+| `PROMETHEUS_ENABLED` | `true` | Expose `GET /metrics` for scraping |
 | `SMTP_*` / `EMAIL_FROM_ADDRESS` | Mailhog | Email delivery for invites/confirmations |
 | `VITE_API_URL` / `VITE_WS_URL` | localhost | Frontend build-time API/WS URLs |
 
@@ -459,8 +542,13 @@ full annotated list. The most relevant ones:
 | MinIO (S3 API) | 9000 | http://localhost:9000 |
 | MinIO Console | 9001 | http://localhost:9001 |
 | Mailhog (dev email UI) | 8025 | http://localhost:8025 |
+| Prometheus | 9090 | http://localhost:9090 |
+| Grafana | — | only via the backend, at http://localhost:8000/grafana |
 | PostgreSQL | 5432 | internal |
 | Redis | 6379 | redis://localhost:6379 |
+
+Grafana deliberately has **no published port**: reaching it directly would mean
+reaching it unauthenticated, so every request goes through the backend proxy.
 
 ## Testing
 

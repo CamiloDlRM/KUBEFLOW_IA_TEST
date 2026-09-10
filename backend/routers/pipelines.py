@@ -5,11 +5,12 @@ import asyncio
 import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlmodel import Session, func, select
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.ownership import get_visible_pipeline_or_404, restrict_by_repo
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
@@ -33,15 +34,27 @@ async def list_pipelines(
     page: int = Query(default=1, ge=1, description="Page number."),
     size: int = Query(default=20, ge=1, le=100, description="Page size."),
     session: Session = Depends(get_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> PipelineListResponse:
-    """Return a paginated list of all pipeline runs, newest first."""
-    total_stmt = select(func.count()).select_from(Pipeline)
+    """Return a paginated list of pipeline runs, newest first.
+
+    Members only see runs belonging to their own repositories; admins see all
+    of them. The total is filtered too, so pagination stays consistent.
+    """
+    total_stmt = restrict_by_repo(
+        select(func.count()).select_from(Pipeline),
+        Pipeline.repo_id,
+        session,
+        current_user,
+    )
     total: int = session.exec(total_stmt).one()
 
     offset = (page - 1) * size
+    list_stmt = restrict_by_repo(
+        select(Pipeline), Pipeline.repo_id, session, current_user
+    )
     pipelines = session.exec(
-        select(Pipeline).order_by(Pipeline.started_at.desc()).offset(offset).limit(size)  # type: ignore[union-attr]
+        list_stmt.order_by(Pipeline.started_at.desc()).offset(offset).limit(size)  # type: ignore[union-attr]
     ).all()
 
     items = [PipelineResponse.model_validate(p) for p in pipelines]
@@ -56,19 +69,16 @@ async def list_pipelines(
 async def get_pipeline(
     pipeline_id: str,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> PipelineResponse:
     """Return full status, phases, and metrics for a single pipeline run.
+
+    A run whose repository belongs to somebody else is reported as 404.
 
     Args:
         pipeline_id: UUID of the pipeline.
     """
-    pipeline = session.get(Pipeline, pipeline_id)
-    if not pipeline:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pipeline {pipeline_id} not found.",
-        )
+    pipeline = get_visible_pipeline_or_404(session, pipeline_id, current_user)
     return PipelineResponse.model_validate(pipeline)
 
 
@@ -81,21 +91,17 @@ async def get_pipeline_logs(
     pipeline_id: str,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> PipelineLogsResponse:
     """Return all stored log entries for a pipeline.
 
-    Reads accumulated phase logs from Redis (stored as a list).
+    Reads accumulated phase logs from Redis (stored as a list). Restricted to
+    pipelines of repositories the caller can see.
 
     Args:
         pipeline_id: UUID of the pipeline.
     """
-    pipeline = session.get(Pipeline, pipeline_id)
-    if not pipeline:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pipeline {pipeline_id} not found.",
-        )
+    get_visible_pipeline_or_404(session, pipeline_id, current_user)
 
     import redis
 
@@ -116,6 +122,32 @@ async def ws_pipeline_logs(
 
     Subscribes to the Redis pub/sub channel for the given pipeline and
     forwards every message to the connected WebSocket client.
+
+    .. warning::
+
+       **Known multi-tenancy gap — this endpoint is NOT ownership-filtered.**
+
+       Every other pipeline endpoint now answers 404 for runs that belong to
+       another user's repository, but this one cannot: it is unauthenticated.
+       ``get_current_user`` depends on ``OAuth2PasswordBearer``, which reads the
+       ``Authorization`` header, and the browser WebSocket API offers no way to
+       set headers on the handshake — the frontend (``getWsUrl`` in
+       ``frontend/src/api/client.ts``) therefore opens ``/pipelines/{id}/ws``
+       with no credentials at all. Adding a dependency here would silently
+       break live log streaming for everyone.
+
+       Practical impact: anybody who can reach the backend and *guess a
+       pipeline UUID* can tail that run's logs. The ids are random UUID4s and
+       are only handed out through the ownership-filtered REST endpoints, so
+       this is a "secret URL", not an enumerable one — but it is still weaker
+       than the rest of the API.
+
+       Closing it requires a coordinated frontend change (out of scope here);
+       the usual options are a short-lived one-time ticket minted by an
+       authenticated ``POST /pipelines/{id}/ws-ticket`` and passed as a query
+       parameter, or sending the JWT as a WebSocket subprotocol. Either way the
+       handler would then resolve the user and call
+       ``core.ownership.get_visible_pipeline_or_404`` before accepting.
     """
     await websocket.accept()
     logger.info("ws.connected", pipeline_id=pipeline_id)

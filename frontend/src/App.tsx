@@ -9,6 +9,7 @@ import AddRepository from './pages/AddRepository';
 import Datasets from './pages/Datasets';
 import PipelineDetail from './pages/PipelineDetail';
 import Models from './pages/Models';
+import Dashboards from './pages/Dashboards';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
 import ConfirmChange from './pages/ConfirmChange';
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/repos/:repoId/datasets" element={<Datasets />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
+        <Route path="/dashboards" element={<Dashboards />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/settings" element={<Settings />} />
       </Route>

@@ -9,9 +9,10 @@ import structlog
 
 from core.ai_advisor import advisor_configured
 from core.config import AppSettings, get_settings
+from core.ownership import get_visible_pipeline_or_404
 from core.security import get_current_user
 from db import get_session
-from models.schemas import InsightResponse, Pipeline, PipelineInsight, User
+from models.schemas import InsightResponse, PipelineInsight, User
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/pipelines", tags=["insights"])
@@ -25,15 +26,14 @@ router = APIRouter(prefix="/pipelines", tags=["insights"])
 async def list_insights(
     pipeline_id: str,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[InsightResponse]:
-    """Return AI-generated feedback reports for a pipeline, newest first."""
-    pipeline = session.get(Pipeline, pipeline_id)
-    if not pipeline:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pipeline {pipeline_id} not found.",
-        )
+    """Return AI-generated feedback reports for a pipeline, newest first.
+
+    Insights inherit their visibility from the pipeline's repository: a run
+    owned by somebody else is reported as 404.
+    """
+    get_visible_pipeline_or_404(session, pipeline_id, current_user)
     insights = session.exec(
         select(PipelineInsight)
         .where(PipelineInsight.pipeline_id == pipeline_id)
@@ -52,19 +52,16 @@ async def generate_insights(
     pipeline_id: str,
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[AppSettings, Depends(get_settings)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> InsightResponse:
     """Queue an AI analysis of this pipeline run.
 
     The analysis runs asynchronously in a Celery worker; poll the GET
     endpoint until the insight status becomes ``ready`` or ``failed``.
+    Restricted to pipelines of repositories the caller can see — generating an
+    insight sends another tenant's notebook and metrics to the AI provider.
     """
-    pipeline = session.get(Pipeline, pipeline_id)
-    if not pipeline:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pipeline {pipeline_id} not found.",
-        )
+    pipeline = get_visible_pipeline_or_404(session, pipeline_id, current_user)
     if pipeline.status in ("queued", "running"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -102,14 +99,18 @@ async def apply_insight_endpoint(
     insight_id: int,
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[AppSettings, Depends(get_settings)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> InsightResponse:
     """Have the AI rewrite the notebook per its own recommendations and push
     the result to the ``testing-ia-agent`` branch of the repository.
 
     Runs asynchronously in a Celery worker; poll the insights GET endpoint
-    until ``apply_status`` becomes ``pushed`` or ``failed``.
+    until ``apply_status`` becomes ``pushed`` or ``failed``. Restricted to
+    pipelines the caller can see: this endpoint *writes* to the repository, so
+    letting it run on somebody else's repo would be a write-side breach.
     """
+    get_visible_pipeline_or_404(session, pipeline_id, current_user)
+
     insight = session.get(PipelineInsight, insight_id)
     if not insight or insight.pipeline_id != pipeline_id:
         raise HTTPException(

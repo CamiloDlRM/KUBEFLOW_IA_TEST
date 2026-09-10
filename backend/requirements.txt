@@ -42,6 +42,9 @@ mlflow==2.9.2
 # Structured logging
 structlog==24.4.0
 
+# Metrics exposition for Prometheus
+prometheus-client==0.21.1
+
 # AI advisor (Anthropic API)
 anthropic>=0.75.0
 
