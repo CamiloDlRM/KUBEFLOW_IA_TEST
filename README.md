@@ -359,7 +359,8 @@ Because the allow-list is generated from `grafana/dashboards/*.json`, editing a
 panel means editing that file — a panel altered only in Grafana's UI stops
 matching and is refused. That is intentional: the JSON is the source of truth.
 
-> **Usernames** are restricted to `[A-Za-z0-9_.-]`, 3–64 characters. Grafana
+> **Usernames** are restricted to `[A-Za-z0-9_.+@-]`, 3–64 characters — wide
+> enough for an email address, which is what most accounts here use. Grafana
 > interpolates `${__user.login}` verbatim into the panel SQL with no parameter
 > binding, so a quote in a username would break out of the string literal. The
 > restriction is enforced at registration, at username change, and once more in

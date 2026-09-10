@@ -12,6 +12,7 @@ a user.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from core.grafana_queries import (
     normalise_sql,
     reset_cache,
 )
+from models.schemas import USERNAME_PATTERN
 from tests.conftest import make_user
 
 def _find_dashboards_dir() -> Path:
@@ -78,6 +80,48 @@ def _panel_sql(dashboard: str, title: str) -> str:
 
 def _payload(*sql: str) -> bytes:
     return json.dumps({"queries": [{"refId": "A", "rawSql": s} for s in sql]}).encode()
+
+
+class TestUsernamePattern:
+    """The character set a username may use.
+
+    It guards the ``${__user.login}`` interpolation, which has no parameter
+    binding — but it must stay wide enough for the usernames this deployment
+    actually issues, which are email addresses.
+    """
+
+    @pytest.mark.parametrize(
+        "username",
+        [
+            "admin@kubeflowia.site",
+            "jorge.de.la.rosa@example.com",
+            "user+tag@example.com",
+            "plain_user",
+            "dash-user",
+            "abc",
+            "a" * 64,
+        ],
+    )
+    def test_realistic_usernames_are_accepted(self, username):
+        assert re.fullmatch(USERNAME_PATTERN, username)
+
+    @pytest.mark.parametrize(
+        "username",
+        [
+            "bob' OR '1'='1",  # terminates the SQL literal
+            "bob'--",
+            'bob"x',
+            "bob\\x",  # backslash escape
+            "bob user",  # whitespace
+            "bob\nuser",  # header injection
+            "bob\r\nX-WEBAUTH-USER: admin",
+            "ab",  # too short
+            "a" * 65,  # too long
+            "",
+        ],
+    )
+    def test_dangerous_or_malformed_usernames_are_rejected(self, username):
+        assert not re.fullmatch(USERNAME_PATTERN, username)
 
 
 class TestNormalisation:

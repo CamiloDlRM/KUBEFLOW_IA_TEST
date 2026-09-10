@@ -349,16 +349,23 @@ class MessageResponse(BaseModel):
 
 #: Characters allowed in a username.
 #:
-#: This is deliberately narrow. Grafana identifies the signed-in user to the
-#: dashboards through the ``${__user.login}`` global variable, which it
-#: interpolates *verbatim* into the panel SQL — there is no parameter binding on
-#: that path. A username containing a quote would therefore break out of the
-#: string literal and let its owner read every tenant's rows. Restricting the
-#: character set at the only two places a username can be set keeps that
-#: interpolation safe by construction.
+#: Grafana identifies the signed-in user to the dashboards through the
+#: ``${__user.login}`` global variable, which it interpolates *verbatim* into
+#: the panel SQL — there is no parameter binding on that path. A username
+#: containing a quote would therefore break out of the string literal and let
+#: its owner read every tenant's rows. Constraining the character set at the
+#: only two places a username can be set keeps that interpolation safe by
+#: construction.
 #:
-#: See ``grafana/dashboards/*.json`` and ``docs/GRAFANA.md``.
-USERNAME_PATTERN = r"^[A-Za-z0-9_.-]{3,64}$"
+#: The set is chosen to be the widest one that is still safe rather than the
+#: narrowest one that works: usernames here are commonly email addresses, so
+#: ``@`` and ``+`` must be accepted. What matters is excluding the characters
+#: that can terminate or escape a SQL string literal — the single quote and the
+#: backslash — plus whitespace and control characters, which would also make
+#: the value unusable as an HTTP header.
+#:
+#: See ``grafana/dashboards/*.json`` and the Dashboards section of the README.
+USERNAME_PATTERN = r"^[A-Za-z0-9_.+@-]{3,64}$"
 
 
 class UserRegisterRequest(BaseModel):

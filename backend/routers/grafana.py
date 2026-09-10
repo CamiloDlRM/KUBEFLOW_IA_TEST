@@ -403,8 +403,9 @@ def _identity_headers(user: User, settings: AppSettings) -> dict[str, str]:
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "This account's username contains characters that cannot be "
-                "used with Grafana. Change it in Settings to letters, digits, "
-                "dot, dash or underscore."
+                "passed to Grafana safely (a quote, a backslash or whitespace). "
+                "Letters, digits and _ . + - @ are accepted, so an email "
+                "address works. Change it in Settings, or ask an admin to."
             ),
         )
     return {settings.grafana_auth_proxy_header: user.username}
