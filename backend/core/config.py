@@ -111,6 +111,44 @@ class AppSettings(BaseSettings):
         description="Base directory where trained model artifacts are stored.",
     )
 
+    # --- Observability (Grafana / Prometheus) ---
+    grafana_enabled: bool = Field(
+        default=True,
+        description="Expose the embedded Grafana dashboards section.",
+    )
+    grafana_internal_url: str = Field(
+        default="http://grafana:3000",
+        description="Grafana URL as seen from the backend container (reverse proxy target).",
+    )
+    grafana_public_path: str = Field(
+        default="/grafana",
+        description="Path under the backend's public URL where Grafana is proxied.",
+    )
+    grafana_auth_proxy_header: str = Field(
+        default="X-WEBAUTH-USER",
+        description=(
+            "Header Grafana trusts for auth.proxy. The backend sets it only "
+            "after validating the caller's JWT."
+        ),
+    )
+    grafana_ml_dashboard_uid: str = Field(
+        default="mlops-ml",
+        description="UID of the provisioned per-user ML metrics dashboard.",
+    )
+    grafana_dashboards_dir: str = Field(
+        default="/app/grafana_dashboards",
+        description=(
+            "Directory holding the provisioned dashboard JSON files, mounted "
+            "read-only into the backend. Their SQL is the allow-list of "
+            "queries a non-admin may run through the Grafana proxy — see "
+            "core/grafana_queries.py."
+        ),
+    )
+    prometheus_enabled: bool = Field(
+        default=True,
+        description="Expose the /metrics endpoint for Prometheus scraping.",
+    )
+
     # --- Object storage (MinIO / S3) ---
     minio_endpoint: str = Field(
         default="http://minio:9000",

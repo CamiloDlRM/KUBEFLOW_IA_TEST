@@ -1,0 +1,20 @@
+# Dashboard provisioning: loads every JSON dashboard mounted read-only at
+# /var/lib/grafana/dashboards (see the grafana service in docker-compose.yml).
+#
+# allowUiUpdates is false and disableDeletion is true so the file on disk is
+# always the source of truth: a user cannot save a modified copy of a panel
+# (and therefore cannot edit the SQL that scopes rows to ${__user.login}).
+apiVersion: 1
+
+providers:
+  - name: mlops
+    orgId: 1
+    folder: MLOps
+    folderUid: mlops
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

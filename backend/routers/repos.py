@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.ownership import filter_repos_by_owner, get_visible_repo_or_404
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
@@ -40,12 +41,14 @@ async def create_repo(
     body: RepoCreateRequest,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> RepoCreatedResponse:
     """Register a GitHub repository and create a push webhook.
 
     The webhook URL is constructed from the backend's public URL.
-    The GitHub token is masked before storage.
+    The GitHub token is masked before storage. The caller becomes the owner of
+    the repository, and therefore the only non-admin user able to see it (and
+    everything derived from it: pipelines, datasets, deployments, insights).
     """
     from core.github import create_webhook
 
@@ -83,6 +86,7 @@ async def create_repo(
     masked_token = f"****{token[-4:]}" if len(token) >= 4 else "****"
 
     repo = Repository(
+        owner_id=current_user.id,
         github_url=body.github_url,
         github_token_masked=masked_token,
         branch=body.branch,
@@ -95,7 +99,12 @@ async def create_repo(
     session.commit()
     session.refresh(repo)
 
-    logger.info("repo.created", repo_id=repo.id, github_url=body.github_url)
+    logger.info(
+        "repo.created",
+        repo_id=repo.id,
+        github_url=body.github_url,
+        owner_id=repo.owner_id,
+    )
 
     return RepoCreatedResponse(
         repo_id=repo.id,  # type: ignore[arg-type]
@@ -110,10 +119,11 @@ async def create_repo(
 )
 async def list_repos(
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[RepoResponse]:
-    """Return all registered repositories."""
-    repos = session.exec(select(Repository)).all()
+    """Return the repositories the caller owns (admins get every repository)."""
+    statement = filter_repos_by_owner(select(Repository), current_user)
+    repos = session.exec(statement).all()
     return [RepoResponse.model_validate(r) for r in repos]
 
 
@@ -126,19 +136,17 @@ async def delete_repo(
     repo_id: int,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> MessageResponse:
     """Delete a repository and remove its GitHub webhook.
+
+    Only the owner (or an admin) may delete it; for anybody else the
+    repository is reported as non-existent.
 
     Args:
         repo_id: Database ID of the repository.
     """
-    repo = session.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository {repo_id} not found.",
-        )
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
 
     # Attempt to delete GitHub webhook
     if repo.webhook_id:
@@ -170,17 +178,15 @@ async def list_repo_branches(
     repo_id: int,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[BranchInfo]:
-    """Return the branches of the repository (via the GitHub API)."""
+    """Return the branches of the repository (via the GitHub API).
+
+    Restricted to the repository's owner (and admins).
+    """
     from core.github import list_branches
 
-    repo = session.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository {repo_id} not found.",
-        )
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
     try:
         branches = await list_branches(repo.github_url, settings.github_token)
     except Exception as exc:
@@ -203,21 +209,17 @@ async def trigger_pipeline(
     body: TriggerPipelineRequest,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> WebhookAccepted:
     """Run the training pipeline on demand, from any branch of the repo.
 
     Unlike the webhook flow, this does not require a push event: it resolves
-    the branch's HEAD commit and enqueues the run directly.
+    the branch's HEAD commit and enqueues the run directly. Only the owner of
+    the repository (or an admin) may launch a run on it.
     """
     from core.pipeline import get_pipeline_runner
 
-    repo = session.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository {repo_id} not found.",
-        )
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
 
     branch = body.branch.strip() or repo.branch
 

@@ -18,6 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
+from core.ownership import can_access_repo, get_visible_repo_or_404
 from core.security import get_current_user
 from core.storage import (
     ObjectNotFoundError,
@@ -66,21 +67,36 @@ def _file_extension(filename: str) -> str:
     return os.path.splitext(filename or "")[1].lower()
 
 
-def _get_repo_or_404(session: Session, repo_id: int) -> Repository:
-    """Return the repository or raise a 404 HTTPException."""
-    repo = session.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository {repo_id} not found.",
-        )
-    return repo
+def _get_repo_or_404(session: Session, repo_id: int, user: User) -> Repository:
+    """Return the repository if ``user`` may see it, or raise a 404.
+
+    A repository owned by another member is indistinguishable from a missing
+    one (see ``core.ownership`` for why this is a 404 and not a 403).
+    """
+    return get_visible_repo_or_404(session, repo_id, user)
 
 
-def _get_dataset_or_404(session: Session, dataset_id: int) -> Dataset:
-    """Return the dataset or raise a 404 HTTPException."""
+def _get_dataset_or_404(session: Session, dataset_id: int, user: User) -> Dataset:
+    """Return the dataset if its repository is visible to ``user``, else 404.
+
+    Datasets inherit their visibility from the repository they belong to, so a
+    dataset of somebody else's repository is reported as non-existent.
+    """
     dataset = session.get(Dataset, dataset_id)
     if not dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset {dataset_id} not found.",
+        )
+
+    repo = session.get(Repository, dataset.repo_id)
+    if not can_access_repo(repo, user):
+        logger.info(
+            "ownership.dataset_access_denied",
+            dataset_id=dataset_id,
+            repo_id=dataset.repo_id,
+            user_id=user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Dataset {dataset_id} not found.",
@@ -154,7 +170,8 @@ async def upload_dataset(
 
     The bytes are streamed (never fully buffered in memory), hashed with
     SHA-256 and uploaded to the datasets bucket. Any previously active dataset
-    of the repository is deactivated.
+    of the repository is deactivated. Only the repository's owner (or an
+    admin) may upload to it.
 
     Args:
         repo_id: Owning repository ID.
@@ -162,10 +179,10 @@ async def upload_dataset(
         description: Optional free-text description.
 
     Raises:
-        HTTPException: 404 unknown repo, 413 too large, 415 bad extension,
-            422 empty file, 502 if MinIO rejects the upload.
+        HTTPException: 404 unknown or non-visible repo, 413 too large,
+            415 bad extension, 422 empty file, 502 if MinIO rejects the upload.
     """
-    _get_repo_or_404(session, repo_id)
+    _get_repo_or_404(session, repo_id, current_user)
 
     filename = file.filename or ""
     extension = _file_extension(filename)
@@ -266,10 +283,13 @@ async def upload_dataset(
 async def list_datasets(
     repo_id: int,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[DatasetResponse]:
-    """Return the repository's datasets, most recent first."""
-    _get_repo_or_404(session, repo_id)
+    """Return the repository's datasets, most recent first.
+
+    Restricted to repositories the caller owns (admins see any repository).
+    """
+    _get_repo_or_404(session, repo_id, current_user)
 
     datasets = session.exec(
         select(Dataset)
@@ -287,10 +307,13 @@ async def list_datasets(
 async def activate_dataset(
     dataset_id: int,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> DatasetResponse:
-    """Activate ``dataset_id`` and deactivate every other dataset of its repo."""
-    dataset = _get_dataset_or_404(session, dataset_id)
+    """Activate ``dataset_id`` and deactivate every other dataset of its repo.
+
+    Restricted to datasets of repositories the caller can see.
+    """
+    dataset = _get_dataset_or_404(session, dataset_id, current_user)
 
     _deactivate_others(session, dataset.repo_id, keep_id=dataset.id)
     dataset.is_active = True
@@ -312,14 +335,15 @@ async def activate_dataset(
 async def delete_dataset(
     dataset_id: int,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> MessageResponse:
     """Remove the object from MinIO and delete the database row.
 
     A storage failure is non-fatal: the row is deleted anyway so the UI does
     not get stuck with an unusable entry, and the failure is logged.
+    Restricted to datasets of repositories the caller can see.
     """
-    dataset = _get_dataset_or_404(session, dataset_id)
+    dataset = _get_dataset_or_404(session, dataset_id, current_user)
     bucket, object_key = dataset.bucket, dataset.object_key
 
     try:
@@ -347,19 +371,22 @@ async def delete_dataset(
 async def preview_dataset(
     dataset_id: int,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> DatasetPreviewResponse:
     """Download the dataset and return its columns plus the first rows.
 
+    Restricted to datasets of repositories the caller can see — otherwise the
+    preview would leak the contents of another tenant's training data.
+
     Raises:
-        HTTPException: 404 unknown dataset or missing object, 422 if the file
-            cannot be parsed as a table, 502 on storage errors.
+        HTTPException: 404 unknown/non-visible dataset or missing object,
+            422 if the file cannot be parsed as a table, 502 on storage errors.
     """
     import json
 
     from core.storage import sanitize_filename
 
-    dataset = _get_dataset_or_404(session, dataset_id)
+    dataset = _get_dataset_or_404(session, dataset_id, current_user)
     extension = _file_extension(dataset.name) or _file_extension(dataset.object_key)
 
     def _load() -> tuple[list[str], list[list[Any]], bool]:

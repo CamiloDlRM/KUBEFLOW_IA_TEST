@@ -22,9 +22,17 @@ from typing import Any
 
 import structlog
 from celery import Celery
-from celery.signals import worker_shutting_down
+from celery.signals import worker_process_init, worker_shutting_down
 
 from core.config import get_settings
+from core.metrics import (
+    pipeline_finished,
+    pipeline_started,
+    record_advisor_analysis,
+    record_pipeline_phase,
+    record_pipeline_run,
+    start_worker_metrics_server,
+)
 
 settings = get_settings()
 
@@ -65,6 +73,26 @@ def _on_shutdown(**kwargs: Any) -> None:
     global _shutting_down
     _shutting_down = True
     logger.info("celery.worker_shutting_down")
+
+
+# ---------------------------------------------------------------------------
+# Prometheus exporter bootstrap
+# ---------------------------------------------------------------------------
+
+@worker_process_init.connect
+def _on_worker_process_init(**kwargs: Any) -> None:
+    """Start the Prometheus exporter inside each forked worker child.
+
+    ``worker_process_init`` (not ``celeryd_init``) is used on purpose: with the
+    prefork pool the tasks — and therefore the counters — live in the *child*
+    processes, so an exporter started in the parent would serve an empty
+    registry. Every child races for port 9100; the first one wins and the rest
+    log a warning (see ``start_worker_metrics_server``).
+    """
+    try:
+        start_worker_metrics_server()
+    except Exception as exc:  # noqa: BLE001 — instrumentation is best-effort
+        logger.warning("metrics.worker_exporter_bootstrap_failed", error=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +196,7 @@ def _enqueue_analysis(pipeline_id: str) -> None:
 
     if not advisor_configured(settings):
         logger.info("ai_advisor.skipped", pipeline_id=pipeline_id)
+        record_advisor_analysis(settings.ai_advisor_provider, "skipped")
         return
 
     try:
@@ -215,6 +244,7 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
 
     log = logger.bind(pipeline_id=pipeline_id, insight_id=insight_id)
     engine = create_engine(settings.database_url, echo=False)
+    advisor_started_at = time.perf_counter()
 
     def _update_insight(**fields: Any) -> None:
         with Session(engine) as session:
@@ -283,6 +313,11 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
             finished_at=datetime.now(timezone.utc),
         )
         log.info("ai_advisor.completed", report_chars=len(report))
+        record_advisor_analysis(
+            settings.ai_advisor_provider,
+            "success",
+            time.perf_counter() - advisor_started_at,
+        )
         return {"status": "ready"}
 
     except Exception as exc:
@@ -291,6 +326,11 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
             status="failed",
             error=str(exc),
             finished_at=datetime.now(timezone.utc),
+        )
+        record_advisor_analysis(
+            settings.ai_advisor_provider,
+            "failed",
+            time.perf_counter() - advisor_started_at,
         )
         return {"status": "failed", "error": str(exc)}
 
@@ -438,10 +478,28 @@ def run_pipeline(
     phases: list[dict[str, Any]] = []
     metrics: dict[str, Any] = {}
 
+    # --- Prometheus instrumentation (best-effort, never fails the run) ---
+    run_started_at = time.perf_counter()
+    phase_started_at: dict[str, float] = {}
+    pipeline_started()
+
+    def _record_phase_metric(name: str, status: str) -> None:
+        """Record phase counters/duration without ever raising."""
+        try:
+            if status == "running":
+                phase_started_at[name] = time.perf_counter()
+                return
+            started = phase_started_at.pop(name, None)
+            duration = None if started is None else time.perf_counter() - started
+            record_pipeline_phase(name, status, duration)
+        except Exception as exc:  # noqa: BLE001 — instrumentation is best-effort
+            log.warning("metrics.phase_record_failed", phase=name, error=str(exc))
+
     def _phase(name: str, status: str, logs: str = "") -> None:
         ts = datetime.now(timezone.utc).isoformat()
         entry = {"name": name, "status": status, "timestamp": ts, "logs": logs}
         phases.append(entry)
+        _record_phase_metric(name, status)
         _publish_phase(pipeline_id, name, status, logs)
         _update_pipeline_db(pipeline_id, phases=phases)
 
@@ -809,6 +867,7 @@ def run_pipeline(
         )
         _publish_phase(pipeline_id, "complete", "success", "Pipeline completed successfully.")
         log.info("pipeline.completed", metrics=metrics)
+        record_pipeline_run("success", time.perf_counter() - run_started_at)
         _enqueue_analysis(pipeline_id)
         return {"status": "success", "metrics": metrics}
 
@@ -821,6 +880,7 @@ def run_pipeline(
         )
         _publish_phase(pipeline_id, "shutdown", "failed", "Worker shutting down")
         log.warning("pipeline.interrupted_by_shutdown")
+        record_pipeline_run("failed", time.perf_counter() - run_started_at)
         return {"status": "failed", "reason": "worker_shutdown"}
 
     except Exception as exc:
@@ -833,5 +893,9 @@ def run_pipeline(
             metrics=metrics,
             finished_at=datetime.now(timezone.utc),
         )
+        record_pipeline_run("failed", time.perf_counter() - run_started_at)
         _enqueue_analysis(pipeline_id)
         return {"status": "failed", "error": str(exc)}
+
+    finally:
+        pipeline_finished()

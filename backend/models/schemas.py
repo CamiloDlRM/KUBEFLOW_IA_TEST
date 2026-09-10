@@ -76,6 +76,10 @@ class Repository(SQLModel, table=True):
     __tablename__ = "repositories"
 
     id: int | None = SQLField(default=None, primary_key=True)
+    # Owner of the repository. Members only see and manage their own
+    # repositories (and everything derived from them: pipelines, datasets,
+    # deployments, insights); admins see all of them.
+    owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
     github_url: str = SQLField(index=True)
     github_token_masked: str = SQLField(
         default="",
@@ -236,6 +240,7 @@ class RepoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    owner_id: int | None
     github_url: str
     github_token_masked: str
     branch: str
@@ -342,12 +347,26 @@ class MessageResponse(BaseModel):
 # Auth schemas
 # ---------------------------------------------------------------------------
 
+#: Characters allowed in a username.
+#:
+#: This is deliberately narrow. Grafana identifies the signed-in user to the
+#: dashboards through the ``${__user.login}`` global variable, which it
+#: interpolates *verbatim* into the panel SQL — there is no parameter binding on
+#: that path. A username containing a quote would therefore break out of the
+#: string literal and let its owner read every tenant's rows. Restricting the
+#: character set at the only two places a username can be set keeps that
+#: interpolation safe by construction.
+#:
+#: See ``grafana/dashboards/*.json`` and ``docs/GRAFANA.md``.
+USERNAME_PATTERN = r"^[A-Za-z0-9_.-]{3,64}$"
+
+
 class UserRegisterRequest(BaseModel):
     """Payload to register a new user."""
 
     model_config = ConfigDict(strict=True)
 
-    username: str = Field(..., min_length=3, max_length=64)
+    username: str = Field(..., min_length=3, max_length=64, pattern=USERNAME_PATTERN)
     password: str = Field(..., min_length=8, max_length=72)
     invite_token: str = Field(..., description="Single-use invite token issued by an admin.")
 
@@ -406,7 +425,7 @@ class ChangePasswordRequest(BaseModel):
 class ChangeUsernameRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
-    new_username: str = Field(..., min_length=3, max_length=64)
+    new_username: str = Field(..., min_length=3, max_length=64, pattern=USERNAME_PATTERN)
 
 
 class ConfirmChangeRequest(BaseModel):

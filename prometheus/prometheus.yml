@@ -1,0 +1,34 @@
+# Prometheus scrape configuration.
+#
+# Operational metrics only (request rate/latency, pipeline counters, queue
+# depth). Per-user ML metrics are NOT here: they live in PostgreSQL and Grafana
+# reads them from there, because one time series per user/model would blow up
+# Prometheus' cardinality.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: mlops-platform
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # FastAPI backend — HTTP metrics plus platform counters.
+  - job_name: mlops-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: backend
+
+  # Celery worker — pipeline execution counters and durations.
+  # The worker is not an HTTP server, so it exposes its own small metrics
+  # endpoint on 9100 (see the backend's metrics module).
+  - job_name: mlops-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:9100"]
+        labels:
+          service: worker

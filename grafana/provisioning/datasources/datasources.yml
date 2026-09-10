@@ -1,0 +1,44 @@
+# Grafana datasource provisioning.
+#
+# Values come from the environment variables docker-compose passes to the
+# Grafana container (MLOPS_DB_HOST, MLOPS_DB_NAME, MLOPS_GRAFANA_DB_USER,
+# MLOPS_GRAFANA_DB_PASSWORD).
+#
+# The PostgreSQL user is the least-privilege read-only role provisioned by
+# backend/core/grafana_db.py: SELECT only, on a fixed list of tables, with
+# default_transaction_read_only enabled. Both datasources are non-editable so
+# a Viewer (or an Editor, should one ever be created) cannot repoint them.
+apiVersion: 1
+
+datasources:
+  - name: MLOps PostgreSQL
+    uid: mlops-postgres
+    type: postgres
+    access: proxy
+    orgId: 1
+    url: ${MLOPS_DB_HOST}
+    user: ${MLOPS_GRAFANA_DB_USER}
+    isDefault: true
+    editable: false
+    jsonData:
+      database: ${MLOPS_DB_NAME}
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+      maxOpenConns: 10
+      maxIdleConns: 5
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: ${MLOPS_GRAFANA_DB_PASSWORD}
+
+  - name: Prometheus
+    uid: mlops-prometheus
+    type: prometheus
+    access: proxy
+    orgId: 1
+    url: http://prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

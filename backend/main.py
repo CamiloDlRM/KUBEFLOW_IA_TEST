@@ -72,7 +72,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     Schema migrations are handled by Alembic (entrypoint.sh runs
     `alembic upgrade head` before uvicorn starts).
-    This lifespan only seeds the first admin when configured.
+
+    This lifespan seeds the first admin when configured, then provisions the
+    read-only Postgres role Grafana reads the dashboards through. The Grafana
+    step never raises: an observability problem must not stop the API booting.
     """
     from sqlmodel import Session, select
 
@@ -102,7 +105,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 session.commit()
                 logger.info("auth.first_admin_created", username=settings.first_admin_username)
 
+    # Grafana queries Postgres through a dedicated read-only role rather than
+    # the application credentials, so a dashboard can never write and cannot
+    # read the password hashes. Idempotent, and safe to run on every boot.
+    from core.grafana_db import ensure_grafana_role
+
+    ensure_grafana_role()
+
     yield
+
+    from routers.grafana import aclose_grafana_client
+
+    await aclose_grafana_client()
     logger.info("app.shutdown")
 
 
@@ -125,6 +139,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Prometheus instrumentation: request middleware + the GET /metrics scrape
+# endpoint. Registered here, before startup, because middleware cannot be added
+# once the application is running. No-op when PROMETHEUS_ENABLED is false.
+from core.metrics import setup_metrics  # noqa: E402
+
+setup_metrics(app)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +233,7 @@ from routers.models import router as models_router
 from routers.webhook import router as webhook_router
 from routers.insights import router as insights_router
 from routers.datasets import router as datasets_router
+from routers.grafana import router as grafana_router
 
 app.include_router(auth_router)
 app.include_router(repos_router)
@@ -220,6 +242,7 @@ app.include_router(models_router)
 app.include_router(webhook_router)
 app.include_router(insights_router)
 app.include_router(datasets_router)
+app.include_router(grafana_router)
 
 
 # ---------------------------------------------------------------------------

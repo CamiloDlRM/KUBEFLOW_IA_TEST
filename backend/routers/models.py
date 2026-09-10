@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
+from core.ownership import assert_model_access, restrict_by_pipeline
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
@@ -26,6 +27,27 @@ from models.schemas import (
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/models", tags=["models"])
+
+
+def _assert_model_visible(session: Session, model_name: str, user: User) -> None:
+    """Raise 404 unless ``user`` may act on the model called ``model_name``.
+
+    Models are addressed by *name*, not by deployment id, so a name maps to
+    every ``ModelDeployment`` row carrying it (one per version, active or
+    not). The caller is allowed through when at least one of those rows is
+    visible — i.e. it was produced by a pipeline of a repository they own, or
+    they are an admin.
+
+    When the database holds no row at all for that name there is nothing to
+    attribute ownership to, so the request is let through unchanged and the
+    model-server has the last word. That preserves the pre-existing behaviour
+    for models loaded out of band; it is a documented residual gap, not an
+    oversight.
+    """
+    known = session.exec(
+        select(ModelDeployment).where(ModelDeployment.model_name == model_name)
+    ).all()
+    assert_model_access(session, known, model_name, user)
 
 
 def _resolve_mlflow_run_id(
@@ -100,12 +122,24 @@ async def _load_into_model_server(
 )
 async def list_models(
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ModelDeploymentResponse]:
-    """Return all deployed models from the database and verify against model-server."""
-    deployments = session.exec(
-        select(ModelDeployment).where(ModelDeployment.is_active == True)
-    ).all()
+    """Return the active deployments the caller may see.
+
+    A deployment is owned transitively: ``ModelDeployment -> Pipeline ->
+    Repository -> owner``. Members therefore only see models trained from
+    their own repositories; admins see every deployment.
+
+    Legacy rows with ``pipeline_id IS NULL`` cannot be traced back to an owner
+    and are hidden from members (fail closed) — see ``core.ownership``.
+    """
+    statement = restrict_by_pipeline(
+        select(ModelDeployment).where(ModelDeployment.is_active == True),  # noqa: E712
+        ModelDeployment.pipeline_id,
+        session,
+        current_user,
+    )
+    deployments = session.exec(statement).all()
     return [ModelDeploymentResponse.model_validate(d) for d in deployments]
 
 
@@ -119,7 +153,7 @@ async def predict(
     body: PredictRequest,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> PredictResponse:
     """Proxy a prediction request to the model-server.
 
@@ -127,10 +161,15 @@ async def predict(
     them. If it answers 404 but the database has an active deployment, the
     model is reloaded from MLflow automatically and the prediction retried.
 
+    Ownership: the caller must be able to see at least one deployment row for
+    ``model_name`` (see :func:`_assert_model_visible`).
+
     Args:
         model_name: Name of the deployed model.
         body: Input features as a 2-D array.
     """
+    _assert_model_visible(session, model_name, current_user)
+
     url = f"{settings.model_server_url}/predict/{model_name}"
 
     async def _predict_once() -> PredictResponse:
@@ -159,11 +198,17 @@ async def predict(
             detail="Model server is not reachable.",
         )
 
-    # 404: the model-server lost the model (e.g. restart). Try to reload it.
+    # 404: the model-server lost the model (e.g. restart). Try to reload it,
+    # using only a deployment the caller is allowed to see.
     deployment = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.is_active == True,
+        restrict_by_pipeline(
+            select(ModelDeployment).where(
+                ModelDeployment.model_name == model_name,
+                ModelDeployment.is_active == True,  # noqa: E712
+            ),
+            ModelDeployment.pipeline_id,
+            session,
+            current_user,
         )
     ).first()
     if not deployment:
@@ -219,18 +264,32 @@ async def rollback_model(
     body: RollbackRequest,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> MessageResponse:
     """Rollback a model to a specific MLflow version.
+
+    Restricted to models the caller can see: a rollback changes which
+    artifact the shared model-server serves, so it must never be reachable
+    across the tenant boundary.
 
     Args:
         model_name: Name of the deployed model.
         body: Contains the target version string.
     """
+    _assert_model_visible(session, model_name, current_user)
+
+    # Model names are a global namespace, so restrict the row we act on to the
+    # caller's own deployments; otherwise two tenants using the same model name
+    # would roll each other's versions back and forth.
     deployment = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.version == body.version,
+        restrict_by_pipeline(
+            select(ModelDeployment).where(
+                ModelDeployment.model_name == model_name,
+                ModelDeployment.version == body.version,
+            ),
+            ModelDeployment.pipeline_id,
+            session,
+            current_user,
         )
     ).first()
 
@@ -261,9 +320,14 @@ async def rollback_model(
         )
 
     current_active = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.is_active == True,
+        restrict_by_pipeline(
+            select(ModelDeployment).where(
+                ModelDeployment.model_name == model_name,
+                ModelDeployment.is_active == True,  # noqa: E712
+            ),
+            ModelDeployment.pipeline_id,
+            session,
+            current_user,
         )
     ).all()
     for d in current_active:
@@ -287,13 +351,18 @@ async def delete_model(
     model_name: str,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> MessageResponse:
     """Unload a model from the model-server and deactivate its deployment records.
+
+    Restricted to models the caller can see, so one tenant cannot take another
+    tenant's model out of service.
 
     Args:
         model_name: Name of the model to remove.
     """
+    _assert_model_visible(session, model_name, current_user)
+
     url = f"{settings.model_server_url}/models/{model_name}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -302,10 +371,18 @@ async def delete_model(
     except Exception as exc:
         logger.warning("model.unload_failed", model_name=model_name, error=str(exc))
 
+    # Only deactivate rows the caller owns: model names are shared across
+    # tenants, so a blanket update by name would unregister other people's
+    # deployments as a side effect.
     deployments = session.exec(
-        select(ModelDeployment).where(
-            ModelDeployment.model_name == model_name,
-            ModelDeployment.is_active == True,
+        restrict_by_pipeline(
+            select(ModelDeployment).where(
+                ModelDeployment.model_name == model_name,
+                ModelDeployment.is_active == True,  # noqa: E712
+            ),
+            ModelDeployment.pipeline_id,
+            session,
+            current_user,
         )
     ).all()
     for d in deployments:
