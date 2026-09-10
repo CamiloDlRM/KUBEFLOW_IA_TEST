@@ -30,6 +30,7 @@ The advisor runs on **Claude, Google Gemini, or any local model served by Ollama
   - [Choosing a provider](#choosing-a-provider)
   - [The improvement loop](#the-improvement-loop)
 - [Notebook Structure](#notebook-structure)
+- [Datasets (MinIO)](#datasets-minio)
 - [Authentication](#authentication)
 - [API Reference](#api-reference)
 - [Configuration](#configuration)
@@ -59,6 +60,12 @@ Recent additions on top of the base push-to-deploy platform:
   restart used to break `Test`/predict with a 404 "not loaded". Now the backend
   detects that, **reloads the model from MLflow automatically**, and retries the
   prediction transparently. Rollback was also fixed to use the real MLflow run id.
+- 🗂️ **Datasets in MinIO** — upload your training data from the UI instead of
+  committing it to Git. It is stored in S3-compatible object storage, associated
+  with the repository (one active dataset at a time) and injected into the
+  notebook as `DATASET_PATH`. MinIO is now also MLflow's artifact store, which
+  removes the last shared local volume between services. See
+  [Datasets (MinIO)](#datasets-minio).
 - 🔐 **Landing page + authentication** — a public marketing landing at `/`, JWT
   login, user invites with email confirmation, self-service password/username
   changes, and an admin panel.
@@ -70,23 +77,26 @@ Recent additions on top of the base push-to-deploy platform:
 ```
                           ┌──────────────┐
   GitHub  ──webhook──▶    │  Backend API │  ◀── Frontend (React SPA)
-  (push /   or manual     │  (FastAPI)   │
+  (push /   or manual     │  (FastAPI)   │       · dataset upload
    Run)     trigger       └──────┬───────┘
                                  │ enqueue
                                  ▼
                           ┌──────────────┐        ┌──────────────┐
-                          │ Celery Worker│──────▶ │    MLflow    │  (tracking + artifacts)
-                          │ (papermill)  │        └──────────────┘
-                          └──────┬───────┘                │ load
-                                 │ AI analysis            ▼
-                                 ▼                 ┌──────────────┐
-                     ┌───────────────────────┐    │ Model Server │  (dynamic serving)
-                     │ AI Advisor            │    └──────────────┘
-                     │ Claude / Gemini /     │
-                     │ Ollama                │
-                     └───────────────────────┘
+                          │ Celery Worker│──────▶ │    MLflow    │  (tracking)
+                          │ (papermill)  │        └──────┬───────┘
+                          └──────┬───────┘               │ artifacts (S3)
+                                 │ AI analysis           ▼
+                                 ▼               ┌──────────────┐     ┌──────────────┐
+                     ┌───────────────────────┐   │    MinIO     │ ──▶ │ Model Server │
+                     │ AI Advisor            │   │  (S3 store)  │     │  (serving)   │
+                     │ Claude / Gemini /     │   │  · datasets  │     └──────────────┘
+                     │ Ollama                │   │  · mlflow    │
+                     └───────────────────────┘   └──────────────┘
+                                                        ▲
+                     the worker also pulls the active dataset from here
 
   State & messaging:  PostgreSQL (records)   ·   Redis (pipeline state + pub/sub)
+  Object storage:     MinIO (datasets bucket + MLflow artifact store)
   Dev email:          Mailhog (SMTP capture)
 ```
 
@@ -99,7 +109,11 @@ Recent additions on top of the base push-to-deploy platform:
 - **PostgreSQL** — repositories, pipelines, deployments, insights, users
   (schema managed with **Alembic**).
 - **Redis** — pipeline phase state and pub/sub for live log streaming.
-- **MLflow** — experiment tracking and the artifact store models are served from.
+- **MLflow** — experiment tracking; its **artifact store is the MinIO bucket
+  `mlflow`** (`s3://mlflow/`), so nothing depends on a shared local volume.
+- **MinIO** — S3-compatible object storage. Holds the datasets users upload
+  (bucket `datasets`) and the MLflow artifacts (bucket `mlflow`). Console at
+  http://localhost:9001.
 
 ## Requirements
 
@@ -124,6 +138,7 @@ docker compose up -d --build
 curl http://localhost:8000/health   # Backend
 curl http://localhost:8001/health   # Model server
 curl http://localhost:5000/health   # MLflow
+curl http://localhost:9000/minio/health/live   # MinIO (console: http://localhost:9001)
 
 # 4. Open the app and sign in
 #    http://localhost:3000   (log in with FIRST_ADMIN_USERNAME / FIRST_ADMIN_PASSWORD)
@@ -222,11 +237,70 @@ The pipeline injects these variables via papermill:
 
 | Variable | Description |
 |----------|-------------|
+| `DATASET_PATH` | Local path of the repository's **active dataset**, downloaded from MinIO. Empty when the repo has no active dataset |
 | `MODEL_OUTPUT_PATH` | Path where the model must be saved |
 | `PIPELINE_ID` | UUID of the current pipeline run |
 | `MLFLOW_TRACKING_URI` | MLflow server URL |
 
-See `notebooks/example_notebook.ipynb` for a complete example.
+See `notebooks/example_notebook.ipynb` for a minimal example, and
+`notebooks/example_dataset_notebook.ipynb` for one that consumes `DATASET_PATH`.
+
+## Datasets (MinIO)
+
+Training data does not have to live in your Git repository. Datasets are uploaded
+from the UI and stored in **MinIO**, the S3-compatible object store bundled with
+the stack (bucket `datasets`). MinIO is also the **artifact store for MLflow**
+(bucket `mlflow`), which replaces the shared local volume the services used to
+mount — a prerequisite for moving the platform to Kubernetes.
+
+### Uploading a dataset
+
+1. Open a repository in the UI and go to its **Datasets** section.
+2. Upload a file (CSV, Parquet or JSON). It is validated, size-checked against
+   `DATASET_MAX_SIZE_MB` and stored in MinIO under the `datasets` bucket.
+3. The dataset is **associated with that repository**. A repository can hold
+   several uploaded datasets, but **only one is active at a time** — activating a
+   new one deactivates the previous one. The active dataset is the one the next
+   pipeline run will use.
+
+### Consuming it from the notebook
+
+When a run starts, the worker downloads the repository's active dataset from
+MinIO and injects its local path into the notebook as the papermill parameter
+**`DATASET_PATH`**. Declare it in your `parameters` cell and read it in your
+`mlops:data` cell:
+
+```python
+# cell tagged `parameters` (papermill overwrites these at runtime)
+DATASET_PATH = ""
+MODEL_OUTPUT_PATH = ""
+PIPELINE_ID = ""
+MLFLOW_TRACKING_URI = ""
+```
+
+```python
+# cell tagged `mlops:data`
+from pathlib import Path
+import pandas as pd
+
+if DATASET_PATH and Path(DATASET_PATH).exists():
+    df = pd.read_csv(DATASET_PATH)          # the uploaded dataset
+else:
+    df = load_my_fallback_dataset()         # keeps the notebook runnable standalone
+```
+
+Always keep a fallback: it lets you run the notebook by hand and keeps the
+pipeline working for repositories that have no active dataset yet.
+`notebooks/example_dataset_notebook.ipynb` is a complete, runnable example of
+this flow (read → train → `mlflow.log_metric` → `joblib.dump`).
+
+### The MinIO console
+
+Browse the buckets, inspect uploaded datasets and MLflow artifacts at
+**http://localhost:9001** — log in with `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+(`minioadmin` / `minioadmin` by default). The S3 API itself is on port `9000`.
+Both buckets are created automatically on startup by the `minio-init` service,
+so there is nothing to set up by hand.
 
 ## Authentication
 
@@ -364,6 +438,13 @@ full annotated list. The most relevant ones:
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama server URL (provider `ollama`) |
 | `AUTO_DEPLOY_ON_SUCCESS` | `true` | Auto-deploy models that pass the threshold |
 | `MIN_ACCURACY_THRESHOLD` | `0.70` | Minimum accuracy required for auto-deploy |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `minioadmin` | MinIO server root credentials (also used to log into the console) |
+| `MINIO_ENDPOINT` | `http://minio:9000` | MinIO S3 endpoint as seen from the containers |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` | Credentials the backend/worker use against MinIO |
+| `MINIO_REGION` | `us-east-1` | Region sent to the S3 API (MinIO ignores it, boto3 requires it) |
+| `MINIO_BUCKET_DATASETS` | `datasets` | Bucket for user-uploaded datasets |
+| `MINIO_BUCKET_MLFLOW` | `mlflow` | Bucket used as the MLflow artifact store |
+| `DATASET_MAX_SIZE_MB` | `512` | Maximum accepted size for an uploaded dataset |
 | `SMTP_*` / `EMAIL_FROM_ADDRESS` | Mailhog | Email delivery for invites/confirmations |
 | `VITE_API_URL` / `VITE_WS_URL` | localhost | Frontend build-time API/WS URLs |
 
@@ -375,6 +456,8 @@ full annotated list. The most relevant ones:
 | Backend API | 8000 | http://localhost:8000 |
 | Model Server | 8001 | http://localhost:8001 |
 | MLflow UI | 5000 | http://localhost:5000 |
+| MinIO (S3 API) | 9000 | http://localhost:9000 |
+| MinIO Console | 9001 | http://localhost:9001 |
 | Mailhog (dev email UI) | 8025 | http://localhost:8025 |
 | PostgreSQL | 5432 | internal |
 | Redis | 6379 | redis://localhost:6379 |

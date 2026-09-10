@@ -21,6 +21,8 @@ import type {
   Insight,
   BranchInfo,
   TriggerAccepted,
+  Dataset,
+  DatasetPreview,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -143,6 +145,56 @@ export async function triggerPipeline(
   const { data } = await apiClient.post<TriggerAccepted>(
     `/repos/${repoId}/trigger`,
     { branch },
+  );
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Datasets                                                           */
+/* ------------------------------------------------------------------ */
+
+export async function getDatasets(repoId: number): Promise<Dataset[]> {
+  const { data } = await apiClient.get<Dataset[]>(`/repos/${repoId}/datasets`);
+  return data;
+}
+
+export async function uploadDataset(
+  repoId: number,
+  file: File,
+  description = '',
+): Promise<Dataset> {
+  const form = new FormData();
+  form.append('file', file);
+  if (description) form.append('description', description);
+
+  const { data } = await apiClient.post<Dataset>(
+    `/repos/${repoId}/datasets`,
+    form,
+    {
+      // The axios instance defaults to application/json; unsetting it here lets
+      // the browser build the multipart/form-data header with its own boundary.
+      headers: { 'Content-Type': undefined },
+      // Dataset files can be large - allow more than the default 15s.
+      timeout: 120_000,
+    },
+  );
+  return data;
+}
+
+export async function activateDataset(datasetId: number): Promise<Dataset> {
+  const { data } = await apiClient.post<Dataset>(
+    `/datasets/${datasetId}/activate`,
+  );
+  return data;
+}
+
+export async function deleteDataset(datasetId: number): Promise<void> {
+  await apiClient.delete(`/datasets/${datasetId}`);
+}
+
+export async function getDatasetPreview(datasetId: number): Promise<DatasetPreview> {
+  const { data } = await apiClient.get<DatasetPreview>(
+    `/datasets/${datasetId}/preview`,
   );
   return data;
 }

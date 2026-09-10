@@ -43,6 +43,22 @@ export function formatDuration(
 }
 
 /**
+ * Format a byte count into a human-readable size (B / KB / MB / GB).
+ */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null || Number.isNaN(bytes)) return '--';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+/**
  * Truncate a string (e.g. commit SHA) to a given length.
  */
 export function truncate(str: string, len = 7): string {

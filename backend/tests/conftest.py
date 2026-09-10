@@ -52,6 +52,7 @@ def db_engine():
     in-memory database with the test thread.
     """
     from models.schemas import (  # noqa: F401
+        Dataset,
         ModelDeployment,
         Pipeline,
         PipelineInsight,
@@ -275,6 +276,30 @@ def seed_pipeline(session: Session, repo_id: int, **kwargs) -> "Pipeline":
     session.commit()
     session.refresh(pipeline)
     return pipeline
+
+
+def seed_dataset(session: Session, repo_id: int, **kwargs) -> "Dataset":
+    """Insert a Dataset record into the session and return it."""
+    from models.schemas import Dataset
+
+    defaults = {
+        "repo_id": repo_id,
+        "name": "train.csv",
+        "description": "seeded dataset",
+        "bucket": "datasets",
+        "object_key": f"repo-{repo_id}/00000000-0000-0000-0000-000000000000/train.csv",
+        "content_type": "text/csv",
+        "size_bytes": 128,
+        "checksum": "0" * 64,
+        "uploaded_by": None,
+        "is_active": True,
+    }
+    defaults.update(kwargs)
+    dataset = Dataset(**defaults)
+    session.add(dataset)
+    session.commit()
+    session.refresh(dataset)
+    return dataset
 
 
 def seed_model_deployment(session: Session, **kwargs) -> "ModelDeployment":

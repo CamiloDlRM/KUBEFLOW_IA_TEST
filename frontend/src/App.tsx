@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import AddRepository from './pages/AddRepository';
+import Datasets from './pages/Datasets';
 import PipelineDetail from './pages/PipelineDetail';
 import Models from './pages/Models';
 import Admin from './pages/Admin';
@@ -39,6 +40,7 @@ export default function App() {
       >
         <Route path="/" element={<Dashboard />} />
         <Route path="/repos/new" element={<AddRepository />} />
+        <Route path="/repos/:repoId/datasets" element={<Datasets />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
         <Route path="/admin" element={<Admin />} />

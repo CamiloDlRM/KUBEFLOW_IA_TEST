@@ -34,7 +34,12 @@ dist/
 *.tsbuildinfo
 
 # ── MLflow ───────────────────────────────────────────────────────────────────
-mlflow/
+# Ignore the local MLflow data (mlflow.db, artifacts) but keep the Dockerfile
+# that builds the tracking-server image. Note the pattern must be "mlflow/*"
+# and not "mlflow/": git cannot re-include a file whose parent directory is
+# itself excluded.
+mlflow/*
+!mlflow/Dockerfile
 mlruns/
 
 # ── Logs ─────────────────────────────────────────────────────────────────────

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ---------- PostgreSQL ----------
   postgres:
@@ -22,6 +20,63 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------- MinIO (S3-compatible object storage) ----------
+  # Stores two things:
+  #   - user-uploaded datasets   -> bucket ${MINIO_BUCKET_DATASETS} (default "datasets")
+  #   - MLflow run artifacts     -> bucket ${MINIO_BUCKET_MLFLOW}   (default "mlflow")
+  # This replaces the shared local volume that used to hold MLflow artifacts,
+  # which is not portable to Kubernetes.
+  minio:
+    image: minio/minio:latest
+    container_name: mlops-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console: http://localhost:9001
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------- MinIO bucket bootstrap (runs once, then exits) ----------
+  # Idempotent: `mc mb --ignore-existing` is a no-op when the bucket exists.
+  minio-init:
+    image: minio/mc:latest
+    container_name: mlops-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_BUCKET_DATASETS=${MINIO_BUCKET_DATASETS:-datasets}
+      - MINIO_BUCKET_MLFLOW=${MINIO_BUCKET_MLFLOW:-mlflow}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          echo "waiting for minio..."
+          sleep 2
+        done
+        mc mb --ignore-existing "local/$$MINIO_BUCKET_DATASETS"
+        mc mb --ignore-existing "local/$$MINIO_BUCKET_MLFLOW"
+        mc ls local
+        echo "minio buckets ready"
+    networks:
+      - mlops-network
+    restart: "no"
+
   # ---------- Backend API ----------
   backend:
     build: ./backend
@@ -31,12 +86,19 @@ services:
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
+      # S3 / MinIO credentials (boto3 + mlflow client)
+      - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
     volumes:
       - mlops-models:/app/model_artifacts
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
       mlflow:
         condition: service_started
@@ -65,13 +127,19 @@ services:
     environment:
       - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
       - PYTHONPATH=/app
+      # The worker downloads datasets from MinIO and logs MLflow artifacts to S3.
+      - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
     volumes:
       - mlops-models:/app/model_artifacts
-      - mlflow-data:/mlflow
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
       mlflow:
         condition: service_started
@@ -117,18 +185,38 @@ services:
       retries: 3
 
   # ---------- MLflow ----------
+  # Backend store: SQLite on the `mlflow-data` volume (unchanged, keeps run history).
+  # Artifact store: MinIO bucket `mlflow` (was a local path on the same volume).
+  # boto3 is installed at startup because the official MLflow image ships without
+  # the S3 extra; the pin matches backend/requirements.txt.
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.9.2
+    # Built locally so boto3 (S3 support) is baked into the image instead of
+    # pip-installed on every container start — see mlflow/Dockerfile.
+    build: ./mlflow
     container_name: mlops-mlflow
     ports:
       - "5000:5000"
-    command: >
-      mlflow server
-        --host 0.0.0.0
-        --backend-store-uri sqlite:///mlflow/mlflow.db
-        --default-artifact-root /mlflow/artifacts
+    environment:
+      - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        exec mlflow server \
+          --host 0.0.0.0 \
+          --backend-store-uri sqlite:///mlflow/mlflow.db \
+          --default-artifact-root "s3://${MINIO_BUCKET_MLFLOW:-mlflow}/"
     volumes:
+      # Only holds mlflow.db now — artifacts live in MinIO.
       - mlflow-data:/mlflow
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     networks:
       - mlops-network
     restart: unless-stopped
@@ -140,10 +228,17 @@ services:
     ports:
       - "8001:8001"
     env_file: .env
+    environment:
+      # Artifacts are downloaded from MinIO instead of a shared volume.
+      - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
     volumes:
       - mlops-models:/app/model_artifacts
-      - mlflow-data:/mlflow
     depends_on:
+      minio:
+        condition: service_healthy
       mlflow:
         condition: service_started
     networks:
@@ -190,7 +285,8 @@ networks:
 
 volumes:
   mlops-models:
-  mlflow-data:
+  mlflow-data:      # MLflow SQLite backend store (artifacts now live in MinIO)
+  minio-data:       # MinIO object storage (datasets + mlflow buckets)
   redis-data:
   postgres-data:
   # Uncomment together with the ollama service above:
