@@ -133,6 +133,14 @@ export default function RepoCard({ repo, latestPipeline, onDelete }: RepoCardPro
         )}
       </div>
 
+      <Link
+        to={`/repos/${repo.id}/datasets`}
+        className="mt-3 flex items-center justify-center gap-1.5 rounded-md border border-slate-700 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-slate-100"
+      >
+        <DatabaseIcon />
+        Datasets
+      </Link>
+
       {latestPipeline && (
         <Link
           to={`/pipelines/${latestPipeline.id}`}
@@ -149,6 +157,16 @@ function PlayIcon() {
   return (
     <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
       <path d="M8 5.14v13.72a1 1 0 001.5.86l11-6.86a1 1 0 000-1.72l-11-6.86a1 1 0 00-1.5.86z" />
+    </svg>
+  );
+}
+
+function DatabaseIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 7c0-1.657 3.582-3 8-3s8 1.343 8 3-3.582 3-8 3-8-1.343-8-3z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 1.657 3.582 3 8 3s8-1.343 8-3V7" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 12c0 1.657 3.582 3 8 3s8-1.343 8-3" />
     </svg>
   );
 }

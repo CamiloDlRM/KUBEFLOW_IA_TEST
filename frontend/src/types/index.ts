@@ -165,6 +165,32 @@ export interface InviteTokenResponse {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Datasets                                                           */
+/* ------------------------------------------------------------------ */
+
+export interface Dataset {
+  id: number;
+  repo_id: number;
+  name: string;
+  description: string;
+  bucket: string;
+  object_key: string;
+  content_type: string;
+  size_bytes: number;
+  checksum: string;
+  uploaded_by: number | null;
+  created_at: string;
+  is_active: boolean;
+}
+
+export interface DatasetPreview {
+  dataset_id: number;
+  columns: string[];
+  rows: unknown[][];
+  truncated: boolean;
+}
+
+/* ------------------------------------------------------------------ */
 /*  AI Insights                                                        */
 /* ------------------------------------------------------------------ */
 

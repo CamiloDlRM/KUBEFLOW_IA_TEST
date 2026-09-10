@@ -9,6 +9,9 @@ pydantic-settings==2.6.0
 # ML tracking (for artifact download)
 mlflow==2.9.2
 
+# S3 client — MLflow artifacts now live in MinIO (s3://mlflow/), not a shared volume
+boto3==1.35.76
+
 # Model loading
 scikit-learn==1.5.2
 joblib==1.4.2

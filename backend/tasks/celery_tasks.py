@@ -430,7 +430,7 @@ def run_pipeline(
     import papermill as pm
 
     from sqlmodel import Session, select
-    from models.schemas import Pipeline, Repository, ModelDeployment
+    from models.schemas import Dataset, Pipeline, Repository, ModelDeployment
     from core.notebook_parser import validate_required_tags, extract_config
     from db import engine
 
@@ -541,6 +541,81 @@ def run_pipeline(
             with open(input_path, "w") as f:
                 json.dump(notebook, f)
 
+            # Phase 3a: Mount the repository's active dataset (if any).
+            # The dataset is downloaded from MinIO into this same temporary
+            # directory and its local path is injected as DATASET_PATH, so the
+            # notebook never handles S3 credentials.
+            dataset_path: str | None = None
+            _phase("dataset", "running", "Looking up the repository's active dataset...")
+
+            with Session(engine) as session:
+                active_dataset = session.exec(
+                    select(Dataset)
+                    .where(
+                        Dataset.repo_id == repo_id,
+                        Dataset.is_active == True,  # noqa: E712
+                    )
+                    .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
+                ).first()
+                dataset_info: dict[str, Any] | None = (
+                    {
+                        "id": active_dataset.id,
+                        "name": active_dataset.name,
+                        "bucket": active_dataset.bucket,
+                        "object_key": active_dataset.object_key,
+                        "size_bytes": active_dataset.size_bytes,
+                    }
+                    if active_dataset
+                    else None
+                )
+
+            if dataset_info:
+                from core.storage import download_to_path, sanitize_filename
+
+                dataset_dir = os.path.join(tmpdir, "dataset")
+                os.makedirs(dataset_dir, exist_ok=True)
+                dataset_path = os.path.join(
+                    dataset_dir, sanitize_filename(dataset_info["name"] or "dataset")
+                )
+                try:
+                    download_to_path(
+                        dataset_info["bucket"], dataset_info["object_key"], dataset_path
+                    )
+                except Exception as exc:
+                    message = (
+                        f"Failed to download dataset '{dataset_info['name']}' "
+                        f"(id={dataset_info['id']}, "
+                        f"s3://{dataset_info['bucket']}/{dataset_info['object_key']}): {exc}"
+                    )
+                    _phase("dataset", "failed", message)
+                    log.error(
+                        "pipeline.phase.dataset.failed",
+                        dataset_id=dataset_info["id"],
+                        error=str(exc),
+                    )
+                    raise ValueError(message) from exc
+
+                _phase(
+                    "dataset",
+                    "success",
+                    f"Dataset '{dataset_info['name']}' (id={dataset_info['id']}, "
+                    f"{dataset_info['size_bytes']} bytes) mounted at {dataset_path}. "
+                    "Injected as papermill parameter DATASET_PATH.",
+                )
+                log.info(
+                    "pipeline.phase.dataset.mounted",
+                    dataset_id=dataset_info["id"],
+                    dataset_path=dataset_path,
+                )
+            else:
+                _phase(
+                    "dataset",
+                    "success",
+                    "No active dataset for this repository; "
+                    "DATASET_PATH was not injected.",
+                )
+                log.info("pipeline.phase.dataset.none", repo_id=repo_id)
+
             # Start the MLflow run BEFORE papermill so the notebook logs
             # metrics into this same run (avoids the 0.0 accuracy bug).
             #
@@ -578,15 +653,21 @@ def run_pipeline(
 
             # Execute with papermill — pass run_id so the notebook
             # logs metrics into the same MLflow run.
+            parameters: dict[str, Any] = {
+                "MODEL_OUTPUT_PATH": model_output_path,
+                "PIPELINE_ID": pipeline_id,
+                "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri,
+                "MLFLOW_RUN_ID": mlflow_run_id,
+            }
+            # Only injected when the repository has an active dataset, so
+            # notebooks without a DATASET_PATH parameter keep working.
+            if dataset_path:
+                parameters["DATASET_PATH"] = dataset_path
+
             pm.execute_notebook(
                 input_path,
                 output_path,
-                parameters={
-                    "MODEL_OUTPUT_PATH": model_output_path,
-                    "PIPELINE_ID": pipeline_id,
-                    "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri,
-                    "MLFLOW_RUN_ID": mlflow_run_id,
-                },
+                parameters=parameters,
                 cwd=tmpdir,
             )
 

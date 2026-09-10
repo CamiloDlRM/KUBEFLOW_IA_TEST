@@ -141,6 +141,31 @@ class PipelineInsight(SQLModel, table=True):
     apply_commit_sha: str = SQLField(default="")
 
 
+class Dataset(SQLModel, table=True):
+    """A training dataset uploaded by a user and stored in MinIO.
+
+    Datasets belong to a repository. The pipeline downloads the repository's
+    active dataset before executing the notebook and injects its local path as
+    the ``DATASET_PATH`` papermill parameter.
+    """
+
+    __tablename__ = "datasets"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    name: str = SQLField(default="")  # original filename, e.g. "train.csv"
+    description: str = SQLField(default="")
+    bucket: str = SQLField(default="")
+    object_key: str = SQLField(default="")  # e.g. "repo-3/7ac1.../train.csv"
+    content_type: str = SQLField(default="application/octet-stream")
+    size_bytes: int = SQLField(default=0)
+    checksum: str = SQLField(default="")  # sha256 of the uploaded bytes
+    uploaded_by: int | None = SQLField(default=None, foreign_key="users.id")
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    # Exactly one dataset per repository is active; it is the one the pipeline uses.
+    is_active: bool = SQLField(default=True)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline phase (embedded, not a table)
 # ---------------------------------------------------------------------------
@@ -431,3 +456,35 @@ class BranchInfo(BaseModel):
 
     name: str
     commit_sha: str
+
+
+# ---------------------------------------------------------------------------
+# Datasets (MinIO)
+# ---------------------------------------------------------------------------
+
+class DatasetResponse(BaseModel):
+    """Dataset read representation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    repo_id: int
+    name: str
+    description: str
+    bucket: str
+    object_key: str
+    content_type: str
+    size_bytes: int
+    checksum: str
+    uploaded_by: int | None
+    created_at: datetime
+    is_active: bool
+
+
+class DatasetPreviewResponse(BaseModel):
+    """First rows of a tabular dataset, for the UI preview."""
+
+    dataset_id: int
+    columns: list[str]
+    rows: list[list[Any]]
+    truncated: bool = False

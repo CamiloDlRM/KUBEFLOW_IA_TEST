@@ -111,6 +111,36 @@ class AppSettings(BaseSettings):
         description="Base directory where trained model artifacts are stored.",
     )
 
+    # --- Object storage (MinIO / S3) ---
+    minio_endpoint: str = Field(
+        default="http://minio:9000",
+        description="MinIO/S3 endpoint URL as seen from the backend and worker.",
+    )
+    minio_access_key: str = Field(
+        default="minioadmin",
+        description="MinIO access key (S3 AWS_ACCESS_KEY_ID).",
+    )
+    minio_secret_key: str = Field(
+        default="minioadmin",
+        description="MinIO secret key (S3 AWS_SECRET_ACCESS_KEY).",
+    )
+    minio_region: str = Field(
+        default="us-east-1",
+        description="Region name sent to the S3 API (MinIO ignores it but boto3 requires one).",
+    )
+    minio_bucket_datasets: str = Field(
+        default="datasets",
+        description="Bucket where user-uploaded training datasets are stored.",
+    )
+    minio_bucket_mlflow: str = Field(
+        default="mlflow",
+        description="Bucket used by MLflow as its artifact store.",
+    )
+    dataset_max_size_mb: int = Field(
+        default=512,
+        description="Maximum accepted size for an uploaded dataset, in megabytes.",
+    )
+
     # --- Pipeline behaviour ---
     auto_deploy_on_success: bool = Field(
         default=True,
