@@ -54,7 +54,9 @@ numpy==1.26.4
 # Dataset readers — needed by pandas for the formats we accept on upload
 # (.parquet -> pyarrow, .xlsx -> openpyxl), both for the preview endpoint and
 # for notebooks that read DATASET_PATH.
-pyarrow==17.0.0
+# pyarrow is capped at <15 by mlflow 2.9.2, so 14.0.2 is the highest usable
+# version; bump it only together with mlflow.
+pyarrow==14.0.2
 openpyxl==3.1.5
 
 pytest>=7.0
