@@ -1011,12 +1011,32 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             size_bytes = uploadable.stat().st_size
             digest = _sha256_of(uploadable)
 
-            filename = f"{_slug(snapshot.name) or 'ingestion'}-{started:%Y%m%dT%H%M%S}.csv"
+            stamp = f"{started:%Y%m%dT%H%M%S}"
+            filename = f"{_slug(snapshot.name) or 'ingestion'}-{stamp}.csv"
             bucket = settings.minio_bucket_datasets
             object_key = storage.build_dataset_key(snapshot.repo_id, filename)
 
             with uploadable.open("rb") as handle:
                 storage.upload_fileobj(bucket, object_key, handle, "text/csv")
+
+            # Keep the extract as it left the source, before normalisation.
+            # Improving the normaliser later would otherwise mean re-extracting
+            # rows the watermark has already moved past. Stored but never
+            # registered as a dataset, so nothing trains on it by accident.
+            raw_object_key = ""
+            if uploadable is not result.path:
+                raw_object_key = storage.build_dataset_key(
+                    snapshot.repo_id, f"raw-{_slug(snapshot.name) or 'ingestion'}-{stamp}.csv"
+                )
+                try:
+                    with result.path.open("rb") as handle:
+                        storage.upload_fileobj(bucket, raw_object_key, handle, "text/csv")
+                except Exception as exc:  # noqa: BLE001
+                    # The normalised copy is already stored and is what the
+                    # pipeline needs; losing the archive is not worth failing
+                    # a run that otherwise succeeded.
+                    log.warning("ingestion.raw_archive_failed", error=str(exc))
+                    raw_object_key = ""
 
         with Session(engine) as session:
             dataset = Dataset(
@@ -1075,6 +1095,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 run.dataset_id = dataset.id
                 run.profile = result.profile
                 run.normalization = normalization
+                run.raw_object_key = raw_object_key
                 session.add(run)
             session.commit()
 

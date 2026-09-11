@@ -251,6 +251,10 @@ export interface IngestionRun {
   watermark_after: string;
   rows_extracted: number;
   dataset_id: number | null;
+  /** The extract as it left the source, before normalisation. Bronze to the
+   *  dataset's silver: kept so the normaliser can be improved and re-run
+   *  without going back to a source whose watermark has already moved on. */
+  raw_object_key: string;
   profile: Record<string, ColumnProfile>;
   normalization: NormalizationSummary | Record<string, never>;
   started_at: string | null;

@@ -274,6 +274,16 @@ class IngestionRun(SQLModel, table=True):
     #: nothing new, not a failure.
     dataset_id: int | None = SQLField(default=None, foreign_key="datasets.id")
 
+    #: Object key of the extract exactly as it came out of the source, before
+    #: normalisation touched it. Kept deliberately: without it, improving the
+    #: normaliser would mean re-extracting from the source, and the watermark
+    #: has already moved past those rows.
+    #:
+    #: It is stored but not registered as a dataset — nothing should train on
+    #: it by accident. The normalised copy is the one that becomes a Dataset.
+    #: This is the bronze layer to that silver one.
+    raw_object_key: str = SQLField(default="")
+
     #: Per-column profile of what was extracted: types, null rates, cardinality
     #: and the distribution summary. Kept on the run rather than recomputed so
     #: the AI advisor can reason about the data *as it was on that day*.
@@ -595,6 +605,7 @@ class IngestionRunResponse(BaseModel):
     watermark_after: str
     rows_extracted: int
     dataset_id: int | None
+    raw_object_key: str
     profile: dict[str, Any]
     started_at: datetime | None
     finished_at: datetime | None
