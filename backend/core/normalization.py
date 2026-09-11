@@ -317,6 +317,228 @@ class FuzzyMatcher:
         )
 
 
+#: Vocabulary terms offered to the model per piece of text. Enough to contain
+#: the answer, few enough that the prompt stays about the decision rather than
+#: about reading a dictionary.
+DEFAULT_CANDIDATES: Final[int] = 12
+
+#: Texts per request. Batched because the residue left by the cheaper matchers
+#: is hundreds of rows, and one call each would be hundreds of calls.
+DEFAULT_BATCH: Final[int] = 25
+
+LLM_SYSTEM_PROMPT: Final[str] = (
+    "You are a clinical terminology coder. You map free text written by "
+    "clinicians onto a controlled vocabulary.\n\n"
+    "The text is abbreviated, truncated, mistyped and inconsistently cased, "
+    "because it was typed into a hospital system over many years.\n\n"
+    "Rules you must follow:\n"
+    "- Choose only from the candidate codes offered for that entry.\n"
+    "- Return null when the text does not clearly correspond to one of them. "
+    "An unplaced entry is visibly unfinished; a wrong code enters the patient "
+    "record silently and nobody sees it again.\n"
+    "- Do not invent codes, and do not return a code from a different entry.\n"
+    "- Judge meaning, not spelling: 'scr' is screening, 'tx' is treatment, "
+    "'cx' is surgery. That is what you are here for — string similarity was "
+    "already tried and is what left these entries unresolved."
+)
+
+
+class LLMMatcher:
+    """Ask a language model to place text the cheaper matchers could not.
+
+    Sized to the job rather than assumed to be needed: on the sample corpus the
+    exact and fuzzy matchers together leave roughly 2% unresolved, and almost
+    all of it is abbreviation — little string similarity, obvious meaning. That
+    is a real gap and a narrow one, which is exactly the shape of problem worth
+    spending a model call on.
+
+    Three things this does that a naive wrapper would not:
+
+    It deduplicates by canonical form before calling. The unresolved rows of
+    the sample corpus are 300 rows but only 119 distinct strings.
+
+    It shortlists candidates per entry with the fuzzy scorer, so the prompt
+    carries plausible options instead of the whole vocabulary.
+
+    It refuses any code that is not in the vocabulary. A model returning a
+    plausible-looking code that does not exist is the failure mode here, and
+    checking is cheaper than trusting.
+    """
+
+    name = "llm"
+
+    def __init__(
+        self,
+        vocabulary: Vocabulary,
+        *,
+        candidates: int = DEFAULT_CANDIDATES,
+        batch_size: int = DEFAULT_BATCH,
+        generate: object | None = None,
+    ) -> None:
+        self.vocabulary = vocabulary
+        self.candidates = candidates
+        self.batch_size = batch_size
+        self._fuzzy = FuzzyMatcher(vocabulary)
+        self._codes = {term.code: term for term in vocabulary.terms}
+        self._cache: dict[str, Match] = {}
+        #: Injected in tests; defaults to the configured provider.
+        self._generate = generate
+
+    # -- prompting ---------------------------------------------------------
+
+    def _shortlist(self, canonical: str) -> list[Term]:
+        scored = sorted(
+            (
+                (self._fuzzy._similarity(canonical, term.canonical), term)  # noqa: SLF001
+                for term in self.vocabulary.terms
+            ),
+            key=lambda pair: pair[0],
+            reverse=True,
+        )
+        return [term for _, term in scored[: self.candidates]]
+
+    def build_prompt(self, texts: list[str]) -> str:
+        """Render one batch as a prompt."""
+        import json
+
+        entries = []
+        for index, text in enumerate(texts):
+            shortlist = self._shortlist(canonicalise(text))
+            entries.append(
+                {
+                    "id": index,
+                    "text": text,
+                    "candidates": [{"code": t.code, "term": t.term} for t in shortlist],
+                }
+            )
+
+        return (
+            "Map each entry to one of its candidate codes, or to null.\n\n"
+            f"{json.dumps(entries, indent=2, ensure_ascii=False)}\n\n"
+            'Reply with JSON only, of the form {"results": [{"id": 0, "code": '
+            '"80146002"}, {"id": 1, "code": null}]}. Include every id exactly once.'
+        )
+
+    def _call(self, prompt: str) -> str:
+        if self._generate is not None:
+            return self._generate(prompt)  # type: ignore[operator]
+
+        from core.ai_advisor import _BACKENDS, resolve_model  # noqa: PLC0415
+        from core.config import get_settings
+
+        settings = get_settings()
+        backend = _BACKENDS[settings.ai_advisor_provider]
+        return backend(settings, resolve_model(settings), prompt, LLM_SYSTEM_PROMPT)
+
+    # -- matching ----------------------------------------------------------
+
+    def _parse(self, raw: str, texts: list[str]) -> dict[int, str | None]:
+        """Pull the id-to-code mapping out of the model's reply.
+
+        Tolerant of the reply being wrapped in prose or a code fence, strict
+        about what it accepts from inside it.
+        """
+        import json
+        import re as _re
+
+        block = _re.search(r"\{.*\}", raw, _re.S)
+        if not block:
+            raise ValueError("no JSON object in the reply")
+        payload = json.loads(block.group(0))
+
+        results: dict[int, str | None] = {}
+        for entry in payload.get("results", []):
+            if not isinstance(entry, dict):
+                continue
+            index = entry.get("id")
+            if not isinstance(index, int) or not 0 <= index < len(texts):
+                continue
+            code = entry.get("code")
+            results[index] = code if isinstance(code, str) and code else None
+        return results
+
+    def match_many(self, texts: list[str]) -> list[Match]:
+        """Place a list of texts, batching and caching along the way."""
+        outcomes: dict[str, Match] = {}
+        pending: list[str] = []
+
+        for text in texts:
+            key = canonicalise(text)
+            if key in self._cache:
+                outcomes[text] = self._cache[key]
+            elif text not in pending:
+                pending.append(text)
+
+        for start in range(0, len(pending), self.batch_size):
+            batch = pending[start : start + self.batch_size]
+            try:
+                mapping = self._parse(self._call(self.build_prompt(batch)), batch)
+            except Exception as exc:  # noqa: BLE001 — a failed call is "unmatched"
+                logger.warning("normalization.llm_failed", error=str(exc), batch=len(batch))
+                for text in batch:
+                    outcomes[text] = Match(
+                        text, None, None, 0.0, self.name, f"provider call failed: {exc}"
+                    )
+                continue
+
+            for index, text in enumerate(batch):
+                code = mapping.get(index)
+                if code is None:
+                    result = Match(text, None, None, 0.0, self.name, "model declined to place it")
+                elif code not in self._codes:
+                    # The failure worth guarding: a well-formed code that does
+                    # not exist. Never take the model's word for the vocabulary.
+                    logger.warning("normalization.llm_invented_code", code=code, text=text)
+                    result = Match(
+                        text, None, None, 0.0, self.name,
+                        f"model returned {code!r}, which is not in the vocabulary",
+                    )
+                else:
+                    term = self._codes[code]
+                    result = Match(text, term.code, term.term, 0.75, self.name, "matched by model")
+
+                self._cache[canonicalise(text)] = result
+                outcomes[text] = result
+
+        return [
+            outcomes.get(text, Match(text, None, None, 0.0, self.name, "not returned by the model"))
+            for text in texts
+        ]
+
+    def match(self, text: str) -> Match:
+        """Place one text. Prefer :meth:`match_many` — this is one call."""
+        return self.match_many([text])[0]
+
+
+class CascadeMatcher:
+    """Try matchers in order and keep the first that places the text.
+
+    The point is not the combined number but the marginal one: how much each
+    stage adds over the one before it. A cascade reporting 98% where its free
+    first stage already reached 81% is a different result from one where the
+    first stage reached 20%, and only the breakdown tells them apart.
+    """
+
+    name = "cascade"
+
+    def __init__(self, *matchers: Matcher) -> None:
+        if not matchers:
+            raise ValueError("a cascade needs at least one matcher")
+        self.matchers = matchers
+
+    def match(self, text: str) -> Match:
+        last = None
+        for matcher in self.matchers:
+            result = matcher.match(text)
+            if result.matched:
+                # Name the stage that settled it, so the breakdown survives.
+                result.method = f"{self.name}:{result.method}"
+                return result
+            last = result
+        assert last is not None
+        return Match(text, None, None, 0.0, self.name, "no stage could place it")
+
+
 @dataclass
 class MatchReport:
     """Aggregate outcome of running one matcher over a corpus."""

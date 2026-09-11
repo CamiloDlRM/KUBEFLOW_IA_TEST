@@ -231,3 +231,156 @@ class TestScoring:
         import json
 
         json.dumps(score(ExactMatcher(vocabulary), self.CASES).summary())
+
+
+class TestLLMMatcher:
+    """The model is mocked: what is under test is our handling of its reply.
+
+    Its answers are the one thing here we do not control, so every path is
+    driven from a stub — a good reply, a malformed one, a refusal, an invented
+    code, and a provider that raises.
+    """
+
+    @staticmethod
+    def _replying(payload: str):
+        """A stand-in provider that always returns ``payload``."""
+        return lambda _prompt: payload
+
+    def test_a_valid_reply_is_applied(self, vocabulary):
+        from core.normalization import LLMMatcher
+
+        matcher = LLMMatcher(
+            vocabulary,
+            generate=self._replying('{"results": [{"id": 0, "code": "80146002"}]}'),
+        )
+        result = matcher.match("Appendect.")
+        assert result.code == "80146002"
+        assert result.method == "llm"
+
+    def test_an_invented_code_is_refused(self, vocabulary):
+        """The failure this matcher exists to guard against.
+
+        A well-formed code that is not in the vocabulary must never be taken
+        on trust, because it looks exactly like a correct answer downstream.
+        """
+        from core.normalization import LLMMatcher
+
+        matcher = LLMMatcher(
+            vocabulary,
+            generate=self._replying('{"results": [{"id": 0, "code": "99999999"}]}'),
+        )
+        result = matcher.match("Appendect.")
+        assert result.code is None
+        assert "not in the vocabulary" in result.reason
+
+    def test_a_declined_entry_stays_unmatched(self, vocabulary):
+        from core.normalization import LLMMatcher
+
+        matcher = LLMMatcher(
+            vocabulary, generate=self._replying('{"results": [{"id": 0, "code": null}]}')
+        )
+        assert matcher.match("something unrelated").code is None
+
+    def test_json_wrapped_in_prose_is_still_read(self, vocabulary):
+        from core.normalization import LLMMatcher
+
+        matcher = LLMMatcher(
+            vocabulary,
+            generate=self._replying(
+                'Sure — here is the mapping:\n```json\n'
+                '{"results": [{"id": 0, "code": "73761001"}]}\n```'
+            ),
+        )
+        assert matcher.match("colonoscpy").code == "73761001"
+
+    def test_an_unparseable_reply_is_unmatched_not_an_exception(self, vocabulary):
+        from core.normalization import LLMMatcher
+
+        matcher = LLMMatcher(vocabulary, generate=self._replying("I could not do that"))
+        result = matcher.match("Appendect.")
+        assert result.code is None
+        assert "failed" in result.reason
+
+    def test_a_provider_error_is_unmatched_not_an_exception(self, vocabulary):
+        from core.normalization import LLMMatcher
+
+        def _raise(_prompt):
+            raise RuntimeError("provider is down")
+
+        result = LLMMatcher(vocabulary, generate=_raise).match("Appendect.")
+        assert result.code is None
+        assert "provider is down" in result.reason
+
+    def test_repeated_text_costs_one_call(self, vocabulary):
+        """The residue repeats: 300 rows of the sample are 119 distinct forms."""
+        from core.normalization import LLMMatcher
+
+        calls = []
+
+        def _count(prompt):
+            calls.append(prompt)
+            return '{"results": [{"id": 0, "code": "80146002"}]}'
+
+        matcher = LLMMatcher(vocabulary, generate=_count)
+        matcher.match_many(["Appendect.", "APPENDECT.", "  appendect.  "])
+        assert len(calls) == 1, "canonically identical texts must not be asked twice"
+
+    def test_the_prompt_offers_only_vocabulary_terms(self, vocabulary):
+        """The model must choose from the vocabulary, so it must only be shown it."""
+        import json
+
+        from core.normalization import LLMMatcher
+
+        prompt = LLMMatcher(vocabulary, candidates=3).build_prompt(["Appendect."])
+        # The entries are nested JSON, so scan from the first bracket rather
+        # than trying to match balanced braces with a regex.
+        entries, _ = json.JSONDecoder().raw_decode(prompt, prompt.index("["))
+
+        assert len(entries) == 1
+        offered = {c["code"] for c in entries[0]["candidates"]}
+        assert len(offered) <= 3, "the shortlist must respect the candidate limit"
+        assert offered <= {term.code for term in vocabulary.terms}
+        assert "80146002" in offered, "the correct answer has to be reachable"
+
+    def test_batching_splits_large_inputs(self, vocabulary):
+        from core.normalization import LLMMatcher
+
+        calls = []
+
+        def _count(prompt):
+            calls.append(prompt)
+            return '{"results": []}'
+
+        matcher = LLMMatcher(vocabulary, batch_size=2, generate=_count)
+        matcher.match_many([f"unmatched text {i}" for i in range(5)])
+        assert len(calls) == 3
+
+
+class TestCascadeMatcher:
+    def test_the_first_stage_that_places_it_wins(self, vocabulary):
+        from core.normalization import CascadeMatcher
+
+        cascade = CascadeMatcher(ExactMatcher(vocabulary), FuzzyMatcher(vocabulary))
+        result = cascade.match("APPENDECTOMY")
+        assert result.code == "80146002"
+        assert result.method == "cascade:exact", "the stage that settled it must survive"
+
+    def test_a_later_stage_picks_up_what_an_earlier_one_refused(self, vocabulary):
+        from core.normalization import CascadeMatcher
+
+        cascade = CascadeMatcher(ExactMatcher(vocabulary), FuzzyMatcher(vocabulary))
+        result = cascade.match("Colonoscpy")
+        assert result.code == "73761001"
+        assert result.method == "cascade:fuzzy"
+
+    def test_text_no_stage_can_place_is_unmatched(self, vocabulary):
+        from core.normalization import CascadeMatcher
+
+        cascade = CascadeMatcher(ExactMatcher(vocabulary), FuzzyMatcher(vocabulary))
+        assert cascade.match("patient transported by ambulance").code is None
+
+    def test_an_empty_cascade_is_refused_at_construction(self):
+        from core.normalization import CascadeMatcher
+
+        with pytest.raises(ValueError):
+            CascadeMatcher()
