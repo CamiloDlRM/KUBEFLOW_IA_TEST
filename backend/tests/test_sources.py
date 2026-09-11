@@ -199,3 +199,91 @@ class TestDeleteSource:
         assert db_session.get(DataSource, source_id) is not None
         assert test_app.get(f"/sources/{source_id}").status_code == 404
         assert test_app.get("/sources").json() == []
+
+
+class TestNormalizationSettingsSurviveTheApi:
+    """The fields the UI sends must reach the database and come back.
+
+    This class exists because they did not. The form collected
+    normalize_text_column and normalize_code_column, the request schema did
+    not declare them, and Pydantic dropped them without a word — so
+    normalisation could never be switched on through the API, while the
+    backend that performs it was fully tested.
+
+    Nothing caught it: the frontend tests mock the API and feed the fields
+    straight in, the backend tests call normalize_file directly. Neither
+    crossed the boundary where the loss happened. These do.
+    """
+
+    def test_settings_round_trip_through_create(self, test_app, own_repo):
+        resp = create_source(
+            test_app,
+            own_repo.id,
+            normalize_text_column="procedure_text",
+            normalize_code_column="procedure_code",
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["normalize_text_column"] == "procedure_text"
+        assert body["normalize_code_column"] == "procedure_code"
+
+    def test_settings_are_persisted_not_just_echoed(self, test_app, own_repo, db_session):
+        from models.schemas import DataSource
+
+        source_id = create_source(
+            test_app,
+            own_repo.id,
+            normalize_text_column="procedure_text",
+            normalize_code_column="procedure_code",
+        ).json()["id"]
+
+        db_session.expire_all()
+        stored = db_session.get(DataSource, source_id)
+        assert stored.normalize_text_column == "procedure_text"
+        assert stored.normalize_code_column == "procedure_code"
+
+    def test_they_survive_a_reread(self, test_app, own_repo):
+        source_id = create_source(
+            test_app,
+            own_repo.id,
+            normalize_text_column="procedure_text",
+            normalize_code_column="procedure_code",
+        ).json()["id"]
+
+        assert test_app.get(f"/sources/{source_id}").json()["normalize_text_column"] == (
+            "procedure_text"
+        )
+
+    def test_omitting_them_means_no_normalisation(self, test_app, own_repo):
+        """They are optional: not every source has a code column to complete."""
+        body = create_source(test_app, own_repo.id).json()
+        assert body["normalize_text_column"] == ""
+        assert body["normalize_code_column"] == ""
+
+    def test_a_run_reports_what_normalisation_did(self, test_app, own_repo, db_session):
+        """The summary has to reach the UI, or the panel renders nothing."""
+        from models.schemas import IngestionRun
+
+        source_id = create_source(test_app, own_repo.id).json()["id"]
+        summary = {
+            "rows": 100,
+            "already_coded": 60,
+            "filled": 38,
+            "unresolved": 2,
+            "fill_rate": 0.95,
+            "vocabulary_size": 12,
+            "by_method": {"cascade:exact": 30, "cascade:fuzzy": 8},
+        }
+        db_session.add(
+            IngestionRun(
+                source_id=source_id,
+                status="success",
+                rows_extracted=100,
+                normalization=summary,
+            )
+        )
+        db_session.commit()
+
+        runs = test_app.get(f"/sources/{source_id}/runs").json()
+        assert runs[0]["normalization"] == summary

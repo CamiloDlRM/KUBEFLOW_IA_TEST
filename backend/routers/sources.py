@@ -108,6 +108,8 @@ async def create_source(
         password_env=body.password_env,
         extraction_sql=body.extraction_sql,
         watermark_column=body.watermark_column,
+        normalize_text_column=body.normalize_text_column,
+        normalize_code_column=body.normalize_code_column,
     )
     session.add(source)
     session.commit()

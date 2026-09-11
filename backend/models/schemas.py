@@ -566,6 +566,11 @@ class DataSourceCreateRequest(BaseModel):
     password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
     extraction_sql: str = Field(..., min_length=1, max_length=20_000)
     watermark_column: str = Field(..., min_length=1, max_length=128)
+    #: Set both to have missing codes filled in during extraction. Leaving
+    #: them empty extracts without normalising, which is the default because
+    #: not every source has a code column to complete.
+    normalize_text_column: str = Field(default="", max_length=128)
+    normalize_code_column: str = Field(default="", max_length=128)
 
 
 class DataSourceResponse(BaseModel):
@@ -589,6 +594,8 @@ class DataSourceResponse(BaseModel):
     extraction_sql: str
     watermark_column: str
     watermark_value: str
+    normalize_text_column: str
+    normalize_code_column: str
     created_at: datetime
     is_active: bool
 
@@ -607,6 +614,7 @@ class IngestionRunResponse(BaseModel):
     dataset_id: int | None
     raw_object_key: str
     profile: dict[str, Any]
+    normalization: dict[str, Any]
     started_at: datetime | None
     finished_at: datetime | None
     error: str

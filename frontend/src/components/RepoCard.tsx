@@ -138,7 +138,7 @@ export default function RepoCard({ repo, latestPipeline, onDelete }: RepoCardPro
         className="mt-3 flex items-center justify-center gap-1.5 rounded-md border border-slate-700 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-slate-100"
       >
         <DatabaseIcon />
-        Datasets
+        Data
       </Link>
 
       {latestPipeline && (
