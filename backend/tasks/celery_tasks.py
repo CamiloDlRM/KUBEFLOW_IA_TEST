@@ -1085,6 +1085,13 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 source.watermark_value = result.watermark_after
                 session.add(source)
 
+            # Read the id out while the session is still open. commit()
+            # expires every instance it manages, so touching dataset.id after
+            # this block would try to refresh a detached object and raise —
+            # marking a run that fully succeeded as failed, with its watermark
+            # already advanced so the retry finds nothing.
+            dataset_id = dataset.id
+
             run = session.get(IngestionRun, run_id)
             if run:
                 run.status = "success"
@@ -1092,7 +1099,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 run.rows_extracted = result.rows
                 run.watermark_before = result.watermark_before
                 run.watermark_after = result.watermark_after
-                run.dataset_id = dataset.id
+                run.dataset_id = dataset_id
                 run.profile = result.profile
                 run.normalization = normalization
                 run.raw_object_key = raw_object_key
@@ -1102,10 +1109,10 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
         log.info(
             "ingestion.completed",
             rows=result.rows,
-            dataset_id=dataset.id,
+            dataset_id=dataset_id,
             watermark_after=result.watermark_after,
         )
-        return {"status": "success", "rows": result.rows, "dataset_id": dataset.id}
+        return {"status": "success", "rows": result.rows, "dataset_id": dataset_id}
 
     except Exception as exc:  # noqa: BLE001 — recorded on the run
         log.error("ingestion.failed", error=str(exc))
