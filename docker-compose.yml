@@ -267,6 +267,55 @@ services:
       - mlops-network
     restart: unless-stopped
 
+  # ---------- Hospital Information System (simulated data source) ----------
+  #
+  # NOT part of the platform. It stands in for the transactional system a
+  # hospital already runs, so the ingestion has a realistic external source to
+  # extract from. Deliberately a separate container with its own credentials:
+  # the platform reaches it over the network like any third-party system, and
+  # cannot quietly share a connection with its own database.
+  #
+  # See hospital/README.md.
+  hospital-db:
+    image: postgres:16-alpine
+    container_name: mlops-hospital-db
+    environment:
+      - POSTGRES_USER=${HOSPITAL_DB_USER:-hospital}
+      - POSTGRES_PASSWORD=${HOSPITAL_DB_PASSWORD:-hospital}
+      - POSTGRES_DB=${HOSPITAL_DB_NAME:-hospital}
+    ports:
+      # Published so the data can be inspected with psql or a GUI while
+      # developing the ingestion. Not on 5432: that is the platform's own.
+      - "5433:5432"
+    volumes:
+      - hospital-data:/var/lib/postgresql/data
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${HOSPITAL_DB_USER:-hospital}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Loads Synthea's synthetic records, degrades the clinical free text and
+  # drops the code on a share of rows. Runs once and exits; idempotent, so it
+  # is safe to leave in the default `up`.
+  hospital-init:
+    build: ./hospital
+    container_name: mlops-hospital-init
+    environment:
+      - HOSPITAL_DB_URL=postgresql://${HOSPITAL_DB_USER:-hospital}:${HOSPITAL_DB_PASSWORD:-hospital}@hospital-db:5432/${HOSPITAL_DB_NAME:-hospital}
+      - SYNTHEA_SEED=${SYNTHEA_SEED:-20260911}
+      - UNCODED_FRACTION=${UNCODED_FRACTION:-0.40}
+    depends_on:
+      hospital-db:
+        condition: service_healthy
+    networks:
+      - mlops-network
+    # A loader that has finished is not a crashed loader.
+    restart: "no"
+
   # ---------- Prometheus (operational metrics) ----------
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -359,5 +408,6 @@ volumes:
   postgres-data:
   grafana-data:     # Grafana internal DB (users auto-created by auth proxy)
   prometheus-data:  # Prometheus TSDB
+  hospital-data:    # Simulated HIS — the ingestion's external source
   # Uncomment together with the ollama service above:
   # ollama-data:

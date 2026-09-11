@@ -1,0 +1,3 @@
+# Matches the pin the backend uses, so both talk to Postgres through the same
+# driver version.
+psycopg2-binary==2.9.10
