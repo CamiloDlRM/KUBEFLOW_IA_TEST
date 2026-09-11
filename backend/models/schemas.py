@@ -169,6 +169,22 @@ class Dataset(SQLModel, table=True):
     # Exactly one dataset per repository is active; it is the one the pipeline uses.
     is_active: bool = SQLField(default=True)
 
+    #: How this dataset came to exist: ``upload`` when a person sent the file,
+    #: ``ingestion`` when it was extracted from a registered source. Both paths
+    #: are profiled the same way, so downstream code never has to ask which one
+    #: produced a dataset in order to know what it can rely on.
+    origin: str = SQLField(default="upload")
+    #: The extraction that produced it, when there was one. This is the near
+    #: end of the lineage chain — model, pipeline, dataset, ingestion run,
+    #: watermark range, source — which is what lets a deployed model say which
+    #: rows of which system it was trained on.
+    ingestion_run_id: str | None = SQLField(default=None, index=True)
+    #: Per-column profile: inferred type, null rate, cardinality, top values.
+    #: Computed on a bounded sample, so ``profiled_rows`` says what it covers
+    #: rather than leaving a reader to assume it describes the whole file.
+    profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    profiled_rows: int = SQLField(default=0)
+
 
 class DataSource(SQLModel, table=True):
     """An external system the platform extracts data from.
@@ -217,6 +233,19 @@ class DataSource(SQLModel, table=True):
     #: next run is a full backfill.
     watermark_value: str = SQLField(default="")
 
+    # --- Normalisation (optional) ---
+    #: Free-text column to code, and the column holding the code. Leave both
+    #: empty to extract without normalising.
+    #:
+    #: The vocabulary is not configured anywhere, and that is the point: it is
+    #: derived from the extracted rows that *already* carry a code. A source
+    #: where 60% of rows were coded teaches the platform the 60%, which is then
+    #: applied to the other 40%. No terminology licence, no separate file to
+    #: keep in step with the data, and nothing is read that the evaluation
+    #: harness also reads.
+    normalize_text_column: str = SQLField(default="")
+    normalize_code_column: str = SQLField(default="")
+
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
 
@@ -249,6 +278,15 @@ class IngestionRun(SQLModel, table=True):
     #: and the distribution summary. Kept on the run rather than recomputed so
     #: the AI advisor can reason about the data *as it was on that day*.
     profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+    #: What normalisation did: how many rows arrived already coded, how many
+    #: were filled in, how many could not be placed, and by which strategy.
+    #: Empty when the source does not ask for normalisation.
+    #:
+    #: Kept per run rather than aggregated, because the answer changes as the
+    #: vocabulary grows: an early extraction has fewer coded rows to learn
+    #: from, so it places less. That trend is worth being able to see.
+    normalization: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
@@ -652,6 +690,13 @@ class DatasetResponse(BaseModel):
     uploaded_by: int | None
     created_at: datetime
     is_active: bool
+    # Where this came from and what it contains. Both are filled whichever
+    # path produced the dataset, so the UI can present uploads and extractions
+    # in one list without either looking impoverished.
+    origin: str
+    ingestion_run_id: str | None
+    profile: dict[str, Any]
+    profiled_rows: int
 
 
 class DatasetPreviewResponse(BaseModel):

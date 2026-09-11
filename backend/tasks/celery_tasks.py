@@ -933,6 +933,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
 
     from core import storage
     from core.ingestion import IngestionError, extract
+    from core.normalization import normalize_file
     from models.schemas import DataSource, Dataset, IngestionRun
 
     log = logger.bind(source_id=source_id, run_id=run_id)
@@ -980,14 +981,41 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 return {"status": "success", "rows": 0}
 
             assert result.path is not None
-            size_bytes = result.path.stat().st_size
-            digest = _sha256_of(result.path)
+
+            # Normalisation runs here, inside the ingestion, not as a pipeline
+            # phase. The dataset is extracted once and trained on many times;
+            # coding it per training run would repeat the same work — and the
+            # same provider calls — for an answer that cannot change.
+            normalization: dict[str, Any] = {}
+            uploadable = result.path
+            if snapshot.normalize_text_column and snapshot.normalize_code_column:
+                normalized_path = result.path.with_name(f"normalized-{run_id}.csv")
+                try:
+                    summary = normalize_file(
+                        result.path,
+                        normalized_path,
+                        text_column=snapshot.normalize_text_column,
+                        code_column=snapshot.normalize_code_column,
+                    )
+                    normalization = summary.summary()
+                    uploadable = normalized_path
+                    log.info("ingestion.normalized", **normalization)
+                except Exception as exc:  # noqa: BLE001
+                    # Land the extraction unnormalised rather than losing it.
+                    # The rows are real either way, and a run that says what
+                    # it could not do is more useful than one that failed
+                    # outright after the expensive part had already succeeded.
+                    log.warning("ingestion.normalization_failed", error=str(exc))
+                    normalization = {"error": str(exc)[:500]}
+
+            size_bytes = uploadable.stat().st_size
+            digest = _sha256_of(uploadable)
 
             filename = f"{_slug(snapshot.name) or 'ingestion'}-{started:%Y%m%dT%H%M%S}.csv"
             bucket = settings.minio_bucket_datasets
             object_key = storage.build_dataset_key(snapshot.repo_id, filename)
 
-            with result.path.open("rb") as handle:
+            with uploadable.open("rb") as handle:
                 storage.upload_fileobj(bucket, object_key, handle, "text/csv")
 
         with Session(engine) as session:
@@ -997,6 +1025,12 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 description=(
                     f"Ingested from {snapshot.name!r}: {result.rows:,} rows "
                     f"recorded after {result.watermark_before}."
+                    + (
+                        f" {normalization['filled']:,} codes filled in, "
+                        f"{normalization['unresolved']:,} left unresolved."
+                        if normalization.get("filled") is not None
+                        else ""
+                    )
                 ),
                 bucket=bucket,
                 object_key=object_key,
@@ -1004,6 +1038,10 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 size_bytes=size_bytes,
                 checksum=digest,
                 is_active=True,
+                origin="ingestion",
+                ingestion_run_id=run_id,
+                profile=result.profile,
+                profiled_rows=result.rows,
             )
             # One active dataset per repository, same rule as an upload.
             for other in session.exec(
@@ -1036,6 +1074,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 run.watermark_after = result.watermark_after
                 run.dataset_id = dataset.id
                 run.profile = result.profile
+                run.normalization = normalization
                 session.add(run)
             session.commit()
 

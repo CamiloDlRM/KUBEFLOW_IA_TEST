@@ -384,3 +384,157 @@ class TestCascadeMatcher:
 
         with pytest.raises(ValueError):
             CascadeMatcher()
+
+
+class TestVocabularyFromRows:
+    """Learning the vocabulary from the rows that already carry a code."""
+
+    def test_codes_and_terms_are_learned(self):
+        from core.normalization import vocabulary_from_rows
+
+        rows = [
+            {"text": "Appendectomy (procedure)", "code": "111"},
+            {"text": "Colonoscopy (procedure)", "code": "222"},
+            {"text": "APPENDECT.", "code": ""},
+        ]
+        vocabulary = vocabulary_from_rows(rows, "text", "code")
+        assert len(vocabulary) == 2
+        assert vocabulary.exact("appendectomy").code == "111"
+
+    def test_the_modal_spelling_wins(self):
+        """The coded rows are as dirty as the uncoded ones.
+
+        A vocabulary built from an arbitrary example inherits that damage and
+        propagates it to every row matched against it. Taking the most frequent
+        spelling picks the undamaged form, because untouched rows are the
+        single largest group for any one code.
+        """
+        from core.normalization import vocabulary_from_rows
+
+        rows = (
+            [{"text": "APPENDECT.", "code": "111"}]
+            + [{"text": "Appendectomy (procedure)", "code": "111"}] * 5
+            + [{"text": "appendectomy", "code": "111"}] * 2
+        )
+        vocabulary = vocabulary_from_rows(rows, "text", "code")
+        assert vocabulary.terms[0].term == "Appendectomy (procedure)"
+
+    def test_rows_without_a_code_teach_nothing(self):
+        from core.normalization import vocabulary_from_rows
+
+        rows = [{"text": "Appendectomy", "code": ""}, {"text": "", "code": "111"}]
+        assert len(vocabulary_from_rows(rows, "text", "code")) == 0
+
+    def test_a_wholly_uncoded_source_yields_an_empty_vocabulary(self):
+        """The cold start, visible rather than hidden behind a poor fill rate."""
+        from core.normalization import vocabulary_from_rows
+
+        rows = [{"text": f"procedure {i}", "code": ""} for i in range(50)]
+        assert len(vocabulary_from_rows(rows, "text", "code")) == 0
+
+
+class TestNormalizeFile:
+    HEADER = ["id", "text", "code"]
+
+    def _write(self, path, rows):
+        import csv
+
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(self.HEADER)
+            writer.writerows(rows)
+
+    def _read(self, path):
+        import csv
+
+        with path.open(encoding="utf-8") as handle:
+            return list(csv.DictReader(handle))
+
+    def test_missing_codes_are_filled_from_the_coded_rows(self, tmp_path):
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(
+            source,
+            [
+                [1, "Appendectomy (procedure)", "111"],
+                [2, "Appendectomy (procedure)", "111"],
+                [3, "APPENDECTOMY", ""],
+                [4, "  appendectomy  ", ""],
+            ],
+        )
+        summary = normalize_file(source, destination, text_column="text", code_column="code")
+
+        assert summary.already_coded == 2
+        assert summary.filled == 2
+        assert summary.unresolved == 0
+        assert all(row["code"] == "111" for row in self._read(destination))
+
+    def test_the_method_and_confidence_of_each_fill_are_recorded(self, tmp_path):
+        """The audit trail: a row coded by a model is not the same claim as a
+        row coded by exact match, and a reader must be able to tell."""
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(
+            source, [[1, "Appendectomy (procedure)", "111"], [2, "APPENDECTOMY", ""]]
+        )
+        normalize_file(source, destination, text_column="text", code_column="code")
+
+        rows = self._read(destination)
+        assert rows[0]["code_method"] == "source"
+        assert rows[1]["code_method"].startswith("cascade:")
+        assert float(rows[1]["code_confidence"]) > 0
+
+    def test_unplaceable_rows_keep_an_empty_code(self, tmp_path):
+        """Guessing to raise the fill rate would put a wrong code in a record."""
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(
+            source,
+            [[1, "Appendectomy (procedure)", "111"], [2, "patient sent home", ""]],
+        )
+        summary = normalize_file(source, destination, text_column="text", code_column="code")
+
+        assert summary.unresolved == 1
+        assert self._read(destination)[1]["code"] == ""
+
+    def test_an_absent_column_is_a_clear_error(self, tmp_path):
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(source, [[1, "Appendectomy", "111"]])
+        with pytest.raises(ValueError, match="does not return a column"):
+            normalize_file(source, destination, text_column="missing", code_column="code")
+
+    def test_an_empty_file_is_not_an_error(self, tmp_path):
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(source, [])
+        summary = normalize_file(source, destination, text_column="text", code_column="code")
+        assert summary.rows == 0
+
+    def test_fill_rate_is_measured_against_the_rows_that_needed_filling(self, tmp_path):
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(
+            source,
+            [
+                [1, "Appendectomy (procedure)", "111"],
+                [2, "APPENDECTOMY", ""],
+                [3, "patient sent home", ""],
+            ],
+        )
+        summary = normalize_file(source, destination, text_column="text", code_column="code")
+        assert summary.fill_rate == 0.5, "one of the two missing codes was placed"
+
+    def test_original_columns_survive(self, tmp_path):
+        from core.normalization import normalize_file
+
+        source, destination = tmp_path / "in.csv", tmp_path / "out.csv"
+        self._write(source, [[7, "Appendectomy (procedure)", "111"]])
+        normalize_file(source, destination, text_column="text", code_column="code")
+        assert self._read(destination)[0]["id"] == "7"
