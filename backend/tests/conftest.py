@@ -62,7 +62,9 @@ def db_engine():
     in-memory database with the test thread.
     """
     from models.schemas import (  # noqa: F401
+        DataSource,
         Dataset,
+        IngestionRun,
         ModelDeployment,
         Pipeline,
         PipelineInsight,

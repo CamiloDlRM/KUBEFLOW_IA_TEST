@@ -170,6 +170,91 @@ class Dataset(SQLModel, table=True):
     is_active: bool = SQLField(default=True)
 
 
+class DataSource(SQLModel, table=True):
+    """An external system the platform extracts data from.
+
+    This is the head of the pipeline. Before it existed, the platform began
+    where a data pipeline should already be halfway through — with a CSV
+    somebody had uploaded by hand. A ``DataSource`` points at the system that
+    CSV would have come from, so extraction, transformation and normalisation
+    become part of the run rather than something done beforehand in a notebook
+    nobody kept.
+
+    A source belongs to a repository, and so inherits its owner: the ownership
+    chain is ``DataSource -> Repository -> owner``, the same as everything else.
+    """
+
+    __tablename__ = "data_sources"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    name: str = SQLField(default="", description="Human label, e.g. 'Hospital HIS'.")
+    kind: str = SQLField(default="postgres")  # only postgres today
+
+    # --- Connection ---
+    host: str = SQLField(default="")
+    port: int = SQLField(default=5432)
+    database: str = SQLField(default="")
+    username: str = SQLField(default="")
+    #: The *name of the environment variable* holding the password — never the
+    #: password. The platform stores a pointer to a credential, not a
+    #: credential, so a database dump of this table discloses nothing and
+    #: rotating the secret needs no write here. It also means a source can only
+    #: be created against a credential an operator has already provisioned,
+    #: which is the behaviour you want: registering a source is not the same
+    #: authority as minting access to one.
+    password_env: str = SQLField(default="")
+
+    # --- Extraction ---
+    #: SQL to run, containing the literal token ``:watermark``. It is bound as
+    #: a query parameter, never interpolated — see ``core.ingestion``.
+    extraction_sql: str = SQLField(default="")
+    #: Column the watermark tracks. Must be the *entry* timestamp, not a
+    #: business date: rows entered after the pipeline has passed their business
+    #: date would otherwise be skipped silently.
+    watermark_column: str = SQLField(default="")
+    #: High-water mark reached so far, as an ISO timestamp. Empty means the
+    #: next run is a full backfill.
+    watermark_value: str = SQLField(default="")
+
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    is_active: bool = SQLField(default=True)
+
+
+class IngestionRun(SQLModel, table=True):
+    """One execution of a :class:`DataSource`'s extraction.
+
+    Records what the watermark was before and after, so a run is auditable
+    after the fact: which slice of the source produced which dataset. That
+    lineage is what stops a trained model being a black box — you can walk
+    from a deployed model back to the exact rows it came from.
+    """
+
+    __tablename__ = "ingestion_runs"
+
+    id: str = SQLField(default_factory=_new_uuid, primary_key=True)
+    source_id: int = SQLField(foreign_key="data_sources.id", index=True)
+    status: str = SQLField(default="queued")  # queued | running | success | failed
+
+    watermark_before: str = SQLField(default="")
+    watermark_after: str = SQLField(default="")
+    rows_extracted: int = SQLField(default=0)
+
+    #: The dataset this run produced, if any. A run that extracted zero rows
+    #: produces none — which is the correct outcome for an incremental run with
+    #: nothing new, not a failure.
+    dataset_id: int | None = SQLField(default=None, foreign_key="datasets.id")
+
+    #: Per-column profile of what was extracted: types, null rates, cardinality
+    #: and the distribution summary. Kept on the run rather than recomputed so
+    #: the AI advisor can reason about the data *as it was on that day*.
+    profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+    started_at: datetime | None = SQLField(default=None)
+    finished_at: datetime | None = SQLField(default=None)
+    error: str = SQLField(default="")
+
+
 # ---------------------------------------------------------------------------
 # Pipeline phase (embedded, not a table)
 # ---------------------------------------------------------------------------
