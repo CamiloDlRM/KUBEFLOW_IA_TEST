@@ -169,6 +169,139 @@ class Dataset(SQLModel, table=True):
     # Exactly one dataset per repository is active; it is the one the pipeline uses.
     is_active: bool = SQLField(default=True)
 
+    #: How this dataset came to exist: ``upload`` when a person sent the file,
+    #: ``ingestion`` when it was extracted from a registered source. Both paths
+    #: are profiled the same way, so downstream code never has to ask which one
+    #: produced a dataset in order to know what it can rely on.
+    origin: str = SQLField(default="upload")
+    #: The extraction that produced it, when there was one. This is the near
+    #: end of the lineage chain — model, pipeline, dataset, ingestion run,
+    #: watermark range, source — which is what lets a deployed model say which
+    #: rows of which system it was trained on.
+    ingestion_run_id: str | None = SQLField(default=None, index=True)
+    #: Per-column profile: inferred type, null rate, cardinality, top values.
+    #: Computed on a bounded sample, so ``profiled_rows`` says what it covers
+    #: rather than leaving a reader to assume it describes the whole file.
+    profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    profiled_rows: int = SQLField(default=0)
+
+
+class DataSource(SQLModel, table=True):
+    """An external system the platform extracts data from.
+
+    This is the head of the pipeline. Before it existed, the platform began
+    where a data pipeline should already be halfway through — with a CSV
+    somebody had uploaded by hand. A ``DataSource`` points at the system that
+    CSV would have come from, so extraction, transformation and normalisation
+    become part of the run rather than something done beforehand in a notebook
+    nobody kept.
+
+    A source belongs to a repository, and so inherits its owner: the ownership
+    chain is ``DataSource -> Repository -> owner``, the same as everything else.
+    """
+
+    __tablename__ = "data_sources"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    name: str = SQLField(default="", description="Human label, e.g. 'Hospital HIS'.")
+    kind: str = SQLField(default="postgres")  # only postgres today
+
+    # --- Connection ---
+    host: str = SQLField(default="")
+    port: int = SQLField(default=5432)
+    database: str = SQLField(default="")
+    username: str = SQLField(default="")
+    #: The *name of the environment variable* holding the password — never the
+    #: password. The platform stores a pointer to a credential, not a
+    #: credential, so a database dump of this table discloses nothing and
+    #: rotating the secret needs no write here. It also means a source can only
+    #: be created against a credential an operator has already provisioned,
+    #: which is the behaviour you want: registering a source is not the same
+    #: authority as minting access to one.
+    password_env: str = SQLField(default="")
+
+    # --- Extraction ---
+    #: SQL to run, containing the literal token ``:watermark``. It is bound as
+    #: a query parameter, never interpolated — see ``core.ingestion``.
+    extraction_sql: str = SQLField(default="")
+    #: Column the watermark tracks. Must be the *entry* timestamp, not a
+    #: business date: rows entered after the pipeline has passed their business
+    #: date would otherwise be skipped silently.
+    watermark_column: str = SQLField(default="")
+    #: High-water mark reached so far, as an ISO timestamp. Empty means the
+    #: next run is a full backfill.
+    watermark_value: str = SQLField(default="")
+
+    # --- Normalisation (optional) ---
+    #: Free-text column to code, and the column holding the code. Leave both
+    #: empty to extract without normalising.
+    #:
+    #: The vocabulary is not configured anywhere, and that is the point: it is
+    #: derived from the extracted rows that *already* carry a code. A source
+    #: where 60% of rows were coded teaches the platform the 60%, which is then
+    #: applied to the other 40%. No terminology licence, no separate file to
+    #: keep in step with the data, and nothing is read that the evaluation
+    #: harness also reads.
+    normalize_text_column: str = SQLField(default="")
+    normalize_code_column: str = SQLField(default="")
+
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    is_active: bool = SQLField(default=True)
+
+
+class IngestionRun(SQLModel, table=True):
+    """One execution of a :class:`DataSource`'s extraction.
+
+    Records what the watermark was before and after, so a run is auditable
+    after the fact: which slice of the source produced which dataset. That
+    lineage is what stops a trained model being a black box — you can walk
+    from a deployed model back to the exact rows it came from.
+    """
+
+    __tablename__ = "ingestion_runs"
+
+    id: str = SQLField(default_factory=_new_uuid, primary_key=True)
+    source_id: int = SQLField(foreign_key="data_sources.id", index=True)
+    status: str = SQLField(default="queued")  # queued | running | success | failed
+
+    watermark_before: str = SQLField(default="")
+    watermark_after: str = SQLField(default="")
+    rows_extracted: int = SQLField(default=0)
+
+    #: The dataset this run produced, if any. A run that extracted zero rows
+    #: produces none — which is the correct outcome for an incremental run with
+    #: nothing new, not a failure.
+    dataset_id: int | None = SQLField(default=None, foreign_key="datasets.id")
+
+    #: Object key of the extract exactly as it came out of the source, before
+    #: normalisation touched it. Kept deliberately: without it, improving the
+    #: normaliser would mean re-extracting from the source, and the watermark
+    #: has already moved past those rows.
+    #:
+    #: It is stored but not registered as a dataset — nothing should train on
+    #: it by accident. The normalised copy is the one that becomes a Dataset.
+    #: This is the bronze layer to that silver one.
+    raw_object_key: str = SQLField(default="")
+
+    #: Per-column profile of what was extracted: types, null rates, cardinality
+    #: and the distribution summary. Kept on the run rather than recomputed so
+    #: the AI advisor can reason about the data *as it was on that day*.
+    profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+    #: What normalisation did: how many rows arrived already coded, how many
+    #: were filled in, how many could not be placed, and by which strategy.
+    #: Empty when the source does not ask for normalisation.
+    #:
+    #: Kept per run rather than aggregated, because the answer changes as the
+    #: vocabulary grows: an early extraction has fewer coded rows to learn
+    #: from, so it places less. That trend is worth being able to see.
+    normalization: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+    started_at: datetime | None = SQLField(default=None)
+    finished_at: datetime | None = SQLField(default=None)
+    error: str = SQLField(default="")
+
 
 # ---------------------------------------------------------------------------
 # Pipeline phase (embedded, not a table)
@@ -416,6 +549,69 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class DataSourceCreateRequest(BaseModel):
+    """Payload to register an external system to extract from."""
+
+    model_config = ConfigDict(strict=True)
+
+    repo_id: int
+    name: str = Field(..., min_length=1, max_length=120)
+    kind: str = Field(default="postgres", pattern=r"^postgres$")
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(default=5432, ge=1, le=65535)
+    database: str = Field(..., min_length=1, max_length=128)
+    username: str = Field(..., min_length=1, max_length=128)
+    #: The *name* of the environment variable holding the password. Constrained
+    #: to the shape of a variable name so it cannot be mistaken for one.
+    password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    extraction_sql: str = Field(..., min_length=1, max_length=20_000)
+    watermark_column: str = Field(..., min_length=1, max_length=128)
+
+
+class DataSourceResponse(BaseModel):
+    """Public view of a data source.
+
+    Carries no credential — not even the masked shape of one — because there
+    is none to carry: the source stores the name of an environment variable.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    repo_id: int
+    name: str
+    kind: str
+    host: str
+    port: int
+    database: str
+    username: str
+    password_env: str
+    extraction_sql: str
+    watermark_column: str
+    watermark_value: str
+    created_at: datetime
+    is_active: bool
+
+
+class IngestionRunResponse(BaseModel):
+    """One extraction, and what it produced."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_id: int
+    status: str
+    watermark_before: str
+    watermark_after: str
+    rows_extracted: int
+    dataset_id: int | None
+    raw_object_key: str
+    profile: dict[str, Any]
+    started_at: datetime | None
+    finished_at: datetime | None
+    error: str
+
+
 class UpdateProfileRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
@@ -505,6 +701,13 @@ class DatasetResponse(BaseModel):
     uploaded_by: int | None
     created_at: datetime
     is_active: bool
+    # Where this came from and what it contains. Both are filled whichever
+    # path produced the dataset, so the UI can present uploads and extractions
+    # in one list without either looking impoverished.
+    origin: str
+    ingestion_run_id: str | None
+    profile: dict[str, Any]
+    profiled_rows: int
 
 
 class DatasetPreviewResponse(BaseModel):

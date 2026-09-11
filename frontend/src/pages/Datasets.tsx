@@ -11,6 +11,7 @@ import {
 import { useRepos } from '../hooks/usePipelines';
 import type { Dataset } from '../types';
 import Spinner from '../components/Spinner';
+import SourcesPanel from '../components/SourcesPanel';
 import { formatDate, formatBytes, repoNameFromUrl } from '../utils/format';
 
 const ACCEPTED = '.csv,.parquet';
@@ -66,13 +67,16 @@ export default function Datasets() {
             <ArrowLeftIcon />
             Back to Dashboard
           </Link>
-          <h2 className="mt-2 truncate text-2xl font-bold text-slate-100">Datasets</h2>
+          <h2 className="mt-2 truncate text-2xl font-bold text-slate-100">Data</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Training data for <span className="text-slate-200">{repoName}</span>. The
-            active dataset is the one used to train the model.
+            Training data for <span className="text-slate-200">{repoName}</span>.
+            Connect the system that holds it, or upload a file directly. The
+            active dataset is the one the next pipeline run will use.
           </p>
         </div>
       </div>
+
+      <SourcesPanel repoId={id} />
 
       <UploadPanel repoId={id} />
 

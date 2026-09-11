@@ -372,3 +372,55 @@ class TestPreviewDataset:
         resp = test_app.get(f"/datasets/{dataset.id}/preview")
 
         assert resp.status_code == 404
+
+
+class TestUploadProfiling:
+    """An upload must describe itself the same way an extraction does.
+
+    The UI offers both as ways of getting data in; if one produced a profile
+    and the other did not, everything downstream would have to ask which door
+    a dataset came through before knowing what it could rely on.
+    """
+
+    def test_a_csv_upload_is_profiled(self, test_app, db_session, mock_storage):
+        from tests.conftest import DEFAULT_USER_ID, seed_repo
+
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        content = b"age,city\n31,Bogota\n44,Medellin\n29,Bogota\n"
+
+        resp = test_app.post(
+            f"/repos/{repo.id}/datasets",
+            files={"file": ("people.csv", content, "text/csv")},
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["origin"] == "upload"
+        assert body["profiled_rows"] == 3
+        assert set(body["profile"]) == {"age", "city"}
+        assert body["profile"]["age"]["inferred_type"] == "numeric"
+        assert body["profile"]["city"]["distinct"] == 2
+
+    def test_an_upload_has_no_ingestion_run(self, test_app, db_session, mock_storage):
+        from tests.conftest import DEFAULT_USER_ID, seed_repo
+
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        resp = test_app.post(
+            f"/repos/{repo.id}/datasets",
+            files={"file": ("x.csv", b"a\n1\n", "text/csv")},
+        )
+        assert resp.json()["ingestion_run_id"] is None
+
+    def test_an_unparseable_file_is_still_stored(self, test_app, db_session, mock_storage):
+        """Profiling is best-effort: the notebook may read what pandas cannot."""
+        from tests.conftest import DEFAULT_USER_ID, seed_repo
+
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        resp = test_app.post(
+            f"/repos/{repo.id}/datasets",
+            files={"file": ("broken.parquet", b"not really parquet", "application/octet-stream")},
+        )
+
+        assert resp.status_code == 201, "a profile failure must not reject the upload"
+        assert resp.json()["profile"] == {}
+        assert resp.json()["profiled_rows"] == 0

@@ -119,6 +119,49 @@ def _deactivate_others(session: Session, repo_id: int, keep_id: int | None) -> N
         session.add(other)
 
 
+#: Rows read when profiling an upload. Bounded because an upload may be
+#: hundreds of megabytes and this runs inside the request: a profile of the
+#: first slice, honestly labelled, is worth more than a timeout.
+PROFILE_SAMPLE_ROWS = 50_000
+
+
+def _profile_upload(buffer: Any, extension: str) -> tuple[dict[str, Any], int]:
+    """Profile an uploaded file, returning ``(profile, rows_profiled)``.
+
+    Never raises. A dataset the platform cannot parse is still a dataset it can
+    store — the notebook may well know how to read a format pandas does not —
+    so a failure here yields an empty profile rather than rejecting an upload
+    that would otherwise have worked.
+    """
+    import tempfile
+
+    from core.ingestion import ColumnProfile
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=extension, delete=False) as scratch:
+            scratch.write(buffer.read())
+            scratch_path = scratch.name
+
+        try:
+            frame = _read_dataframe(scratch_path, extension)
+            if frame is None:
+                return {}, 0
+            sample = frame.head(PROFILE_SAMPLE_ROWS)
+            profiles = {str(name): ColumnProfile(str(name)) for name in sample.columns}
+            for name in sample.columns:
+                column = profiles[str(name)]
+                for value in sample[name].tolist():
+                    # pandas represents a missing value as NaN, which is a
+                    # float and would otherwise be profiled as a number.
+                    column.observe(None if value != value else value)  # noqa: PLR0124
+            return {name: p.summary() for name, p in profiles.items()}, len(sample)
+        finally:
+            os.unlink(scratch_path)
+    except Exception as exc:  # noqa: BLE001 — profiling is best-effort
+        logger.info("dataset.profile_skipped", extension=extension, reason=str(exc))
+        return {}, 0
+
+
 def _read_dataframe(path: str, extension: str) -> Any:
     """Load ``path`` into a pandas DataFrame based on its extension.
 
@@ -233,6 +276,16 @@ async def upload_dataset(
                 detail="The uploaded dataset is empty.",
             )
 
+        # Profile before uploading, while the bytes are still to hand. An
+        # uploaded dataset and an extracted one have to describe themselves the
+        # same way: the UI offers both as ways of getting data in, and anything
+        # downstream that reads a profile should not have to ask which door the
+        # dataset came through.
+        buffer.seek(0)
+        profile, profiled_rows = await run_in_threadpool(
+            _profile_upload, buffer, os.path.splitext(filename)[1].lower()
+        )
+
         buffer.seek(0)
         try:
             await run_in_threadpool(
@@ -259,6 +312,9 @@ async def upload_dataset(
         checksum=digest.hexdigest(),
         uploaded_by=current_user.id,
         is_active=True,
+        origin="upload",
+        profile=profile,
+        profiled_rows=profiled_rows,
     )
     _deactivate_others(session, repo_id, keep_id=None)
     session.add(dataset)

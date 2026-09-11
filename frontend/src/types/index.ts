@@ -181,6 +181,85 @@ export interface Dataset {
   uploaded_by: number | null;
   created_at: string;
   is_active: boolean;
+  /** How the dataset came to exist. Both paths produce the same shape. */
+  origin: 'upload' | 'ingestion';
+  /** The extraction that produced it, when there was one. */
+  ingestion_run_id: string | null;
+  profile: Record<string, ColumnProfile>;
+  profiled_rows: number;
+}
+
+/** What one column of a dataset turned out to contain. */
+export interface ColumnProfile {
+  count: number;
+  nulls: number;
+  null_rate: number;
+  blanks: number;
+  inferred_type: 'numeric' | 'text' | 'categorical' | 'mixed' | 'empty';
+  /** Null when the profiler stopped counting; see distinct_note. */
+  distinct: number | null;
+  distinct_note?: string;
+  uniqueness?: number;
+  min?: number;
+  max?: number;
+  mean?: number;
+  stddev?: number;
+  min_length?: number;
+  max_length?: number;
+  top_values: { value: string; count: number }[];
+}
+
+/** An external system the platform extracts from. */
+export interface DataSource {
+  id: number;
+  repo_id: number;
+  name: string;
+  kind: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  /** The NAME of an environment variable — never a secret. */
+  password_env: string;
+  extraction_sql: string;
+  watermark_column: string;
+  /** Empty until the first run; the next extraction is a full backfill. */
+  watermark_value: string;
+  normalize_text_column: string;
+  normalize_code_column: string;
+  created_at: string;
+  is_active: boolean;
+}
+
+export interface NormalizationSummary {
+  rows: number;
+  already_coded: number;
+  filled: number;
+  unresolved: number;
+  fill_rate: number;
+  vocabulary_size: number;
+  by_method: Record<string, number>;
+  error?: string;
+}
+
+/** One extraction from a source. */
+export interface IngestionRun {
+  id: string;
+  source_id: number;
+  status: 'queued' | 'running' | 'success' | 'failed';
+  watermark_before: string;
+  watermark_after: string;
+  rows_extracted: number;
+  dataset_id: number | null;
+  /** The extract as it left the source, before normalisation. Bronze to the
+   *  dataset's silver: kept so the normaliser can be improved and re-run
+   *  without going back to a source whose watermark has already moved on. */
+  raw_object_key: string;
+  profile: Record<string, ColumnProfile>;
+  normalization: NormalizationSummary | Record<string, never>;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string;
 }
 
 export interface DatasetPreview {

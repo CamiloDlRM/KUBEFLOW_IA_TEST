@@ -899,3 +899,237 @@ def run_pipeline(
 
     finally:
         pipeline_finished()
+
+
+# ---------------------------------------------------------------------------
+# Ingestion
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.run_ingestion",
+    max_retries=0,
+    default_retry_delay=60,
+)
+def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
+    """Extract the unseen slice of a data source and land it as a dataset.
+
+    The result is an ordinary ``Dataset`` in MinIO, so everything downstream —
+    the pipeline mounting it as ``DATASET_PATH``, the notebook reading it — is
+    unchanged. The ingestion adds a step in front of the existing machinery
+    rather than a parallel path beside it.
+
+    No retries. An extraction is not idempotent from the caller's point of
+    view: a retry after a partial upload would land a second dataset covering
+    an overlapping slice, and duplicated training rows are harder to notice
+    than a failed run. Failures are recorded on the run and re-queued by hand.
+
+    Args:
+        source_id: The source to extract from.
+        run_id: The ``IngestionRun`` recording this attempt.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from core import storage
+    from core.ingestion import IngestionError, extract
+    from core.normalization import normalize_file
+    from models.schemas import DataSource, Dataset, IngestionRun
+
+    log = logger.bind(source_id=source_id, run_id=run_id)
+    engine = create_engine(settings.database_url, echo=False)
+    started = datetime.now(timezone.utc)
+
+    def _update_run(**fields: Any) -> None:
+        with Session(engine) as session:
+            run = session.get(IngestionRun, run_id)
+            if not run:
+                return
+            for key, value in fields.items():
+                setattr(run, key, value)
+            session.add(run)
+            session.commit()
+
+    try:
+        _update_run(status="running", started_at=started)
+
+        with Session(engine) as session:
+            source = session.get(DataSource, source_id)
+            if not source:
+                raise IngestionError(f"data source {source_id} no longer exists")
+            # Detach a copy: the extraction is long, and holding a session open
+            # across it would pin a connection for its whole duration.
+            snapshot = DataSource(**source.model_dump())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            destination = Path(tmpdir) / f"ingestion-{run_id}.csv"
+            result = extract(snapshot, destination)
+
+            if result.rows == 0:
+                # Not a failure: an incremental run with nothing new is the
+                # expected steady state. No dataset is produced, and crucially
+                # the watermark is left where it was so a row entered later
+                # with an earlier timestamp is still picked up.
+                _update_run(
+                    status="success",
+                    finished_at=datetime.now(timezone.utc),
+                    rows_extracted=0,
+                    watermark_before=result.watermark_before,
+                    watermark_after=result.watermark_after,
+                )
+                log.info("ingestion.no_new_rows")
+                return {"status": "success", "rows": 0}
+
+            assert result.path is not None
+
+            # Normalisation runs here, inside the ingestion, not as a pipeline
+            # phase. The dataset is extracted once and trained on many times;
+            # coding it per training run would repeat the same work — and the
+            # same provider calls — for an answer that cannot change.
+            normalization: dict[str, Any] = {}
+            uploadable = result.path
+            if snapshot.normalize_text_column and snapshot.normalize_code_column:
+                normalized_path = result.path.with_name(f"normalized-{run_id}.csv")
+                try:
+                    summary = normalize_file(
+                        result.path,
+                        normalized_path,
+                        text_column=snapshot.normalize_text_column,
+                        code_column=snapshot.normalize_code_column,
+                    )
+                    normalization = summary.summary()
+                    uploadable = normalized_path
+                    log.info("ingestion.normalized", **normalization)
+                except Exception as exc:  # noqa: BLE001
+                    # Land the extraction unnormalised rather than losing it.
+                    # The rows are real either way, and a run that says what
+                    # it could not do is more useful than one that failed
+                    # outright after the expensive part had already succeeded.
+                    log.warning("ingestion.normalization_failed", error=str(exc))
+                    normalization = {"error": str(exc)[:500]}
+
+            size_bytes = uploadable.stat().st_size
+            digest = _sha256_of(uploadable)
+
+            stamp = f"{started:%Y%m%dT%H%M%S}"
+            filename = f"{_slug(snapshot.name) or 'ingestion'}-{stamp}.csv"
+            bucket = settings.minio_bucket_datasets
+            object_key = storage.build_dataset_key(snapshot.repo_id, filename)
+
+            with uploadable.open("rb") as handle:
+                storage.upload_fileobj(bucket, object_key, handle, "text/csv")
+
+            # Keep the extract as it left the source, before normalisation.
+            # Improving the normaliser later would otherwise mean re-extracting
+            # rows the watermark has already moved past. Stored but never
+            # registered as a dataset, so nothing trains on it by accident.
+            raw_object_key = ""
+            if uploadable is not result.path:
+                raw_object_key = storage.build_dataset_key(
+                    snapshot.repo_id, f"raw-{_slug(snapshot.name) or 'ingestion'}-{stamp}.csv"
+                )
+                try:
+                    with result.path.open("rb") as handle:
+                        storage.upload_fileobj(bucket, raw_object_key, handle, "text/csv")
+                except Exception as exc:  # noqa: BLE001
+                    # The normalised copy is already stored and is what the
+                    # pipeline needs; losing the archive is not worth failing
+                    # a run that otherwise succeeded.
+                    log.warning("ingestion.raw_archive_failed", error=str(exc))
+                    raw_object_key = ""
+
+        with Session(engine) as session:
+            dataset = Dataset(
+                repo_id=snapshot.repo_id,
+                name=filename,
+                description=(
+                    f"Ingested from {snapshot.name!r}: {result.rows:,} rows "
+                    f"recorded after {result.watermark_before}."
+                    + (
+                        f" {normalization['filled']:,} codes filled in, "
+                        f"{normalization['unresolved']:,} left unresolved."
+                        if normalization.get("filled") is not None
+                        else ""
+                    )
+                ),
+                bucket=bucket,
+                object_key=object_key,
+                content_type="text/csv",
+                size_bytes=size_bytes,
+                checksum=digest,
+                is_active=True,
+                origin="ingestion",
+                ingestion_run_id=run_id,
+                profile=result.profile,
+                profiled_rows=result.rows,
+            )
+            # One active dataset per repository, same rule as an upload.
+            for other in session.exec(
+                select(Dataset).where(
+                    Dataset.repo_id == snapshot.repo_id,
+                    Dataset.is_active == True,  # noqa: E712
+                )
+            ).all():
+                other.is_active = False
+                session.add(other)
+            session.add(dataset)
+            session.commit()
+            session.refresh(dataset)
+
+            # The watermark advances only now, after the rows are durably in
+            # object storage. Advancing it earlier would skip the slice on the
+            # next run if the upload failed — losing data silently, which is
+            # the failure mode this whole design is built to avoid.
+            source = session.get(DataSource, source_id)
+            if source:
+                source.watermark_value = result.watermark_after
+                session.add(source)
+
+            run = session.get(IngestionRun, run_id)
+            if run:
+                run.status = "success"
+                run.finished_at = datetime.now(timezone.utc)
+                run.rows_extracted = result.rows
+                run.watermark_before = result.watermark_before
+                run.watermark_after = result.watermark_after
+                run.dataset_id = dataset.id
+                run.profile = result.profile
+                run.normalization = normalization
+                run.raw_object_key = raw_object_key
+                session.add(run)
+            session.commit()
+
+        log.info(
+            "ingestion.completed",
+            rows=result.rows,
+            dataset_id=dataset.id,
+            watermark_after=result.watermark_after,
+        )
+        return {"status": "success", "rows": result.rows, "dataset_id": dataset.id}
+
+    except Exception as exc:  # noqa: BLE001 — recorded on the run
+        log.error("ingestion.failed", error=str(exc))
+        _update_run(
+            status="failed",
+            finished_at=datetime.now(timezone.utc),
+            error=str(exc)[:2000],
+        )
+        return {"status": "failed", "error": str(exc)}
+
+
+def _sha256_of(path: Path) -> str:
+    """Checksum a file without reading it all into memory."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1_048_576), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _slug(value: str) -> str:
+    """Reduce a source name to something safe inside a filename."""
+    import re
+
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-").lower()[:40]
