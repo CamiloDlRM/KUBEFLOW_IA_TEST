@@ -103,10 +103,12 @@ CREATE TABLE IF NOT EXISTS encounters (
     total_claim_cost    NUMERIC,
     payer_coverage      NUMERIC,
     reason_code         TEXT,
-    reason_text         TEXT
+    reason_text         TEXT,
+    recorded_at         TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_encounters_patient ON encounters (patient_id);
+CREATE INDEX IF NOT EXISTS idx_encounters_recorded ON encounters (recorded_at);
 CREATE INDEX IF NOT EXISTS idx_encounters_started ON encounters (started_at);
 
 -- -----------------------------------------------------------------------------
@@ -116,6 +118,16 @@ CREATE INDEX IF NOT EXISTS idx_encounters_started ON encounters (started_at);
 -- to be fixed at load time — it is the problem the platform is meant to solve.
 -- Coding in real systems is incomplete: the clinician types what they did, and
 -- the coded value is filled in later, by somebody else, or never.
+--
+-- `recorded_at` is when the row was written into the HIS, which is *not* the
+-- clinical date: a procedure performed on Monday is often keyed in on Thursday.
+-- Extraction watermarks must track this column, never the clinical one. A
+-- watermark on the clinical date silently loses every row entered after the
+-- pipeline has already moved past its date — the classic late-arriving-data
+-- bug, and a silent one, which is the worst kind.
+--
+-- The loader gives each row a realistic lag, so the two orderings genuinely
+-- differ and the correct choice can be demonstrated rather than asserted.
 -- -----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS conditions (
@@ -125,10 +137,13 @@ CREATE TABLE IF NOT EXISTS conditions (
     patient_id      UUID REFERENCES patients (id),
     encounter_id    UUID,
     condition_code  TEXT,          -- SNOMED CT, NULL when never coded
-    condition_text  TEXT NOT NULL  -- what was actually typed
+    condition_text  TEXT NOT NULL, -- what was actually typed
+    recorded_at     TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_conditions_patient ON conditions (patient_id);
+-- The watermark index: every incremental extraction scans on this column.
+CREATE INDEX IF NOT EXISTS idx_conditions_recorded ON conditions (recorded_at);
 CREATE INDEX IF NOT EXISTS idx_conditions_uncoded
     ON conditions (id) WHERE condition_code IS NULL;
 
@@ -142,10 +157,12 @@ CREATE TABLE IF NOT EXISTS procedures (
     procedure_text  TEXT NOT NULL, -- what was actually typed
     base_cost       NUMERIC,
     reason_code     TEXT,
-    reason_text     TEXT
+    reason_text     TEXT,
+    recorded_at     TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_procedures_patient ON procedures (patient_id);
+CREATE INDEX IF NOT EXISTS idx_procedures_recorded ON procedures (recorded_at);
 CREATE INDEX IF NOT EXISTS idx_procedures_uncoded
     ON procedures (id) WHERE procedure_code IS NULL;
 
@@ -161,10 +178,12 @@ CREATE TABLE IF NOT EXISTS medications (
     dispenses       INTEGER,
     total_cost      NUMERIC,
     reason_code     TEXT,
-    reason_text     TEXT
+    reason_text     TEXT,
+    recorded_at     TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_medications_patient ON medications (patient_id);
+CREATE INDEX IF NOT EXISTS idx_medications_recorded ON medications (recorded_at);
 
 -- -----------------------------------------------------------------------------
 -- Observations: vitals and labs
@@ -184,10 +203,12 @@ CREATE TABLE IF NOT EXISTS observations (
     observation_text TEXT,
     value_raw       TEXT,
     units           TEXT,
-    value_type      TEXT
+    value_type      TEXT,
+    recorded_at     TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_observations_patient ON observations (patient_id);
+CREATE INDEX IF NOT EXISTS idx_observations_recorded ON observations (recorded_at);
 CREATE INDEX IF NOT EXISTS idx_observations_code ON observations (observation_code);
 
 -- -----------------------------------------------------------------------------

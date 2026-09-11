@@ -86,6 +86,25 @@ never facing it.
 real systems put `"128"`, `"7.2"`, `"Negative"` and `"120/80"` in the same
 column. Casting it is a transformation step, not a given.
 
+**Clinical date and entry date differ.** Every event table carries
+`recorded_at` — when the row was keyed into the HIS — alongside its clinical
+date. A procedure performed on Monday is often entered on Thursday, so the
+loader applies a realistic lag: 48% of rows are entered the same day, and 6%
+arrive more than a fortnight later.
+
+This is not decoration. It makes the choice of extraction watermark a real
+decision:
+
+| Watermark column | Consequence |
+|---|---|
+| `started_at` (clinical) | Every row entered after the pipeline passed its clinical date is **silently lost** |
+| `recorded_at` (entry) | Correct — late entries are picked up on the next run |
+
+Measured on the sample: **37% of rows come out in a different order** under the
+two columns, and 6% would be dropped outright by a watermark on the clinical
+date. That is the classic late-arriving-data bug, and it fails silently, which
+is what makes it worth being able to demonstrate rather than merely assert.
+
 **The text is in English.** Synthea's terms are English SNOMED. A deployment in
 Colombia would carry Spanish text and CIE-10 codes; the degradations are
 structural — whitespace, case, truncation — so they apply unchanged to either.

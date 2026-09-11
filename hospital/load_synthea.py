@@ -34,7 +34,8 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any, Callable, Iterator, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Final, Iterator, Sequence
 
 import psycopg2
 
@@ -144,6 +145,58 @@ def blank_to_none(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+#: How long after the clinical event the row actually reaches the HIS, as
+#: (weight, minimum days, maximum days). Most entries are same-day, a quarter
+#: land within a couple of days, and a small tail arrives weeks later — those
+#: are the rows a watermark on the clinical date would silently lose.
+_ENTRY_LAG: Final[tuple[tuple[float, int, int], ...]] = (
+    (0.55, 0, 0),
+    (0.25, 1, 2),
+    (0.15, 3, 14),
+    (0.05, 15, 90),
+)
+
+
+def recorded_at_for(clinical_date: str | None, rng: random.Random) -> str | None:
+    """When this row was keyed into the HIS, given when the event happened.
+
+    Deliberately *not* equal to the clinical date. A procedure performed on
+    Monday is often entered on Thursday, so ordering by clinical date and
+    ordering by entry date give different answers — which is what makes the
+    choice of watermark column a real decision rather than a detail.
+
+    Args:
+        clinical_date: Synthea's date or timestamp for the event.
+        rng: Seeded generator.
+
+    Returns:
+        An ISO timestamp, or ``None`` when there is no clinical date to offset.
+    """
+    if not clinical_date:
+        return None
+    text = clinical_date.strip().replace("Z", "+00:00")
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            moment = datetime.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+
+    weights = [band[0] for band in _ENTRY_LAG]
+    low, high = rng.choices([(b[1], b[2]) for b in _ENTRY_LAG], weights=weights, k=1)[0]
+    days = rng.randint(low, high)
+
+    # Same-day entries get a few hours, not a whole day's jitter: adding up to
+    # 24 hours would push most of them past midnight and the "same day" band
+    # would not mean what it says. A late-evening event still spills over,
+    # which is how it happens in practice.
+    minutes = rng.randint(5, 360) if days == 0 else rng.randint(0, 1439)
+    return (moment + timedelta(days=days, minutes=minutes)).isoformat()
 
 
 def load_table(
@@ -344,7 +397,7 @@ def main() -> int:
                     ["id", "started_at", "stopped_at", "patient_id", "organization_id",
                      "provider_id", "payer_id", "encounter_class", "encounter_code",
                      "encounter_text", "base_cost", "total_claim_cost",
-                     "payer_coverage", "reason_code", "reason_text"],
+                     "payer_coverage", "reason_code", "reason_text", "recorded_at"],
                     lambda r: [r["Id"], blank_to_none(r["START"]),
                                blank_to_none(r["STOP"]), blank_to_none(r["PATIENT"]),
                                blank_to_none(r["ORGANIZATION"]),
@@ -355,7 +408,8 @@ def main() -> int:
                                blank_to_none(r["TOTAL_CLAIM_COST"]),
                                blank_to_none(r["PAYER_COVERAGE"]),
                                blank_to_none(r["REASONCODE"]),
-                               blank_to_none(r["REASONDESCRIPTION"])],
+                               blank_to_none(r["REASONDESCRIPTION"]),
+                               recorded_at_for(r["START"], rng)],
                 )
 
                 procedure_vocabulary = load_clinical(
@@ -363,12 +417,13 @@ def main() -> int:
                     code_column="procedure_code", text_column="procedure_text",
                     extra_columns=["started_at", "stopped_at", "patient_id",
                                    "encounter_id", "base_cost", "reason_code",
-                                   "reason_text"],
+                                   "reason_text", "recorded_at"],
                     build_extra=lambda r: [
                         blank_to_none(r["START"]), blank_to_none(r["STOP"]),
                         blank_to_none(r["PATIENT"]), blank_to_none(r["ENCOUNTER"]),
                         blank_to_none(r["BASE_COST"]), blank_to_none(r["REASONCODE"]),
                         blank_to_none(r["REASONDESCRIPTION"]),
+                        recorded_at_for(r["START"], rng),
                     ],
                     truth_table="eval.procedure_truth", truth_key="procedure_id",
                     rng=rng,
@@ -378,10 +433,11 @@ def main() -> int:
                     cursor, directory, "conditions", "conditions",
                     code_column="condition_code", text_column="condition_text",
                     extra_columns=["started_on", "stopped_on", "patient_id",
-                                   "encounter_id"],
+                                   "encounter_id", "recorded_at"],
                     build_extra=lambda r: [
                         blank_to_none(r["START"]), blank_to_none(r["STOP"]),
                         blank_to_none(r["PATIENT"]), blank_to_none(r["ENCOUNTER"]),
+                        recorded_at_for(r["START"], rng),
                     ],
                     truth_table="eval.condition_truth", truth_key="condition_id",
                     rng=rng,
@@ -391,25 +447,27 @@ def main() -> int:
                     cursor, directory, "medications", "medications",
                     ["started_at", "stopped_at", "patient_id", "encounter_id",
                      "medication_code", "medication_text", "base_cost", "dispenses",
-                     "total_cost", "reason_code", "reason_text"],
+                     "total_cost", "reason_code", "reason_text", "recorded_at"],
                     lambda r: [blank_to_none(r["START"]), blank_to_none(r["STOP"]),
                                blank_to_none(r["PATIENT"]), blank_to_none(r["ENCOUNTER"]),
                                blank_to_none(r["CODE"]), blank_to_none(r["DESCRIPTION"]),
                                blank_to_none(r["BASE_COST"]), blank_to_none(r["DISPENSES"]),
                                blank_to_none(r["TOTALCOST"]), blank_to_none(r["REASONCODE"]),
-                               blank_to_none(r["REASONDESCRIPTION"])],
+                               blank_to_none(r["REASONDESCRIPTION"]),
+                               recorded_at_for(r["START"], rng)],
                 )
 
                 load_table(
                     cursor, directory, "observations", "observations",
                     ["observed_at", "patient_id", "encounter_id", "category",
                      "observation_code", "observation_text", "value_raw", "units",
-                     "value_type"],
+                     "value_type", "recorded_at"],
                     lambda r: [blank_to_none(r["DATE"]), blank_to_none(r["PATIENT"]),
                                blank_to_none(r["ENCOUNTER"]), blank_to_none(r["CATEGORY"]),
                                blank_to_none(r["CODE"]), blank_to_none(r["DESCRIPTION"]),
                                blank_to_none(r["VALUE"]), blank_to_none(r["UNITS"]),
-                               blank_to_none(r["TYPE"])],
+                               blank_to_none(r["TYPE"]),
+                               recorded_at_for(r["DATE"], rng)],
                 )
 
                 vocabulary_rows = (
