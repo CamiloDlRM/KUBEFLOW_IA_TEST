@@ -573,6 +573,40 @@ class DataSourceCreateRequest(BaseModel):
     normalize_code_column: str = Field(default="", max_length=128)
 
 
+class DataSourcePreviewRequest(BaseModel):
+    """Ask what an extraction would return, without running one.
+
+    Deliberately does not require the source to exist: the point is to check
+    the query while writing it, not after committing to it. ``name`` is absent
+    for the same reason — you are testing a connection, not registering one.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    repo_id: int
+    kind: str = Field(default="postgres", pattern=r"^postgres$")
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(default=5432, ge=1, le=65535)
+    database: str = Field(..., min_length=1, max_length=128)
+    username: str = Field(..., min_length=1, max_length=128)
+    password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    extraction_sql: str = Field(..., min_length=1, max_length=20_000)
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class DataSourcePreviewResponse(BaseModel):
+    """The first rows an extraction would return."""
+
+    columns: list[str]
+    rows: list[list[Any]]
+    #: Per-column profile of the sample. Says what each column looks like, so
+    #: the text and code fields can be chosen from what is there rather than
+    #: from memory.
+    profile: dict[str, Any]
+    #: Whether the source holds more than the sample shown.
+    truncated: bool
+
+
 class DataSourceResponse(BaseModel):
     """Public view of a data source.
 

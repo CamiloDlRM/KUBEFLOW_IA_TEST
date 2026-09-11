@@ -25,6 +25,7 @@ import type {
   DatasetPreview,
   DataSource,
   IngestionRun,
+  SourcePreview,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -359,5 +360,19 @@ export async function runIngestion(sourceId: number): Promise<IngestionRun> {
 
 export async function getIngestionRuns(sourceId: number): Promise<IngestionRun[]> {
   const { data } = await apiClient.get<IngestionRun[]>(`/sources/${sourceId}/runs`);
+  return data;
+}
+
+/**
+ * Ask what an extraction would return, without running one.
+ *
+ * Deliberately takes the form's current values rather than a saved source:
+ * the point is to check the query while writing it, not after committing to
+ * it. Nothing is stored and no watermark moves.
+ */
+export async function previewSource(
+  body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number },
+): Promise<SourcePreview> {
+  const { data } = await apiClient.post<SourcePreview>('/sources/preview', body);
   return data;
 }

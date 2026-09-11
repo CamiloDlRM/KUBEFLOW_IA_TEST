@@ -209,6 +209,15 @@ export interface ColumnProfile {
   top_values: { value: string; count: number }[];
 }
 
+/** What an extraction would return, fetched before committing to one. */
+export interface SourcePreview {
+  columns: string[];
+  rows: unknown[][];
+  profile: Record<string, ColumnProfile>;
+  /** Whether the source holds more than the sample shown. */
+  truncated: boolean;
+}
+
 /** An external system the platform extracts from. */
 export interface DataSource {
   id: number;

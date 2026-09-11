@@ -10,6 +10,7 @@ const createSource = vi.fn();
 const deleteSource = vi.fn();
 const runIngestion = vi.fn();
 const getIngestionRuns = vi.fn();
+const previewSource = vi.fn();
 
 vi.mock('../../src/api/client', () => ({
   getSources: (...args: unknown[]) => getSources(...args),
@@ -17,6 +18,7 @@ vi.mock('../../src/api/client', () => ({
   deleteSource: (...args: unknown[]) => deleteSource(...args),
   runIngestion: (...args: unknown[]) => runIngestion(...args),
   getIngestionRuns: (...args: unknown[]) => getIngestionRuns(...args),
+  previewSource: (...args: unknown[]) => previewSource(...args),
 }));
 
 const SOURCE: DataSource = {
@@ -171,6 +173,75 @@ describe('SourcesPanel', () => {
 
     await waitFor(() => expect(createSource).toHaveBeenCalled());
     expect(createSource.mock.calls[0][0]).toMatchObject({ repo_id: 7, name: 'HIS' });
+  });
+
+  it('previews the source before it is saved', async () => {
+    previewSource.mockResolvedValue({
+      columns: ['id', 'procedure_text', 'procedure_code'],
+      rows: [[1, 'APPENDECTOMY', null]],
+      profile: {
+        id: { inferred_type: 'numeric' },
+        procedure_text: { inferred_type: 'text' },
+        procedure_code: { inferred_type: 'categorical' },
+      },
+      truncated: true,
+    });
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
+    const [database, username] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(database, 'hosp');
+    await userEvent.type(username, 'user');
+
+    await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
+
+    // Scoped to the table: 'procedure_text' is also a placeholder in the form.
+    expect(
+      await screen.findByRole('columnheader', { name: /procedure_text/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'APPENDECTOMY' })).toBeInTheDocument();
+    // The inferred type is shown so the text and code columns can be chosen
+    // from what is there rather than from memory.
+    expect(screen.getAllByText('categorical').length).toBeGreaterThan(0);
+    expect(screen.getByText(/nothing was stored/i)).toBeInTheDocument();
+  });
+
+  it('shows a null cell as a dash rather than as empty space', async () => {
+    previewSource.mockResolvedValue({
+      columns: ['procedure_code'],
+      rows: [[null]],
+      profile: { procedure_code: { inferred_type: 'categorical' } },
+      truncated: false,
+    });
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
+    const [db2, user2] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(db2, 'h');
+    await userEvent.type(user2, 'u');
+    await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
+
+    expect(await screen.findByText('—')).toBeInTheDocument();
+  });
+
+  it('reports why a preview failed instead of saving a broken source', async () => {
+    previewSource.mockRejectedValue(new Error('relation "procedures" does not exist'));
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
+    const [db3, user3] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(db3, 'h');
+    await userEvent.type(user3, 'u');
+    await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
+
+    expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
+  });
+
+  it('cannot preview before the connection is filled in', async () => {
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+
+    expect(screen.getByRole('button', { name: /preview data/i })).toBeDisabled();
   });
 
   it('invites an upload when no source is connected', async () => {

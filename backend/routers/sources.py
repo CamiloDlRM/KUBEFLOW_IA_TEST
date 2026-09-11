@@ -19,13 +19,15 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from core.ingestion import IngestionError, validate_sql
+from core.ingestion import IngestionError, preview, validate_sql
 from core.ownership import get_visible_repo_or_404, restrict_by_repo
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     DataSource,
     DataSourceCreateRequest,
+    DataSourcePreviewRequest,
+    DataSourcePreviewResponse,
     DataSourceResponse,
     IngestionRun,
     IngestionRunResponse,
@@ -119,6 +121,69 @@ async def create_source(
         "source.created", source_id=source.id, repo_id=source.repo_id, kind=source.kind
     )
     return DataSourceResponse.model_validate(source)
+
+
+@router.post(
+    "/preview",
+    response_model=DataSourcePreviewResponse,
+    summary="See what an extraction would return, without running one",
+)
+async def preview_source(
+    body: DataSourcePreviewRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> DataSourcePreviewResponse:
+    """Run the query for a handful of rows and return them.
+
+    Nothing is stored and no watermark moves, so this is safe to call while
+    still writing the query. It answers the four questions that previously
+    could only be answered by running a real extraction against a live
+    database: whether the credentials work, whether the SQL is valid, which
+    columns come back, and what the data looks like.
+
+    Declared before ``/{source_id}`` because FastAPI matches routes in order
+    and ``preview`` would otherwise be read as a source id.
+
+    The caller must own the repository, and the connection still depends on a
+    credential an operator provisioned — so this grants no authority that
+    registering a source and running it did not already grant.
+    """
+    get_visible_repo_or_404(session, body.repo_id, current_user)
+
+    candidate = DataSource(
+        repo_id=body.repo_id,
+        kind=body.kind,
+        host=body.host,
+        port=body.port,
+        database=body.database,
+        username=body.username,
+        password_env=body.password_env,
+        extraction_sql=body.extraction_sql,
+        watermark_column="",
+    )
+
+    try:
+        result = preview(candidate, limit=body.limit)
+    except IngestionError as exc:
+        # The reason is the whole value of this endpoint: a wrong table name, a
+        # missing credential and an unreachable host must read differently.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
+
+    logger.info(
+        "source.previewed",
+        repo_id=body.repo_id,
+        host=body.host,
+        rows=len(result.rows),
+        columns=len(result.columns),
+    )
+    return DataSourcePreviewResponse(
+        columns=result.columns,
+        rows=result.rows,
+        profile=result.profile,
+        truncated=result.truncated,
+    )
 
 
 @router.get(

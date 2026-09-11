@@ -385,3 +385,90 @@ class TestPasswordResolution:
         from core.ingestion import resolve_password
 
         assert resolve_password(make_source(password_env="")) == ""
+
+
+class TestPreview:
+    """Looking at the source before committing to an extraction.
+
+    The route this covers exists because writing an extraction blind is a bad
+    way to work: you pick a table, a watermark column and a text/code pair from
+    memory, point it at a live database and find out afterwards.
+    """
+
+    def test_preview_returns_rows_and_columns(self, source_engine, tmp_path):
+        from core.ingestion import preview
+
+        result = preview(make_source(), engine=source_engine)
+
+        assert result.columns == ["id", "clinical_date", "recorded_at", "procedure_text", "cost"]
+        assert len(result.rows) == len(ROWS)
+
+    def test_preview_is_capped(self, source_engine):
+        from core.ingestion import preview
+
+        result = preview(make_source(), limit=2, engine=source_engine)
+
+        assert len(result.rows) == 2
+        assert result.truncated, "the caller has to know more rows exist"
+
+    def test_the_cap_is_applied_even_when_the_query_has_none(self, source_engine):
+        """The query is written to return everything; wrapping it is the point.
+
+        "Just add a LIMIT" is exactly the edit somebody forgets before pointing
+        a query at a production database.
+        """
+        from core.ingestion import preview
+
+        assert "limit" not in make_source().extraction_sql.lower()
+        assert len(preview(make_source(), limit=1, engine=source_engine).rows) == 1
+
+    def test_not_truncated_when_the_source_fits(self, source_engine):
+        from core.ingestion import preview
+
+        assert not preview(make_source(), limit=50, engine=source_engine).truncated
+
+    def test_preview_profiles_the_sample(self, source_engine):
+        """So the text and code columns can be chosen from what is there."""
+        from core.ingestion import preview
+
+        profile = preview(make_source(), engine=source_engine).profile
+
+        assert profile["cost"]["inferred_type"] == "numeric"
+        assert profile["cost"]["nulls"] == 1
+        assert profile["procedure_text"]["inferred_type"] in {"text", "categorical"}
+
+    def test_preview_does_not_need_a_watermark_column(self, source_engine):
+        """It runs before the source is configured, so it cannot require one."""
+        from core.ingestion import preview
+
+        assert preview(make_source(watermark_column=""), engine=source_engine).rows
+
+    def test_preview_shows_the_start_of_the_range(self, source_engine):
+        """Bound to the epoch: a first extraction begins at the beginning."""
+        from core.ingestion import preview
+
+        result = preview(make_source(watermark_value="2024-12-01"), engine=source_engine)
+        assert len(result.rows) == len(ROWS), (
+            "a stored watermark must not narrow what the preview shows"
+        )
+
+    def test_invalid_sql_is_reported_not_raised_as_a_crash(self, source_engine):
+        from core.ingestion import IngestionError, preview
+
+        source = make_source(
+            extraction_sql="SELECT * FROM does_not_exist WHERE x > :watermark"
+        )
+        with pytest.raises(IngestionError, match="preview failed"):
+            preview(source, engine=source_engine)
+
+    def test_sql_without_the_watermark_token_is_refused(self, source_engine):
+        from core.ingestion import IngestionError, preview
+
+        with pytest.raises(IngestionError, match="must reference"):
+            preview(make_source(extraction_sql="SELECT 1"), engine=source_engine)
+
+    def test_a_trailing_semicolon_does_not_break_the_wrapper(self, source_engine):
+        from core.ingestion import preview
+
+        source = make_source(extraction_sql=EXTRACTION_SQL.strip() + " ;  ")
+        assert preview(source, engine=source_engine).rows

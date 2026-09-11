@@ -5,10 +5,11 @@ import {
   deleteSource,
   getIngestionRuns,
   getSources,
+  previewSource,
   runIngestion,
   type CreateSourceRequest,
 } from '../api/client';
-import type { DataSource, IngestionRun, NormalizationSummary } from '../types';
+import type { DataSource, IngestionRun, NormalizationSummary, SourcePreview } from '../types';
 import Spinner from './Spinner';
 
 /**
@@ -370,6 +371,23 @@ function SourceForm({ repoId, onDone }: { repoId: number; onDone: () => void }) 
     onSuccess: onDone,
   });
 
+  // Looking before committing. The query runs against a live database, so
+  // seeing ten rows first is the difference between writing it and guessing.
+  const look = useMutation({
+    mutationFn: (body: CreateSourceRequest) =>
+      previewSource({
+        repo_id: body.repo_id,
+        kind: body.kind,
+        host: body.host,
+        port: body.port,
+        database: body.database,
+        username: body.username,
+        password_env: body.password_env,
+        extraction_sql: body.extraction_sql,
+        limit: 10,
+      }),
+  });
+
   const set = (field: keyof CreateSourceRequest) => (value: string | number) =>
     setForm((current) => ({ ...current, [field]: value }));
 
@@ -500,14 +518,93 @@ function SourceForm({ repoId, onDone }: { repoId: number; onDone: () => void }) 
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={create.isPending}
-        className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500 disabled:opacity-50"
-      >
-        {create.isPending ? 'Connecting…' : 'Connect source'}
-      </button>
+      {look.isError && (
+        <p className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-sm text-amber-300">
+          {(look.error as Error).message}
+        </p>
+      )}
+
+      {look.data && <PreviewTable preview={look.data} />}
+
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          onClick={() => look.mutate(form)}
+          disabled={look.isPending || !form.host || !form.database || !form.username}
+          className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-800 disabled:opacity-50"
+        >
+          {look.isPending ? 'Looking…' : 'Preview data'}
+        </button>
+        <button
+          type="submit"
+          disabled={create.isPending}
+          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500 disabled:opacity-50"
+        >
+          {create.isPending ? 'Connecting…' : 'Connect source'}
+        </button>
+      </div>
     </form>
+  );
+}
+
+/**
+ * The first rows the source would hand over.
+ *
+ * Shows the inferred type under each column name, because the next thing the
+ * user has to do is name the text and code columns — and until now they had to
+ * remember which ones those were.
+ */
+function PreviewTable({ preview }: { preview: SourcePreview }) {
+  if (preview.columns.length === 0) {
+    return (
+      <p className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-400">
+        The query ran and returned no columns.
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-950">
+      <p className="border-b border-slate-800 px-3 py-2 text-xs text-slate-400">
+        {preview.rows.length} row{preview.rows.length === 1 ? '' : 's'}
+        {preview.truncated && ' (the source holds more)'} · nothing was stored
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-800">
+              {preview.columns.map((column) => (
+                <th key={column} className="whitespace-nowrap px-3 py-2 font-medium text-slate-200">
+                  {column}
+                  <span className="ml-1.5 font-normal text-slate-500">
+                    {preview.profile[column]?.inferred_type}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {preview.rows.map((row, index) => (
+              <tr key={index} className="border-b border-slate-900 last:border-0">
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={cellIndex}
+                    className="max-w-[16rem] truncate px-3 py-1.5 font-mono text-slate-300"
+                    title={cell === null || cell === '' ? '' : String(cell)}
+                  >
+                    {cell === null || cell === '' ? (
+                      <span className="text-slate-600">—</span>
+                    ) : (
+                      String(cell)
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
