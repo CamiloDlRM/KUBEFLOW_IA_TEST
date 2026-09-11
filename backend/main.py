@@ -233,6 +233,7 @@ from routers.models import router as models_router
 from routers.webhook import router as webhook_router
 from routers.insights import router as insights_router
 from routers.datasets import router as datasets_router
+from routers.sources import router as sources_router
 from routers.grafana import router as grafana_router
 
 app.include_router(auth_router)
@@ -242,6 +243,7 @@ app.include_router(models_router)
 app.include_router(webhook_router)
 app.include_router(insights_router)
 app.include_router(datasets_router)
+app.include_router(sources_router)
 app.include_router(grafana_router)
 
 

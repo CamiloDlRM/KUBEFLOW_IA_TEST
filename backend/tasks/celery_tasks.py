@@ -899,3 +899,177 @@ def run_pipeline(
 
     finally:
         pipeline_finished()
+
+
+# ---------------------------------------------------------------------------
+# Ingestion
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.run_ingestion",
+    max_retries=0,
+    default_retry_delay=60,
+)
+def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
+    """Extract the unseen slice of a data source and land it as a dataset.
+
+    The result is an ordinary ``Dataset`` in MinIO, so everything downstream —
+    the pipeline mounting it as ``DATASET_PATH``, the notebook reading it — is
+    unchanged. The ingestion adds a step in front of the existing machinery
+    rather than a parallel path beside it.
+
+    No retries. An extraction is not idempotent from the caller's point of
+    view: a retry after a partial upload would land a second dataset covering
+    an overlapping slice, and duplicated training rows are harder to notice
+    than a failed run. Failures are recorded on the run and re-queued by hand.
+
+    Args:
+        source_id: The source to extract from.
+        run_id: The ``IngestionRun`` recording this attempt.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from core import storage
+    from core.ingestion import IngestionError, extract
+    from models.schemas import DataSource, Dataset, IngestionRun
+
+    log = logger.bind(source_id=source_id, run_id=run_id)
+    engine = create_engine(settings.database_url, echo=False)
+    started = datetime.now(timezone.utc)
+
+    def _update_run(**fields: Any) -> None:
+        with Session(engine) as session:
+            run = session.get(IngestionRun, run_id)
+            if not run:
+                return
+            for key, value in fields.items():
+                setattr(run, key, value)
+            session.add(run)
+            session.commit()
+
+    try:
+        _update_run(status="running", started_at=started)
+
+        with Session(engine) as session:
+            source = session.get(DataSource, source_id)
+            if not source:
+                raise IngestionError(f"data source {source_id} no longer exists")
+            # Detach a copy: the extraction is long, and holding a session open
+            # across it would pin a connection for its whole duration.
+            snapshot = DataSource(**source.model_dump())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            destination = Path(tmpdir) / f"ingestion-{run_id}.csv"
+            result = extract(snapshot, destination)
+
+            if result.rows == 0:
+                # Not a failure: an incremental run with nothing new is the
+                # expected steady state. No dataset is produced, and crucially
+                # the watermark is left where it was so a row entered later
+                # with an earlier timestamp is still picked up.
+                _update_run(
+                    status="success",
+                    finished_at=datetime.now(timezone.utc),
+                    rows_extracted=0,
+                    watermark_before=result.watermark_before,
+                    watermark_after=result.watermark_after,
+                )
+                log.info("ingestion.no_new_rows")
+                return {"status": "success", "rows": 0}
+
+            assert result.path is not None
+            size_bytes = result.path.stat().st_size
+            digest = _sha256_of(result.path)
+
+            filename = f"{_slug(snapshot.name) or 'ingestion'}-{started:%Y%m%dT%H%M%S}.csv"
+            bucket = settings.minio_bucket_datasets
+            object_key = storage.build_dataset_key(snapshot.repo_id, filename)
+
+            with result.path.open("rb") as handle:
+                storage.upload_fileobj(bucket, object_key, handle, "text/csv")
+
+        with Session(engine) as session:
+            dataset = Dataset(
+                repo_id=snapshot.repo_id,
+                name=filename,
+                description=(
+                    f"Ingested from {snapshot.name!r}: {result.rows:,} rows "
+                    f"recorded after {result.watermark_before}."
+                ),
+                bucket=bucket,
+                object_key=object_key,
+                content_type="text/csv",
+                size_bytes=size_bytes,
+                checksum=digest,
+                is_active=True,
+            )
+            # One active dataset per repository, same rule as an upload.
+            for other in session.exec(
+                select(Dataset).where(
+                    Dataset.repo_id == snapshot.repo_id,
+                    Dataset.is_active == True,  # noqa: E712
+                )
+            ).all():
+                other.is_active = False
+                session.add(other)
+            session.add(dataset)
+            session.commit()
+            session.refresh(dataset)
+
+            # The watermark advances only now, after the rows are durably in
+            # object storage. Advancing it earlier would skip the slice on the
+            # next run if the upload failed — losing data silently, which is
+            # the failure mode this whole design is built to avoid.
+            source = session.get(DataSource, source_id)
+            if source:
+                source.watermark_value = result.watermark_after
+                session.add(source)
+
+            run = session.get(IngestionRun, run_id)
+            if run:
+                run.status = "success"
+                run.finished_at = datetime.now(timezone.utc)
+                run.rows_extracted = result.rows
+                run.watermark_before = result.watermark_before
+                run.watermark_after = result.watermark_after
+                run.dataset_id = dataset.id
+                run.profile = result.profile
+                session.add(run)
+            session.commit()
+
+        log.info(
+            "ingestion.completed",
+            rows=result.rows,
+            dataset_id=dataset.id,
+            watermark_after=result.watermark_after,
+        )
+        return {"status": "success", "rows": result.rows, "dataset_id": dataset.id}
+
+    except Exception as exc:  # noqa: BLE001 — recorded on the run
+        log.error("ingestion.failed", error=str(exc))
+        _update_run(
+            status="failed",
+            finished_at=datetime.now(timezone.utc),
+            error=str(exc)[:2000],
+        )
+        return {"status": "failed", "error": str(exc)}
+
+
+def _sha256_of(path: Path) -> str:
+    """Checksum a file without reading it all into memory."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1_048_576), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _slug(value: str) -> str:
+    """Reduce a source name to something safe inside a filename."""
+    import re
+
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-").lower()[:40]

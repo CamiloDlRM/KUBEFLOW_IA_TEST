@@ -501,6 +501,68 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class DataSourceCreateRequest(BaseModel):
+    """Payload to register an external system to extract from."""
+
+    model_config = ConfigDict(strict=True)
+
+    repo_id: int
+    name: str = Field(..., min_length=1, max_length=120)
+    kind: str = Field(default="postgres", pattern=r"^postgres$")
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(default=5432, ge=1, le=65535)
+    database: str = Field(..., min_length=1, max_length=128)
+    username: str = Field(..., min_length=1, max_length=128)
+    #: The *name* of the environment variable holding the password. Constrained
+    #: to the shape of a variable name so it cannot be mistaken for one.
+    password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    extraction_sql: str = Field(..., min_length=1, max_length=20_000)
+    watermark_column: str = Field(..., min_length=1, max_length=128)
+
+
+class DataSourceResponse(BaseModel):
+    """Public view of a data source.
+
+    Carries no credential — not even the masked shape of one — because there
+    is none to carry: the source stores the name of an environment variable.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    repo_id: int
+    name: str
+    kind: str
+    host: str
+    port: int
+    database: str
+    username: str
+    password_env: str
+    extraction_sql: str
+    watermark_column: str
+    watermark_value: str
+    created_at: datetime
+    is_active: bool
+
+
+class IngestionRunResponse(BaseModel):
+    """One extraction, and what it produced."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_id: int
+    status: str
+    watermark_before: str
+    watermark_after: str
+    rows_extracted: int
+    dataset_id: int | None
+    profile: dict[str, Any]
+    started_at: datetime | None
+    finished_at: datetime | None
+    error: str
+
+
 class UpdateProfileRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
