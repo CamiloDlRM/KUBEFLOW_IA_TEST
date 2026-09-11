@@ -38,6 +38,14 @@ vi.mock('../../src/api/client', () => ({
   getPipeline: vi.fn(),
   getReady: vi.fn(),
   getPipelineLogs: vi.fn(),
+  // The page now also renders SourcesPanel, which reads the source endpoints.
+  // Stubbed to empty so these tests stay about datasets; the panel has its own
+  // suite in SourcesPanel.test.tsx.
+  getSources: vi.fn().mockResolvedValue([]),
+  createSource: vi.fn(),
+  deleteSource: vi.fn(),
+  runIngestion: vi.fn(),
+  getIngestionRuns: vi.fn().mockResolvedValue([]),
 }));
 
 function renderPage() {
@@ -60,7 +68,8 @@ describe('Datasets page', () => {
     getDatasets.mockResolvedValue([mockDataset]);
     renderPage();
 
-    expect(screen.getByText('Datasets')).toBeInTheDocument();
+    // The page is now 'Data': it offers a connected source as well as an upload.
+    expect(screen.getByRole('heading', { name: 'Data' })).toBeInTheDocument();
     expect(await screen.findByText('testuser/ml-project')).toBeInTheDocument();
     expect(await screen.findByText('iris.csv')).toBeInTheDocument();
     expect(screen.getByText('2.0 KB')).toBeInTheDocument();

@@ -23,6 +23,8 @@ import type {
   TriggerAccepted,
   Dataset,
   DatasetPreview,
+  DataSource,
+  IngestionRun,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -308,3 +310,54 @@ export function getWsUrl(pipelineId: string): string {
 }
 
 export default apiClient;
+
+/* ------------------------------------------------------------------ */
+/*  Data sources (external ingestion)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Everything a source needs to be registered.
+ *
+ * Note what is absent: a password. The platform stores the *name* of an
+ * environment variable the worker will read, so no credential ever travels
+ * through the browser or lands in the database.
+ */
+export interface CreateSourceRequest {
+  repo_id: number;
+  name: string;
+  kind: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password_env: string;
+  extraction_sql: string;
+  watermark_column: string;
+  normalize_text_column?: string;
+  normalize_code_column?: string;
+}
+
+export async function getSources(): Promise<DataSource[]> {
+  const { data } = await apiClient.get<DataSource[]>('/sources');
+  return data;
+}
+
+export async function createSource(body: CreateSourceRequest): Promise<DataSource> {
+  const { data } = await apiClient.post<DataSource>('/sources', body);
+  return data;
+}
+
+export async function deleteSource(sourceId: number): Promise<void> {
+  await apiClient.delete(`/sources/${sourceId}`);
+}
+
+/** Queue an extraction of everything recorded since the last run. */
+export async function runIngestion(sourceId: number): Promise<IngestionRun> {
+  const { data } = await apiClient.post<IngestionRun>(`/sources/${sourceId}/ingest`, {});
+  return data;
+}
+
+export async function getIngestionRuns(sourceId: number): Promise<IngestionRun[]> {
+  const { data } = await apiClient.get<IngestionRun[]>(`/sources/${sourceId}/runs`);
+  return data;
+}
