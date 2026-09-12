@@ -51,7 +51,7 @@ __all__ = [
     "bucket_for",
     "bronze_key",
     "silver_key",
-    "silver_prefix",
+    "stream_prefix",
     "gold_key",
     "gold_prefix",
     "BronzeWriter",
@@ -119,8 +119,11 @@ def silver_key(repo_id: int, source_id: int, run_id: str) -> str:
     return f"project-{repo_id}/source-{source_id}/run-{slugify(run_id, fallback='run')}.parquet"
 
 
-def silver_prefix(repo_id: int, source_id: int | None = None) -> str:
-    """Prefix covering a source's whole silver history, or the project's.
+def stream_prefix(repo_id: int, source_id: int | None = None) -> str:
+    """Prefix covering one source's whole history, or the project's.
+
+    The same shape in bronze and in silver, because the keys are the same
+    strings in different buckets.
 
     This is what makes silver behave as one table: every run's object sits
     under a common prefix, and a reader takes ``prefix + '*.parquet'``. No

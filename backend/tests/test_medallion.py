@@ -25,7 +25,7 @@ from core.medallion import (
     read_schema,
     row_count,
     silver_key,
-    silver_prefix,
+    stream_prefix,
     slugify,
     write_typed,
 )
@@ -43,8 +43,8 @@ def test_a_bronze_and_a_silver_object_share_one_path():
 
 def test_a_run_lands_under_its_source_which_lands_under_its_project():
     key = bronze_key(4, 7, "abc")
-    assert key.startswith(silver_prefix(4, 7))
-    assert silver_prefix(4, 7).startswith(silver_prefix(4))
+    assert key.startswith(stream_prefix(4, 7))
+    assert stream_prefix(4, 7).startswith(stream_prefix(4))
 
 
 def test_gold_is_versioned_rather_than_overwritten():

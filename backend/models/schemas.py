@@ -703,11 +703,120 @@ class IngestionRunResponse(BaseModel):
     rows_extracted: int
     dataset_id: int | None
     raw_object_key: str
+    bronze_key: str
+    silver_key: str
     profile: dict[str, Any]
     normalization: dict[str, Any]
+    #: What the cleaning standard changed on the way from bronze to silver.
+    quality_report: dict[str, Any]
     started_at: datetime | None
     finished_at: datetime | None
     error: str
+
+
+# ---------------------------------------------------------------------------
+# Medallion layers
+# ---------------------------------------------------------------------------
+
+
+class LayerStreamResponse(BaseModel):
+    """One source's contribution to a layer."""
+
+    source_id: int | None = None
+    source_name: str = ""
+    #: The name this stream is queried under in a gold definition.
+    relation: str = ""
+    objects: int = 0
+    rows: int = 0
+    size_bytes: int = 0
+
+
+class LayerSummaryResponse(BaseModel):
+    """What one layer currently holds for a project."""
+
+    layer: str
+    bucket: str
+    objects: int = 0
+    rows: int = 0
+    size_bytes: int = 0
+    last_updated: datetime | None = None
+    streams: list[LayerStreamResponse] = Field(default_factory=list)
+    #: Present on gold only: the definition, and whether it is the default.
+    sql: str = ""
+    is_default_definition: bool = True
+    version: int = 0
+    build_error: str = ""
+
+
+class MedallionResponse(BaseModel):
+    """The three layers of one project, side by side."""
+
+    repo_id: int
+    bronze: LayerSummaryResponse
+    silver: LayerSummaryResponse
+    gold: LayerSummaryResponse
+
+
+class LayerPreviewResponse(BaseModel):
+    """A look inside one layer object."""
+
+    layer: str
+    key: str
+    columns: list[dict[str, str]] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    object_rows: int = 0
+    truncated: bool = False
+
+
+class GoldDefinitionRequest(BaseModel):
+    """A project's gold definition."""
+
+    model_config = ConfigDict(strict=True)
+
+    sql: str = Field(default="", max_length=20_000)
+    name: str = Field(default="gold", min_length=1, max_length=60)
+
+
+class GoldPreviewRequest(BaseModel):
+    """A candidate definition to run without saving."""
+
+    model_config = ConfigDict(strict=True)
+
+    sql: str = Field(..., min_length=1, max_length=20_000)
+    limit: int = Field(default=20, ge=1, le=200)
+
+
+class GoldPreviewResponse(BaseModel):
+    """What a candidate definition would produce."""
+
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    total_rows: int = 0
+    relations: dict[str, int] = Field(default_factory=dict)
+    sql: str = ""
+
+
+class GoldSuggestRequest(BaseModel):
+    """A description of the table the user wants."""
+
+    model_config = ConfigDict(strict=True)
+
+    question: str = Field(..., min_length=3, max_length=2_000)
+
+
+class GoldSuggestResponse(BaseModel):
+    """SQL the model wrote, and what it says it does.
+
+    The model returns a query, never rows. That is the whole design: a model
+    that hands back data has to be trusted, and a model that hands back a query
+    can be read, run twice and diffed.
+    """
+
+    sql: str = ""
+    explanation: str = ""
+    #: Set when the suggestion could not be produced or did not survive
+    #: validation, so the caller shows a reason instead of an empty editor.
+    error: str = ""
 
 
 class UpdateProfileRequest(BaseModel):

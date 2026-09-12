@@ -1184,7 +1184,7 @@ def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[st
         if source_id is None:
             continue
         objects = medallion.list_layer(
-            "silver", medallion.silver_prefix(repo_id, source_id)
+            "silver", medallion.stream_prefix(repo_id, source_id)
         )
         paths: list[Path] = []
         for index, item in enumerate(objects):
