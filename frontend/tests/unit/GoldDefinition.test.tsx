@@ -92,9 +92,9 @@ describe('GoldDefinition', () => {
     renderPanel();
 
     const warning = await screen.findByRole('alert');
-    expect(warning).toHaveTextContent(/2 sources are stacked, not joined/);
+    expect(warning).toHaveTextContent(/Stacked, not joined/);
     // The count is the evidence: two columns in common out of three.
-    expect(warning).toHaveTextContent(/share only 0 of 3 columns/);
+    expect(warning).toHaveTextContent(/2 sources share 0 of 3 columns/);
   });
 
   it('does not warn when the sources share every column', async () => {
@@ -139,7 +139,7 @@ describe('GoldDefinition', () => {
     });
     renderPanel();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/share only 1 of 3 columns/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/share 1 of 3 columns/);
   });
 
   it('does not warn when a single source is the whole project', async () => {

@@ -83,19 +83,17 @@ export default function GoldDefinition({
       </p>
 
       {stacking && (
+        // One line, stating the fact about this table. The reasoning behind it
+        // belongs in the docs; what a reader needs here is why their preview
+        // is full of nulls and what to do about it.
         <p
           role="alert"
           className="mt-3 max-w-3xl rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-100"
         >
-          <strong className="font-semibold">
-            These {stacking.sources} sources are stacked, not joined.
-          </strong>{' '}
-          They share only {stacking.shared} of {stacking.total} columns, so each row carries
-          the columns of the source it came from and is empty in the rest — that is what the
-          nulls in the preview are. Stacking loses no rows, which is why it is the default,
-          but a table that is mostly empty by construction is rarely worth training on.
-          Describe what you actually want below and it will be written as a query that joins
-          them.
+          <strong className="font-semibold">Stacked, not joined.</strong> These{' '}
+          {stacking.sources} sources share {stacking.shared} of {stacking.total} columns, so
+          every row is empty in the rest — those are the nulls. Describe the table you want
+          below to join them instead.
         </p>
       )}
 
