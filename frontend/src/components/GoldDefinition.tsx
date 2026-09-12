@@ -71,6 +71,11 @@ export default function GoldDefinition({
   });
 
   const relationNames = Object.keys(relations?.relations ?? {});
+  // The default stacks every source with UNION ALL BY NAME. With one source
+  // that is simply all of its rows. With more than one it is a table that is
+  // null by construction — each row carries one source's columns and nothing
+  // in the others' — which is almost never what anybody wants to train on.
+  const stacked = summary.is_default_definition && relationNames.length > 1;
 
   return (
     <div className="border-t border-yellow-900/40 bg-yellow-950/10 px-5 py-5">
@@ -80,6 +85,22 @@ export default function GoldDefinition({
           ? 'This project has no definition of its own yet, so gold is everything its sources have landed, stacked together. Describe the table you want and it will be written as a query.'
           : 'Gold is built by this query — on every extraction, and again whenever the query itself changes.'}
       </p>
+
+      {stacked && (
+        <p
+          role="alert"
+          className="mt-3 max-w-3xl rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-100"
+        >
+          <strong className="font-semibold">
+            These {relationNames.length} sources are stacked, not joined.
+          </strong>{' '}
+          Every row comes from one of them and is empty in the other
+          {relationNames.length > 2 ? 's' : ''}' columns — that is what the nulls in the
+          preview are. It loses nothing, which is why it is the default, but it is rarely a
+          table worth training on. Describe what you actually want below and it will be
+          written as a query that joins them.
+        </p>
+      )}
 
       {/* 1. What can be queried */}
       {relationNames.length > 0 && (
