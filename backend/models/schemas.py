@@ -70,15 +70,56 @@ class InviteToken(SQLModel, table=True):
     used_at: datetime | None = SQLField(default=None)
 
 
+class Project(SQLModel, table=True):
+    """A piece of work: its data, and optionally the code that trains on it.
+
+    The container the platform was missing. Everything used to hang off a
+    *repository*, which forced an order of events the work does not have — you
+    had to have a GitHub URL before you could connect a database, even though
+    getting the data right is usually the part that comes first and takes
+    longest.
+
+    A project owns its data factory: the sources, the layers, the gold table.
+    A repository is something it may later link, and holds only the code —
+    which is why a project can exist, ingest and be explored with no repository
+    at all, and why deleting the link does not touch the data.
+
+    Ownership lives here. A repository's owner is its project's owner; the
+    column it still carries is kept in step so that the multi-tenancy rules,
+    which every route depends on, did not all have to change at once.
+    """
+
+    __tablename__ = "projects"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    name: str = SQLField(index=True)
+    description: str = SQLField(default="")
+    #: Members see only their own projects and everything under them; admins
+    #: see all. Nullable for the same reason the repository's is: a row that
+    #: predates ownership, or one inserted out of band, is visible to admins
+    #: only rather than to everybody.
+    owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    is_active: bool = SQLField(default=True)
+
+
 class Repository(SQLModel, table=True):
-    """Registered GitHub repository."""
+    """The code a project trains with: a GitHub repository and a notebook."""
 
     __tablename__ = "repositories"
 
     id: int | None = SQLField(default=None, primary_key=True)
+    #: The project this repository belongs to. Nullable only for rows that
+    #: predate projects; the migration gives every existing repository one.
+    project_id: int | None = SQLField(
+        default=None, foreign_key="projects.id", index=True
+    )
     # Owner of the repository. Members only see and manage their own
     # repositories (and everything derived from them: pipelines, datasets,
     # deployments, insights); admins see all of them.
+    #
+    # Kept equal to the project's owner. The project is where ownership is
+    # decided; this column is the form every existing route already reads.
     owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
     github_url: str = SQLField(index=True)
     github_token_masked: str = SQLField(
@@ -378,6 +419,56 @@ class PipelinePhase(BaseModel):
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
+
+class ProjectCreateRequest(BaseModel):
+    """Payload to start a project. Deliberately asks for almost nothing.
+
+    A project exists so work can begin before there is a repository to point
+    at; requiring anything more than a name here would put the old ordering
+    back by the front door.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2_000)
+
+
+class ProjectUpdateRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2_000)
+
+
+class ProjectRepositoryResponse(BaseModel):
+    """The code a project has linked, when it has linked any."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    github_url: str
+    branch: str
+    notebook_path: str
+
+
+class ProjectResponse(BaseModel):
+    """A project and what it currently holds."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str
+    owner_id: int | None
+    created_at: datetime
+    #: ``None`` until a repository is linked. A project with no repository is a
+    #: normal state, not an incomplete one: its data factory works regardless.
+    repository: ProjectRepositoryResponse | None = None
+    sources: int = 0
+    #: Rows currently in the project's gold table, or 0 before its first build.
+    gold_rows: int = 0
+
 
 class RepoCreateRequest(BaseModel):
     """Payload to register a new repository."""

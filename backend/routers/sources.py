@@ -62,9 +62,20 @@ async def list_sources(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[DataSourceResponse]:
-    """Return the data sources of repositories the caller can see."""
+    """Return the external systems of repositories the caller can see.
+
+    Uploads are modelled as sources so the medallion machinery treats both
+    doors alike, but they are not listed here: this endpoint backs the panel
+    for *connecting* a system, and a pseudo-source with no host, no credential
+    and no query would be an entry the user cannot act on. They appear where
+    they are meaningful — as a stream in the layers, and as a relation gold can
+    query.
+    """
     statement = restrict_by_repo(
-        select(DataSource).where(DataSource.is_active == True),  # noqa: E712
+        select(DataSource).where(
+            DataSource.is_active == True,  # noqa: E712
+            DataSource.kind != "upload",
+        ),
         DataSource.repo_id,
         session,
         current_user,
@@ -218,6 +229,17 @@ async def trigger_ingestion(
     request.
     """
     source = _get_source_or_404(session, source_id, current_user)
+    if source.kind == "upload":
+        # It has no host, no credential and no query. Extracting from it would
+        # fail deep inside the worker with "unsupported source kind"; refusing
+        # here says the actual reason.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This is an uploaded file, not a connected system. It is "
+                "re-processed by uploading it again."
+            ),
+        )
 
     in_flight = session.exec(
         select(IngestionRun).where(
