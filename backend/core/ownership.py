@@ -42,7 +42,7 @@ import structlog
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
-from models.schemas import ModelDeployment, Pipeline, Repository, User
+from models.schemas import ModelDeployment, Pipeline, Project, Repository, User
 
 logger = structlog.get_logger(__name__)
 
@@ -79,6 +79,24 @@ def can_access_repo(repo: Repository | None, user: User) -> bool:
     return is_admin(user) or owns_repo(repo, user)
 
 
+def owns_project(project: "Project | None", user: User) -> bool:
+    """Return ``True`` when ``user`` is the recorded owner of ``project``.
+
+    Same rule as a repository, including the one that matters: a project with
+    ``owner_id IS NULL`` is owned by nobody and this returns ``False``. Failing
+    closed keeps an unowned project — and the data underneath it — from
+    becoming visible to every member.
+    """
+    if project is None or project.owner_id is None:
+        return False
+    return project.owner_id == user.id
+
+
+def can_access_project(project: "Project | None", user: User) -> bool:
+    """Return ``True`` when ``user`` may see/manage ``project``."""
+    return is_admin(user) or owns_project(project, user)
+
+
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
@@ -96,6 +114,14 @@ def pipeline_not_found(pipeline_id: Any) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Pipeline {pipeline_id} not found.",
+    )
+
+
+def project_not_found(project_id: Any) -> HTTPException:
+    """Build the 404 used both for missing and for non-visible projects."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Project {project_id} not found.",
     )
 
 
@@ -144,6 +170,31 @@ def get_visible_repo_or_404(
     if repo is None:
         raise repo_not_found(repo_id)
     return assert_repo_access(repo, user)
+
+
+def get_visible_project_or_404(
+    session: Session,
+    project_id: int,
+    user: User,
+) -> "Project":
+    """Load ``project_id`` and return it only if ``user`` may see it.
+
+    Raises:
+        HTTPException: 404 when the project does not exist *or* belongs to
+            somebody else — the two cases are deliberately indistinguishable.
+    """
+    project = session.get(Project, project_id)
+    if project is None or not project.is_active:
+        raise project_not_found(project_id)
+    if not can_access_project(project, user):
+        logger.info(
+            "ownership.project_access_denied",
+            project_id=project.id,
+            owner_id=project.owner_id,
+            user_id=user.id,
+        )
+        raise project_not_found(project_id)
+    return project
 
 
 def get_visible_pipeline_or_404(
@@ -212,6 +263,51 @@ def visible_repo_ids(session: Session, user: User) -> list[int] | None:
         select(Repository.id).where(Repository.owner_id == user.id)  # type: ignore[arg-type]
     ).all()
     return [r for r in rows if r is not None]
+
+
+def filter_projects_by_owner(statement: Any, user: User) -> Any:
+    """Restrict a ``select(Project)`` statement to what ``user`` may see.
+
+    Admins get the statement back untouched; members get an
+    ``owner_id == user.id`` predicate, which also excludes orphan rows since
+    ``NULL = x`` is never true in SQL.
+    """
+    if is_admin(user):
+        return statement
+    return statement.where(Project.owner_id == user.id)
+
+
+def visible_project_ids(session: Session, user: User) -> list[int] | None:
+    """Return the project ids ``user`` may see.
+
+    Returns:
+        ``None`` for admins, meaning *no restriction at all* — callers must not
+        turn that into an empty ``IN`` clause.
+    """
+    if is_admin(user):
+        return None
+    rows = session.exec(
+        select(Project.id).where(Project.owner_id == user.id)  # type: ignore[arg-type]
+    ).all()
+    return [r for r in rows if r is not None]
+
+
+def restrict_by_project(statement: Any, column: Any, session: Session, user: User) -> Any:
+    """Restrict ``statement`` so ``column`` (a project FK) stays inside what
+    ``user`` may see.
+
+    Args:
+        statement: The select to filter.
+        column: The column holding the project id.
+    """
+    project_ids = visible_project_ids(session, user)
+    if project_ids is None:
+        return statement
+    if not project_ids:
+        # An impossible predicate rather than no predicate: a member with no
+        # projects must get nothing, not everything.
+        return statement.where(column.in_([-1]))
+    return statement.where(column.in_(project_ids))
 
 
 def visible_pipeline_ids(session: Session, user: User) -> list[str] | None:
