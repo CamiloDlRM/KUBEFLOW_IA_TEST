@@ -232,6 +232,29 @@ def mock_celery():
         yield mock_task
 
 
+@pytest.fixture(autouse=True)
+def no_broker():
+    """Stop endpoints from reaching for a message broker that is not there.
+
+    Queueing a task from a request is a side effect most tests here neither
+    exercise nor care about, and with no broker running each attempt sits in
+    kombu's connection handling. One endpoint doing that took the suite from
+    eight seconds to nine minutes — slow enough to change how often it gets
+    run, which is the real cost.
+
+    Autouse so the next such endpoint cannot reintroduce it. A test that is
+    specifically about the enqueueing still patches it itself and asserts on
+    its own mock.
+    """
+    from tasks import celery_tasks
+
+    with (
+        patch.object(celery_tasks.ingest_upload, "apply_async", MagicMock()),
+        patch.object(celery_tasks.rebuild_gold, "apply_async", MagicMock()),
+    ):
+        yield
+
+
 @pytest.fixture()
 def mock_github_create_webhook():
     """Mock core.github.create_webhook to return a successful response."""

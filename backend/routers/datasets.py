@@ -321,6 +321,27 @@ async def upload_dataset(
     session.commit()
     session.refresh(dataset)
 
+    # Carry it through the layers, the same as a slice extracted from a
+    # database. Queued rather than done here: cleaning a file and rebuilding
+    # the project's gold table does not belong inside an upload request.
+    #
+    # The row above stays active until that finishes. If the worker is down or
+    # the file defeats the reader, the repository degrades to what it had
+    # before the layers existed — a stored, usable dataset — instead of being
+    # left with nothing to train on.
+    from tasks.celery_tasks import ingest_upload
+
+    try:
+        # retry=False so an unreachable broker fails immediately instead of
+        # working through kombu's retry policy. This is a side effect of an
+        # upload that has already succeeded; it must not be able to hold the
+        # request open for minutes, and the warning below is the right outcome.
+        ingest_upload.apply_async(args=[dataset.id], retry=False)
+    except Exception as exc:  # noqa: BLE001 — the upload itself succeeded
+        logger.warning(
+            "dataset.layering_not_queued", dataset_id=dataset.id, error=str(exc)
+        )
+
     logger.info(
         "dataset.uploaded",
         dataset_id=dataset.id,

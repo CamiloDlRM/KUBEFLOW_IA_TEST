@@ -988,42 +988,24 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
 
             assert result.path is not None
 
-            # --- Bronze -------------------------------------------------
-            # First, and before anything is cleaned. The watermark is about to
-            # move past these rows; if the cleaning fails afterwards they must
-            # still be recoverable from storage.
-            layer_key = medallion.bronze_key(snapshot.repo_id, source_id, run_id)
-            medallion.upload_parquet("bronze", layer_key, result.path)
-            log.info("ingestion.bronze_written", key=layer_key, rows=result.rows)
-
-            # --- Silver -------------------------------------------------
-            # The cleaning standard, then code normalisation. Normalisation
-            # runs here, inside the ingestion, not as a pipeline phase: the
-            # dataset is extracted once and trained on many times, so coding it
-            # per training run would repeat the same work — and the same
-            # provider calls — for an answer that cannot change.
-            build = medallion.promote_to_silver(
-                result.path,
-                Path(tmpdir) / f"silver-{run_id}.parquet",
+            # Bronze first, and before anything is cleaned. The watermark is
+            # about to move past these rows; if the cleaning fails afterwards
+            # they must still be recoverable from storage.
+            landed = _through_the_layers(
+                engine,
+                repo_id=snapshot.repo_id,
+                source_id=source_id,
+                run_id=run_id,
+                bronze_path=result.path,
+                workdir=Path(tmpdir),
                 text_column=snapshot.normalize_text_column,
                 code_column=snapshot.normalize_code_column,
+                log=log,
             )
-            normalization: dict[str, Any] = build.normalization
-            quality_report = build.report.summary()
-            medallion.upload_parquet("silver", layer_key, build.path)
-            log.info(
-                "ingestion.silver_written",
-                key=layer_key,
-                rows=build.rows,
-                cells_changed=quality_report["cells_changed"],
-            )
-
-            # --- Gold ---------------------------------------------------
-            # Rebuilt from the project's whole silver history, not from this
-            # slice. Without this step an incremental run would register a
-            # dataset containing only the rows that happened to be new, and a
-            # model retrained on it would forget everything that came before.
-            gold = _rebuild_gold(engine, snapshot.repo_id, Path(tmpdir), log)
+            layer_key = landed["layer_key"]
+            normalization: dict[str, Any] = landed["normalization"]
+            quality_report = landed["quality_report"]
+            gold = landed["gold"]
 
             size_bytes = gold["path"].stat().st_size
             digest = _sha256_of(gold["path"])
@@ -1120,6 +1102,249 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             error=str(exc)[:2000],
         )
         return {"status": "failed", "error": str(exc)}
+
+
+def _through_the_layers(
+    engine: Any,
+    *,
+    repo_id: int,
+    source_id: int,
+    run_id: str,
+    bronze_path: Path,
+    workdir: Path,
+    text_column: str,
+    code_column: str,
+    log: Any,
+) -> dict[str, Any]:
+    """Carry one landed file from bronze to a rebuilt gold table.
+
+    Shared by both doors into the platform. A file somebody uploaded and a
+    slice extracted from a database differ in how they arrive and in nothing
+    after that: the same cleaning standard, the same report, the same gold. Two
+    implementations of this would drift, and the first thing to drift would be
+    the report — which is the part a reader is being asked to trust.
+
+    Bronze is uploaded before silver is built, because building silver is where
+    a bug would lose data that the source may not hand over twice.
+    """
+    from core import medallion
+
+    layer_key = medallion.bronze_key(repo_id, source_id, run_id)
+    medallion.upload_parquet("bronze", layer_key, bronze_path)
+    log.info("layers.bronze_written", key=layer_key)
+
+    # The cleaning standard, then code normalisation. Normalisation runs here
+    # rather than as a pipeline phase: the data lands once and is trained on
+    # many times, so coding it per training run would repeat the same work —
+    # and the same provider calls — for an answer that cannot change.
+    build = medallion.promote_to_silver(
+        bronze_path,
+        workdir / f"silver-{run_id}.parquet",
+        text_column=text_column,
+        code_column=code_column,
+    )
+    quality_report = build.report.summary()
+    medallion.upload_parquet("silver", layer_key, build.path)
+    log.info(
+        "layers.silver_written",
+        key=layer_key,
+        rows=build.rows,
+        cells_changed=quality_report["cells_changed"],
+    )
+
+    # Gold is rebuilt from the project's whole silver history, not from what
+    # just arrived. Without this, landing a slice would register a dataset
+    # containing only the newest rows and a model retrained on it would forget
+    # everything before them.
+    gold = _rebuild_gold(engine, repo_id, workdir, log)
+
+    return {
+        "layer_key": layer_key,
+        "normalization": build.normalization,
+        "quality_report": quality_report,
+        "silver_rows": build.rows,
+        "gold": gold,
+    }
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.ingest_upload",
+    max_retries=0,
+)
+def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
+    """Carry an uploaded file through the layers, like any other arrival.
+
+    Before this, an upload went straight to the datasets bucket and became the
+    repository's active dataset: no cleaning standard, no types, no quality
+    report, no diff, and absent from gold. Two doors into the platform, one of
+    which skipped everything the platform is for — and worse, the two competed
+    for the single active-dataset slot, so uploading silently replaced a gold
+    table with a raw file and said nothing.
+
+    The upload keeps its own ``Dataset`` row as the record of what arrived. The
+    active dataset becomes gold, the same as for an extraction.
+
+    Failures leave that upload row active. That is deliberate: the file is
+    stored and usable, and degrading to the old behaviour beats leaving a
+    project with nothing to train on because the cleaning could not parse a
+    spreadsheet.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from core import medallion, storage
+    from core.tabular import TabularError, to_bronze
+    from models.schemas import DataSource, Dataset, IngestionRun
+
+    log = logger.bind(dataset_id=dataset_id)
+    engine = create_engine(settings.database_url, echo=False)
+    started = datetime.now(timezone.utc)
+    run_id: str | None = None
+
+    try:
+        with Session(engine) as session:
+            dataset = session.get(Dataset, dataset_id)
+            if not dataset:
+                raise RuntimeError(f"dataset {dataset_id} no longer exists")
+            repo_id = dataset.repo_id
+            filename = dataset.name
+            bucket, object_key = dataset.bucket, dataset.object_key
+
+            source = _upload_source(session, repo_id, filename)
+            source_id = source.id
+            run = IngestionRun(source_id=source_id, status="running", started_at=started)
+            session.add(run)
+            session.commit()
+            session.refresh(run)
+            run_id = run.id
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = Path(tmpdir) / (Path(filename).name or "upload")
+            storage.download_to_path(bucket, object_key, str(local))
+
+            bronze_path = Path(tmpdir) / f"bronze-{run_id}.parquet"
+            extension = local.suffix.lower()
+            rows, _columns = to_bronze(local, extension, bronze_path)
+            if rows == 0:
+                raise TabularError("the file contained no rows")
+
+            landed = _through_the_layers(
+                engine,
+                repo_id=repo_id,
+                source_id=source_id,
+                run_id=run_id,
+                bronze_path=bronze_path,
+                workdir=Path(tmpdir),
+                # An upload names no text/code pair, so no coding is attempted.
+                # The structural and domain tiers still run, which is the part
+                # that applies whatever the file turns out to contain.
+                text_column="",
+                code_column="",
+                log=log,
+            )
+            gold = landed["gold"]
+            size_bytes = gold["path"].stat().st_size
+            digest = _sha256_of(gold["path"])
+
+        stamp = f"{started:%Y%m%dT%H%M%S}"
+        with Session(engine) as session:
+            trained_on = Dataset(
+                repo_id=repo_id,
+                name=f"{_slug(gold['name']) or 'gold'}-v{gold['version']}-{stamp}.parquet",
+                description=(
+                    f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after "
+                    f"{filename!r} was uploaded and cleaned "
+                    f"({rows:,} rows in, {landed['silver_rows']:,} kept)."
+                ),
+                bucket=gold["bucket"],
+                object_key=gold["object_key"],
+                content_type=medallion.PARQUET_CONTENT_TYPE,
+                size_bytes=size_bytes,
+                checksum=digest,
+                is_active=True,
+                origin="ingestion",
+                ingestion_run_id=run_id,
+                profile={},
+                profiled_rows=0,
+            )
+            for other in session.exec(
+                select(Dataset).where(
+                    Dataset.repo_id == repo_id,
+                    Dataset.is_active == True,  # noqa: E712
+                )
+            ).all():
+                other.is_active = False
+                session.add(other)
+            session.add(trained_on)
+            session.commit()
+            session.refresh(trained_on)
+            trained_on_id = trained_on.id
+
+            run = session.get(IngestionRun, run_id)
+            if run:
+                run.status = "success"
+                run.finished_at = datetime.now(timezone.utc)
+                run.rows_extracted = rows
+                run.dataset_id = trained_on_id
+                run.bronze_key = landed["layer_key"]
+                run.silver_key = landed["layer_key"]
+                run.quality_report = landed["quality_report"]
+                run.normalization = landed["normalization"]
+                session.add(run)
+            session.commit()
+
+        log.info("upload.layered", rows=rows, gold_version=gold["version"])
+        return {"status": "success", "rows": rows, "dataset_id": trained_on_id}
+
+    except Exception as exc:  # noqa: BLE001 — recorded on the run
+        log.error("upload.layering_failed", error=str(exc))
+        if run_id:
+            with Session(engine) as session:
+                run = session.get(IngestionRun, run_id)
+                if run:
+                    run.status = "failed"
+                    run.finished_at = datetime.now(timezone.utc)
+                    run.error = str(exc)[:2000]
+                    session.add(run)
+                    session.commit()
+        return {"status": "failed", "error": str(exc)}
+
+
+def _upload_source(session: Any, repo_id: int, filename: str) -> Any:
+    """Find or create the pseudo-source that uploads of ``filename`` land under.
+
+    Uploads are modelled as a ``DataSource`` of kind ``upload`` so that every
+    downstream part — the layer summary, the diff, the gold relations, the key
+    layout — works on them without knowing they came through a different door.
+    The alternative was a parallel set of special cases in each of those, which
+    is how the two paths diverged in the first place.
+
+    One pseudo-source *per filename*, not per project. Re-uploading
+    ``admissions.csv`` next month adds to that stream, which is what silver
+    accumulating is for; uploading ``patients.csv`` makes a second table that
+    gold can join against the first. That matches what the filename already
+    means to the person choosing it.
+    """
+    from sqlmodel import select
+
+    from models.schemas import DataSource
+
+    stem = Path(filename).stem or "upload"
+    existing = session.exec(
+        select(DataSource).where(
+            DataSource.repo_id == repo_id,
+            DataSource.kind == "upload",
+            DataSource.name == stem,
+        )
+    ).first()
+    if existing:
+        return existing
+
+    source = DataSource(repo_id=repo_id, name=stem, kind="upload", is_active=True)
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+    return source
 
 
 @celery_app.task(
