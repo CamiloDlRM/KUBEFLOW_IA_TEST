@@ -27,6 +27,13 @@ httpx==0.28.0
 # Object storage (MinIO / S3) — datasets and the MLflow artifact store
 boto3==1.35.76
 
+# The medallion layers. Parquet because silver claims to have cast its columns
+# and a CSV cannot carry that claim; DuckDB because a gold table is a query
+# over those Parquet files and running it in-process beats standing up an
+# engine to ask one question per extraction.
+pyarrow==25.0.1
+duckdb==1.5.5
+
 # Email
 aiosmtplib==3.0.2
 

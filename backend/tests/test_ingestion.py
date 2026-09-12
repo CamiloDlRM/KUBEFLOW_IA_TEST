@@ -24,7 +24,13 @@ from core.ingestion import (
     extract,
     validate_sql,
 )
+from core.medallion import iter_rows, read_head
 from models.schemas import DataSource
+
+
+def _column(path: Path, name: str) -> list:
+    """Read one column out of an extraction, for asserting on its contents."""
+    return [row[name] for row in iter_rows(path)]
 
 # Business date and entry date deliberately disagree, as they do in the source.
 ROWS = [
@@ -112,12 +118,12 @@ class TestValidation:
             extraction_sql="SELECT id, cost FROM procedures WHERE recorded_at > :watermark"
         )
         with pytest.raises(IngestionError, match="watermark column"):
-            extract(source, tmp_path / "out.csv", engine=source_engine)
+            extract(source, tmp_path / "out.parquet", engine=source_engine)
 
     def test_source_without_a_watermark_column_is_refused(self, source_engine, tmp_path):
         source = make_source(watermark_column="")
         with pytest.raises(IngestionError, match="watermark column"):
-            extract(source, tmp_path / "out.csv", engine=source_engine)
+            extract(source, tmp_path / "out.parquet", engine=source_engine)
 
     def test_unsupported_kind_is_refused(self):
         from core.ingestion import build_engine
@@ -128,34 +134,35 @@ class TestValidation:
 
 class TestIncrementalExtraction:
     def test_first_run_backfills_everything(self, source_engine, tmp_path):
-        destination = tmp_path / "out.csv"
+        destination = tmp_path / "out.parquet"
         result = extract(make_source(), destination, engine=source_engine)
 
         assert result.rows == len(ROWS)
         assert result.watermark_before == EPOCH
         assert result.watermark_after == "2024-02-03T14:00:00"
         assert destination.exists()
-        assert destination.read_text(encoding="utf-8").splitlines()[0].startswith("id,")
+        columns, _ = read_head(destination)
+        assert columns[0] == "id"
 
     def test_second_run_extracts_only_what_is_new(self, source_engine, tmp_path):
-        first = extract(make_source(), tmp_path / "a.csv", engine=source_engine)
+        first = extract(make_source(), tmp_path / "a.parquet", engine=source_engine)
 
         insert_row(source_engine, (6, "2024-03-01", "2024-03-01T11:00:00", "Biopsy", 300.0))
         second = extract(
             make_source(watermark_value=first.watermark_after),
-            tmp_path / "b.csv",
+            tmp_path / "b.parquet",
             engine=source_engine,
         )
 
         assert second.rows == 1
         assert second.watermark_after == "2024-03-01T11:00:00"
-        body = (tmp_path / "b.csv").read_text(encoding="utf-8")
-        assert "Biopsy" in body
-        assert "Appendectomy" not in body
+        texts = _column(tmp_path / "b.parquet", "procedure_text")
+        assert "Biopsy" in texts
+        assert "Appendectomy" not in texts
 
     def test_run_with_nothing_new_produces_no_file(self, source_engine, tmp_path):
-        first = extract(make_source(), tmp_path / "a.csv", engine=source_engine)
-        destination = tmp_path / "b.csv"
+        first = extract(make_source(), tmp_path / "a.parquet", engine=source_engine)
+        destination = tmp_path / "b.parquet"
 
         second = extract(
             make_source(watermark_value=first.watermark_after),
@@ -170,10 +177,10 @@ class TestIncrementalExtraction:
     def test_run_with_nothing_new_leaves_the_watermark_untouched(
         self, source_engine, tmp_path
     ):
-        first = extract(make_source(), tmp_path / "a.csv", engine=source_engine)
+        first = extract(make_source(), tmp_path / "a.parquet", engine=source_engine)
         second = extract(
             make_source(watermark_value=first.watermark_after),
-            tmp_path / "b.csv",
+            tmp_path / "b.parquet",
             engine=source_engine,
         )
         assert second.watermark_after == first.watermark_after
@@ -185,7 +192,7 @@ class TestIncrementalExtraction:
         business date far behind the mark. Watermarking the business date drops
         it and reports success; watermarking the entry date catches it.
         """
-        first = extract(make_source(), tmp_path / "a.csv", engine=source_engine)
+        first = extract(make_source(), tmp_path / "a.parquet", engine=source_engine)
 
         # Clinical date well before the watermark, entry date after it.
         insert_row(
@@ -195,12 +202,12 @@ class TestIncrementalExtraction:
 
         second = extract(
             make_source(watermark_value=first.watermark_after),
-            tmp_path / "b.csv",
+            tmp_path / "b.parquet",
             engine=source_engine,
         )
 
         assert second.rows == 1, "a row entered after the mark must not be skipped"
-        assert "Late-entered" in (tmp_path / "b.csv").read_text(encoding="utf-8")
+        assert _column(tmp_path / "b.parquet", "procedure_text") == ["Late-entered procedure"]
 
     def test_business_date_watermark_would_have_lost_it(self, source_engine, tmp_path):
         """The counter-case, pinned so the distinction cannot quietly regress."""
@@ -209,7 +216,7 @@ class TestIncrementalExtraction:
             "FROM procedures WHERE clinical_date > :watermark ORDER BY clinical_date"
         )
         source = make_source(extraction_sql=business_sql, watermark_column="clinical_date")
-        first = extract(source, tmp_path / "a.csv", engine=source_engine)
+        first = extract(source, tmp_path / "a.parquet", engine=source_engine)
 
         insert_row(
             source_engine,
@@ -222,7 +229,7 @@ class TestIncrementalExtraction:
                 watermark_column="clinical_date",
                 watermark_value=first.watermark_after,
             ),
-            tmp_path / "b.csv",
+            tmp_path / "b.parquet",
             engine=source_engine,
         )
 
@@ -232,12 +239,12 @@ class TestIncrementalExtraction:
         )
 
     def test_max_rows_leaves_a_resumable_watermark(self, source_engine, tmp_path):
-        first = extract(make_source(), tmp_path / "a.csv", engine=source_engine, max_rows=2)
+        first = extract(make_source(), tmp_path / "a.parquet", engine=source_engine, max_rows=2)
         assert first.rows == 2
 
         second = extract(
             make_source(watermark_value=first.watermark_after),
-            tmp_path / "b.csv",
+            tmp_path / "b.parquet",
             engine=source_engine,
         )
         assert first.rows + second.rows == len(ROWS), "no row may be lost or duplicated"
@@ -259,7 +266,7 @@ class TestParameterBinding:
         """
         hostile = "2024-09-01' OR '1'='1"
         result = extract(
-            make_source(watermark_value=hostile), tmp_path / "out.csv", engine=source_engine
+            make_source(watermark_value=hostile), tmp_path / "out.parquet", engine=source_engine
         )
 
         assert result.rows == 0, (
@@ -279,7 +286,7 @@ class TestParameterBinding:
         """
         result = extract(
             make_source(watermark_value="2024-01-12T00:00:00"),
-            tmp_path / "out.csv",
+            tmp_path / "out.parquet",
             engine=source_engine,
         )
         # Rows 2-5: everything recorded after midnight on the 12th.
@@ -288,7 +295,7 @@ class TestParameterBinding:
 
 class TestProfiling:
     def test_profile_covers_every_column(self, source_engine, tmp_path):
-        result = extract(make_source(), tmp_path / "out.csv", engine=source_engine)
+        result = extract(make_source(), tmp_path / "out.parquet", engine=source_engine)
         assert set(result.profile) == {
             "id",
             "clinical_date",
@@ -298,33 +305,33 @@ class TestProfiling:
         }
 
     def test_nulls_are_counted(self, source_engine, tmp_path):
-        result = extract(make_source(), tmp_path / "out.csv", engine=source_engine)
+        result = extract(make_source(), tmp_path / "out.parquet", engine=source_engine)
         cost = result.profile["cost"]
         assert cost["nulls"] == 1
         assert cost["null_rate"] == round(1 / len(ROWS), 4)
 
     def test_numeric_columns_get_statistics(self, source_engine, tmp_path):
-        result = extract(make_source(), tmp_path / "out.csv", engine=source_engine)
+        result = extract(make_source(), tmp_path / "out.parquet", engine=source_engine)
         cost = result.profile["cost"]
         assert cost["inferred_type"] == "numeric"
         assert cost["min"] == 890.25
         assert cost["max"] == 1200.5
 
     def test_free_text_is_not_reported_as_numeric(self, source_engine, tmp_path):
-        result = extract(make_source(), tmp_path / "out.csv", engine=source_engine)
+        result = extract(make_source(), tmp_path / "out.parquet", engine=source_engine)
         assert result.profile["procedure_text"]["inferred_type"] in {"text", "categorical"}
 
     def test_top_values_expose_the_variants_of_one_term(self, source_engine, tmp_path):
         """What the normalisation step is for, visible in the profile."""
-        result = extract(make_source(), tmp_path / "out.csv", engine=source_engine)
+        result = extract(make_source(), tmp_path / "out.parquet", engine=source_engine)
         values = {entry["value"] for entry in result.profile["procedure_text"]["top_values"]}
         assert {"Appendectomy (procedure)", "APPENDECTOMY", "Appendect."} <= values
 
     def test_empty_extraction_has_no_profile(self, source_engine, tmp_path):
-        first = extract(make_source(), tmp_path / "a.csv", engine=source_engine)
+        first = extract(make_source(), tmp_path / "a.parquet", engine=source_engine)
         second = extract(
             make_source(watermark_value=first.watermark_after),
-            tmp_path / "b.csv",
+            tmp_path / "b.parquet",
             engine=source_engine,
         )
         assert second.profile == {}

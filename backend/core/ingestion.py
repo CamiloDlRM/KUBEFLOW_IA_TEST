@@ -23,10 +23,16 @@ choice costs on the sample data (6% of rows lost outright).
 **Rows are streamed and profiled as they go.** Neither the file nor the profile
 is built from a materialised list: an extraction is expected to be larger than
 the process that runs it.
+
+What this module produces is the **bronze** layer and nothing more: a Parquet
+file whose every column is text, with nulls preserved and no value corrected.
+Cleaning, typing and coding belong to :mod:`core.cleaning`, which builds silver
+from what lands here. The separation is what makes the cleaning rules
+improvable — silver can be rebuilt from bronze at any time, whereas a source's
+watermark only moves forward.
 """
 from __future__ import annotations
 
-import csv
 import math
 import os
 import re
@@ -256,9 +262,9 @@ class ExtractionResult:
 
 
 def _serialise(value: Any) -> Any:
-    """Render one value for the CSV the pipeline will read."""
+    """Render one value for a preview, which is JSON and has no null problem."""
     if value is None:
-        return ""
+        return None
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Decimal):
@@ -299,11 +305,11 @@ def extract(
     max_rows: int | None = None,
     engine: Engine | None = None,
 ) -> ExtractionResult:
-    """Run one incremental extraction and write it to ``destination``.
+    """Run one incremental extraction and land it in bronze at ``destination``.
 
     Args:
         source: The registered source to read from.
-        destination: CSV file to write. Not created when no rows come back.
+        destination: Parquet file to write. Not created when no rows come back.
         password: Overrides the environment lookup (used by tests).
         max_rows: Stop after this many rows, leaving the watermark where those
             rows reached so the next run resumes cleanly.
@@ -325,12 +331,13 @@ def extract(
         source, password if password is not None else resolve_password(source)
     )
 
+    from core.medallion import BronzeWriter
+
     profiles: dict[str, ColumnProfile] = {}
     columns: list[str] = []
     high_water = before
     rows_written = 0
-    handle = None
-    writer = None
+    writer: BronzeWriter | None = None
 
     try:
         with engine.connect() as connection:
@@ -359,11 +366,10 @@ def extract(
                     break
 
                 mapping = row._mapping  # noqa: SLF001 — SQLAlchemy's public row mapping
-                if handle is None:
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    handle = destination.open("w", encoding="utf-8", newline="")
-                    writer = csv.writer(handle)
-                    writer.writerow(columns)
+                if writer is None:
+                    # Opened on the first row, so an extraction that finds
+                    # nothing new leaves no empty object in bronze.
+                    writer = BronzeWriter(destination, columns)
 
                 for name in columns:
                     profiles[name].observe(mapping[name])
@@ -372,16 +378,18 @@ def extract(
                 if mark and mark > high_water:
                     high_water = mark
 
-                assert writer is not None
-                writer.writerow([_serialise(mapping[name]) for name in columns])
+                # Written raw. BronzeWriter does the rendering, because what
+                # counts as faithful is a property of the layer, not of this
+                # loop — in particular a null must stay a null.
+                writer.write(mapping[name] for name in columns)
                 rows_written += 1
     except IngestionError:
         raise
     except Exception as exc:  # noqa: BLE001 — surfaced to the run record
         raise IngestionError(f"extraction failed: {exc}") from exc
     finally:
-        if handle is not None:
-            handle.close()
+        if writer is not None:
+            writer.close()
         if owned_engine:
             engine.dispose()
 

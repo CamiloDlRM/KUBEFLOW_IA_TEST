@@ -913,12 +913,19 @@ def run_pipeline(
     default_retry_delay=60,
 )
 def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
-    """Extract the unseen slice of a data source and land it as a dataset.
+    """Extract the unseen slice of a data source and carry it through the layers.
 
-    The result is an ordinary ``Dataset`` in MinIO, so everything downstream —
-    the pipeline mounting it as ``DATASET_PATH``, the notebook reading it — is
-    unchanged. The ingestion adds a step in front of the existing machinery
-    rather than a parallel path beside it.
+    One run walks the medallion end to end: the rows land in **bronze** exactly
+    as the source gave them, are promoted to **silver** by the cleaning
+    standard, and the silver object is registered as the repository's dataset
+    so everything downstream — the pipeline mounting it as ``DATASET_PATH``,
+    the notebook reading it — is unchanged.
+
+    Bronze is uploaded *before* silver is built. The extraction is the only
+    irreversible part of this, because the watermark moves past those rows; if
+    the cleaning then fails, the rows must still be recoverable. Doing it the
+    other way round would mean a bug in a cleaning rule could lose data that
+    the source will never hand over again.
 
     No retries. An extraction is not idempotent from the caller's point of
     view: a retry after a partial upload would land a second dataset covering
@@ -931,9 +938,8 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
     """
     from sqlmodel import Session, create_engine, select
 
-    from core import storage
+    from core import medallion
     from core.ingestion import IngestionError, extract
-    from core.normalization import normalize_file
     from models.schemas import DataSource, Dataset, IngestionRun
 
     log = logger.bind(source_id=source_id, run_id=run_id)
@@ -962,7 +968,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             snapshot = DataSource(**source.model_dump())
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            destination = Path(tmpdir) / f"ingestion-{run_id}.csv"
+            destination = Path(tmpdir) / f"bronze-{run_id}.parquet"
             result = extract(snapshot, destination)
 
             if result.rows == 0:
@@ -982,68 +988,58 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
 
             assert result.path is not None
 
-            # Normalisation runs here, inside the ingestion, not as a pipeline
-            # phase. The dataset is extracted once and trained on many times;
-            # coding it per training run would repeat the same work — and the
-            # same provider calls — for an answer that cannot change.
-            normalization: dict[str, Any] = {}
-            uploadable = result.path
-            if snapshot.normalize_text_column and snapshot.normalize_code_column:
-                normalized_path = result.path.with_name(f"normalized-{run_id}.csv")
-                try:
-                    summary = normalize_file(
-                        result.path,
-                        normalized_path,
-                        text_column=snapshot.normalize_text_column,
-                        code_column=snapshot.normalize_code_column,
-                    )
-                    normalization = summary.summary()
-                    uploadable = normalized_path
-                    log.info("ingestion.normalized", **normalization)
-                except Exception as exc:  # noqa: BLE001
-                    # Land the extraction unnormalised rather than losing it.
-                    # The rows are real either way, and a run that says what
-                    # it could not do is more useful than one that failed
-                    # outright after the expensive part had already succeeded.
-                    log.warning("ingestion.normalization_failed", error=str(exc))
-                    normalization = {"error": str(exc)[:500]}
+            # --- Bronze -------------------------------------------------
+            # First, and before anything is cleaned. The watermark is about to
+            # move past these rows; if the cleaning fails afterwards they must
+            # still be recoverable from storage.
+            layer_key = medallion.bronze_key(snapshot.repo_id, source_id, run_id)
+            medallion.upload_parquet("bronze", layer_key, result.path)
+            log.info("ingestion.bronze_written", key=layer_key, rows=result.rows)
 
-            size_bytes = uploadable.stat().st_size
-            digest = _sha256_of(uploadable)
+            # --- Silver -------------------------------------------------
+            # The cleaning standard, then code normalisation. Normalisation
+            # runs here, inside the ingestion, not as a pipeline phase: the
+            # dataset is extracted once and trained on many times, so coding it
+            # per training run would repeat the same work — and the same
+            # provider calls — for an answer that cannot change.
+            build = medallion.promote_to_silver(
+                result.path,
+                Path(tmpdir) / f"silver-{run_id}.parquet",
+                text_column=snapshot.normalize_text_column,
+                code_column=snapshot.normalize_code_column,
+            )
+            normalization: dict[str, Any] = build.normalization
+            quality_report = build.report.summary()
+            medallion.upload_parquet("silver", layer_key, build.path)
+            log.info(
+                "ingestion.silver_written",
+                key=layer_key,
+                rows=build.rows,
+                cells_changed=quality_report["cells_changed"],
+            )
+
+            # --- Gold ---------------------------------------------------
+            # Rebuilt from the project's whole silver history, not from this
+            # slice. Without this step an incremental run would register a
+            # dataset containing only the rows that happened to be new, and a
+            # model retrained on it would forget everything that came before.
+            gold = _rebuild_gold(engine, snapshot.repo_id, Path(tmpdir), log)
+
+            size_bytes = gold["path"].stat().st_size
+            digest = _sha256_of(gold["path"])
 
             stamp = f"{started:%Y%m%dT%H%M%S}"
-            filename = f"{_slug(snapshot.name) or 'ingestion'}-{stamp}.csv"
-            bucket = settings.minio_bucket_datasets
-            object_key = storage.build_dataset_key(snapshot.repo_id, filename)
-
-            with uploadable.open("rb") as handle:
-                storage.upload_fileobj(bucket, object_key, handle, "text/csv")
-
-            # Keep the extract as it left the source, before normalisation.
-            # Improving the normaliser later would otherwise mean re-extracting
-            # rows the watermark has already moved past. Stored but never
-            # registered as a dataset, so nothing trains on it by accident.
-            raw_object_key = ""
-            if uploadable is not result.path:
-                raw_object_key = storage.build_dataset_key(
-                    snapshot.repo_id, f"raw-{_slug(snapshot.name) or 'ingestion'}-{stamp}.csv"
-                )
-                try:
-                    with result.path.open("rb") as handle:
-                        storage.upload_fileobj(bucket, raw_object_key, handle, "text/csv")
-                except Exception as exc:  # noqa: BLE001
-                    # The normalised copy is already stored and is what the
-                    # pipeline needs; losing the archive is not worth failing
-                    # a run that otherwise succeeded.
-                    log.warning("ingestion.raw_archive_failed", error=str(exc))
-                    raw_object_key = ""
+            filename = f"{_slug(gold['name']) or 'gold'}-v{gold['version']}-{stamp}.parquet"
+            bucket = gold["bucket"]
+            object_key = gold["object_key"]
 
         with Session(engine) as session:
             dataset = Dataset(
                 repo_id=snapshot.repo_id,
                 name=filename,
                 description=(
-                    f"Ingested from {snapshot.name!r}: {result.rows:,} rows "
+                    f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after "
+                    f"extracting {result.rows:,} new row(s) from {snapshot.name!r} "
                     f"recorded after {result.watermark_before}."
                     + (
                         f" {normalization['filled']:,} codes filled in, "
@@ -1054,7 +1050,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 ),
                 bucket=bucket,
                 object_key=object_key,
-                content_type="text/csv",
+                content_type=medallion.PARQUET_CONTENT_TYPE,
                 size_bytes=size_bytes,
                 checksum=digest,
                 is_active=True,
@@ -1102,7 +1098,9 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 run.dataset_id = dataset_id
                 run.profile = result.profile
                 run.normalization = normalization
-                run.raw_object_key = raw_object_key
+                run.bronze_key = layer_key
+                run.silver_key = layer_key
+                run.quality_report = quality_report
                 session.add(run)
             session.commit()
 
@@ -1122,6 +1120,118 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             error=str(exc)[:2000],
         )
         return {"status": "failed", "error": str(exc)}
+
+
+def _relation_name(source_id: int, source_name: str) -> str:
+    """Return the SQL name a source's silver is queried under.
+
+    Derived from the source's own name so a gold definition reads as
+    ``FROM hospital_his`` rather than ``FROM source_7``, with the id appended
+    because two sources in a project may be called the same thing and a
+    relation name has to be unique. Names are what the AI will be shown and
+    what a person will type, so they are worth making legible.
+    """
+    import re as _re
+
+    slug = _re.sub(r"[^a-z0-9]+", "_", (source_name or "").lower()).strip("_")
+    return f"{slug}_{source_id}" if slug else f"source_{source_id}"
+
+
+def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[str, Any]:
+    """Rebuild the project's gold table from the whole of its silver.
+
+    Every silver object of every source in the project is fetched and exposed
+    to DuckDB as one relation per source; the project's definition — or the
+    default union when it has not written one — is executed over them and the
+    result is written as the next version.
+
+    The whole history is downloaded on each build. That is the honest cost of
+    rebuilding rather than appending, and it is the right trade at this scale:
+    a project's silver is a watermarked slice of a source, not a warehouse. It
+    is also the first thing to change if it stops being true — DuckDB can read
+    the objects in place over S3, which removes the download without changing
+    anything else here.
+    """
+    from sqlmodel import Session, select
+
+    from core import gold as gold_module
+    from core import medallion
+    from models.schemas import DataSource, GoldTable
+
+    with Session(engine) as session:
+        sources = session.exec(
+            select(DataSource).where(DataSource.repo_id == repo_id)
+        ).all()
+        names = {source.id: _relation_name(source.id or 0, source.name) for source in sources}
+
+        table = session.exec(
+            select(GoldTable).where(GoldTable.repo_id == repo_id)
+        ).first()
+        if table is None:
+            table = GoldTable(repo_id=repo_id)
+            session.add(table)
+            session.commit()
+            session.refresh(table)
+        definition = table.sql
+        table_name = table.name
+        table_id = table.id
+        next_version = table.version + 1
+
+    # Fetch every silver object, grouped by the source that produced it.
+    silver_root = workdir / "silver"
+    relations: dict[str, list[Path]] = {}
+    for source_id, name in names.items():
+        if source_id is None:
+            continue
+        objects = medallion.list_layer(
+            "silver", medallion.silver_prefix(repo_id, source_id)
+        )
+        paths: list[Path] = []
+        for index, item in enumerate(objects):
+            local = silver_root / name / f"part-{index:05d}.parquet"
+            medallion.download_parquet("silver", item.key, local)
+            paths.append(local)
+        if paths:
+            relations[name] = paths
+
+    sql = definition or gold_module.default_sql(sorted(relations))
+    destination = workdir / "gold.parquet"
+    build, _ = gold_module.build(relations, sql, destination)
+
+    object_key = medallion.gold_key(repo_id, table_name, next_version)
+    bucket = medallion.upload_parquet("gold", object_key, destination)
+
+    with Session(engine) as session:
+        stored = session.get(GoldTable, table_id)
+        if stored:
+            stored.version = next_version
+            stored.bucket = bucket
+            stored.object_key = object_key
+            stored.rows = build.rows
+            stored.columns = build.columns
+            stored.relations = build.relations
+            stored.built_at = datetime.now(timezone.utc)
+            stored.build_error = ""
+            session.add(stored)
+            session.commit()
+
+    log.info(
+        "gold.rebuilt",
+        repo_id=repo_id,
+        version=next_version,
+        rows=build.rows,
+        relations=build.relations,
+        definition="default" if not definition else "project",
+    )
+    return {
+        "name": table_name,
+        "version": next_version,
+        "bucket": bucket,
+        "object_key": object_key,
+        "rows": build.rows,
+        "columns": build.columns,
+        "path": destination,
+    }
 
 
 def _sha256_of(path: Path) -> str:

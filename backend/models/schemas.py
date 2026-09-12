@@ -274,15 +274,28 @@ class IngestionRun(SQLModel, table=True):
     #: nothing new, not a failure.
     dataset_id: int | None = SQLField(default=None, foreign_key="datasets.id")
 
-    #: Object key of the extract exactly as it came out of the source, before
-    #: normalisation touched it. Kept deliberately: without it, improving the
-    #: normaliser would mean re-extracting from the source, and the watermark
-    #: has already moved past those rows.
-    #:
-    #: It is stored but not registered as a dataset — nothing should train on
-    #: it by accident. The normalised copy is the one that becomes a Dataset.
-    #: This is the bronze layer to that silver one.
+    #: Pre-medallion name for what is now the bronze key, kept so the archives
+    #: of runs made before the layers existed remain addressable — those sit in
+    #: the datasets bucket, not in bronze. Nothing writes it any more.
     raw_object_key: str = SQLField(default="")
+
+    #: Where this run landed in each layer. Bronze is the extract exactly as it
+    #: left the source; silver is that same slice after the cleaning standard.
+    #: Both are Parquet, and the two keys are identical strings in different
+    #: buckets, so the lineage of a row is readable from its path alone.
+    #:
+    #: Neither is registered as a dataset by itself. Silver *accumulates* — a
+    #: source's whole history is every object under its prefix — which is what
+    #: makes an incremental run add to the table rather than replace it.
+    bronze_key: str = SQLField(default="")
+    silver_key: str = SQLField(default="")
+
+    #: What the cleaning standard changed between those two objects: which
+    #: rules fired, how many cells each touched, with examples, and the type
+    #: every column was given. This is the difference between a silver layer
+    #: and a folder called "clean" — without it, the claim that the data was
+    #: cleaned is unverifiable.
+    quality_report: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     #: Per-column profile of what was extracted: types, null rates, cardinality
     #: and the distribution summary. Kept on the run rather than recomputed so
@@ -301,6 +314,49 @@ class IngestionRun(SQLModel, table=True):
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
     error: str = SQLField(default="")
+
+
+class GoldTable(SQLModel, table=True):
+    """The modelled table a project publishes, defined by a query over silver.
+
+    One row per project, for now. The table it describes is rebuilt in full on
+    every extraction rather than appended to, because the interesting gold
+    definitions are not appendable: a table that is one row per patient changes
+    an existing row when a new encounter arrives.
+
+    The definition is SQL and nothing else. When the AI helps write one it
+    produces this string; the platform reads it, runs it and reports on it. A
+    model that returns rows has to be trusted. A model that returns a query can
+    be read, run twice, and diffed.
+    """
+
+    __tablename__ = "gold_tables"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    name: str = SQLField(default="gold")
+
+    #: The definition. Empty means the project has not written one and is using
+    #: the default — everything its sources have ever landed, stacked by column
+    #: name. The default is stored as emptiness rather than as generated SQL so
+    #: that adding a source changes the table without anyone editing anything.
+    sql: str = SQLField(default="")
+
+    #: Incremented on every build. A model trained last month was trained on a
+    #: particular version; a gold table overwritten in place could not say
+    #: which, which is exactly the black box this project exists to avoid.
+    version: int = SQLField(default=0)
+    bucket: str = SQLField(default="")
+    object_key: str = SQLField(default="")
+    rows: int = SQLField(default=0)
+    columns: list[str] = SQLField(default_factory=list, sa_column=Column(JSON))
+    #: Row count per silver relation the build read, so a gold table that
+    #: returns nothing can be told apart from one whose inputs were empty.
+    relations: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+    built_at: datetime | None = SQLField(default=None)
+    build_error: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
 
 
 # ---------------------------------------------------------------------------
