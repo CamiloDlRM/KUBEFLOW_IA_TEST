@@ -150,6 +150,34 @@ describe('GoldDefinition', () => {
     expect(await screen.findByText(/No AI provider is configured/)).toBeInTheDocument();
   });
 
+  it('says so when the call for a suggestion fails outright', async () => {
+    // The failure this was written for: the client aborted the request at 15
+    // seconds, the button went back to its resting label, and nothing at all
+    // appeared — indistinguishable from a feature that does nothing.
+    suggestGold.mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }));
+    renderPanel();
+
+    await userEvent.type(screen.getByPlaceholderText(/one row per patient/), 'anything');
+    await userEvent.click(screen.getByRole('button', { name: /write the query/i }));
+
+    expect(await screen.findByText(/took too long to answer/)).toBeInTheDocument();
+  });
+
+  it('says so when saving fails', async () => {
+    setGoldDefinition.mockRejectedValue({
+      response: { data: { detail: 'a gold definition must start with SELECT or WITH' } },
+    });
+    renderPanel();
+    await userEvent.type(screen.getByLabelText(/the query that builds gold/i), 'SELECT 1');
+    await userEvent.click(screen.getByRole('button', { name: /run it/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /use this definition/i })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /use this definition/i }));
+
+    expect(await screen.findByText(/must start with SELECT/)).toBeInTheDocument();
+  });
+
   it('will not save a definition that has never been run', async () => {
     // This becomes the table every model trains on; an unexecuted query is
     // exactly the one that silently returns nothing.

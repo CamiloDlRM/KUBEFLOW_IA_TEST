@@ -156,6 +156,15 @@ export default function GoldDefinition({
 
       {explanation && <p className="mt-2 text-xs text-yellow-200/80">{explanation}</p>}
 
+      {/* A failed call has to say so. Without this the button simply went back
+          to its resting label and nothing appeared — which is indistinguishable
+          from a feature that does nothing. */}
+      {suggest.isError && (
+        <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+          {errorMessage(suggest.error, 'The query could not be written.')}
+        </p>
+      )}
+
       {/* 3. The query itself — a draft, not an answer */}
       <label className="mt-4 block text-xs text-slate-400">
         The query that builds gold
@@ -216,7 +225,13 @@ export default function GoldDefinition({
 
       {tryIt.isError && (
         <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
-          {errorMessage(tryIt.error)}
+          {errorMessage(tryIt.error, 'The query could not be run.')}
+        </p>
+      )}
+
+      {save.isError && (
+        <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+          {errorMessage(save.error, 'The definition could not be saved.')}
         </p>
       )}
 
@@ -280,8 +295,13 @@ export default function GoldDefinition({
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
   if (detail) return detail;
-  return error instanceof Error ? error.message : 'The query could not be run.';
+  // A timeout is the one failure worth naming, because the useful response to
+  // it is "try again", not "something is broken".
+  if ((error as { code?: string })?.code === 'ECONNABORTED') {
+    return 'It took too long to answer and the request was given up on. Try again, or write the query by hand from the schema above.';
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
 }
