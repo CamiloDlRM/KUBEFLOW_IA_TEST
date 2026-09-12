@@ -344,14 +344,13 @@ class TestGoldDefinition:
         )
         assert response.status_code == 422
 
-    def test_a_definition_is_stored_and_takes_effect_on_the_next_run(
-        self, test_app, db_session, own_repo, with_silver
-    ):
+    def test_a_definition_is_stored(self, test_app, db_session, own_repo, with_silver):
         relation = f"patients_{with_silver.id}"
-        response = test_app.put(
-            f"/repos/{own_repo.id}/medallion/gold",
-            json={"sql": f"SELECT patient_id FROM {relation}", "name": "cohort"},
-        )
+        with patch("tasks.celery_tasks.rebuild_gold.apply_async"):
+            response = test_app.put(
+                f"/repos/{own_repo.id}/medallion/gold",
+                json={"sql": f"SELECT patient_id FROM {relation}", "name": "cohort"},
+            )
 
         assert response.status_code == 200
         assert response.json()["is_default_definition"] is False
@@ -359,6 +358,37 @@ class TestGoldDefinition:
         stored = db_session.query(GoldTable).filter(GoldTable.repo_id == own_repo.id).one()
         assert stored.name == "cohort"
         assert relation in stored.sql
+
+    def test_saving_a_definition_rebuilds_gold_rather_than_waiting(
+        self, test_app, own_repo, with_silver
+    ):
+        """Gold is a function of silver and the definition. An extraction
+        covers changes to the first; nothing else covered the second, so a
+        project whose source was up to date would keep a stale table."""
+        relation = f"patients_{with_silver.id}"
+        with patch("tasks.celery_tasks.rebuild_gold.apply_async") as queued:
+            test_app.put(
+                f"/repos/{own_repo.id}/medallion/gold",
+                json={"sql": f"SELECT patient_id FROM {relation}", "name": "gold"},
+            )
+
+        queued.assert_called_once_with(args=[own_repo.id])
+
+    def test_saving_clears_the_error_left_by_the_previous_definition(
+        self, test_app, db_session, own_repo, with_silver
+    ):
+        db_session.add(
+            GoldTable(repo_id=own_repo.id, sql="SELECT * FROM gone", build_error="no such table")
+        )
+        db_session.commit()
+
+        with patch("tasks.celery_tasks.rebuild_gold.apply_async"):
+            body = test_app.put(
+                f"/repos/{own_repo.id}/medallion/gold",
+                json={"sql": f"SELECT patient_id FROM patients_{with_silver.id}", "name": "gold"},
+            ).json()
+
+        assert body["build_error"] == ""
 
     def test_an_invalid_definition_is_refused_at_the_point_of_writing_it(
         self, test_app, own_repo, with_silver
@@ -374,13 +404,14 @@ class TestGoldDefinition:
         self, test_app, db_session, own_repo, with_silver
     ):
         relation = f"patients_{with_silver.id}"
-        test_app.put(
-            f"/repos/{own_repo.id}/medallion/gold",
-            json={"sql": f"SELECT patient_id FROM {relation}", "name": "gold"},
-        )
-        response = test_app.put(
-            f"/repos/{own_repo.id}/medallion/gold", json={"sql": "", "name": "gold"}
-        )
+        with patch("tasks.celery_tasks.rebuild_gold.apply_async"):
+            test_app.put(
+                f"/repos/{own_repo.id}/medallion/gold",
+                json={"sql": f"SELECT patient_id FROM {relation}", "name": "gold"},
+            )
+            response = test_app.put(
+                f"/repos/{own_repo.id}/medallion/gold", json={"sql": "", "name": "gold"}
+            )
 
         assert response.json()["is_default_definition"] is True
         db_session.expire_all()

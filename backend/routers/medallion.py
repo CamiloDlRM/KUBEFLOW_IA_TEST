@@ -423,9 +423,19 @@ async def set_gold_definition(
         table = GoldTable(repo_id=repo_id)
     table.sql = body.sql.strip()
     table.name = body.name
+    table.build_error = ""
     session.add(table)
     session.commit()
     session.refresh(table)
+
+    # Rebuild now rather than at the next extraction. Gold is a function of the
+    # silver layer and the definition; an extraction covers changes to the
+    # first, and this covers the second. Waiting would leave the table stale
+    # until new rows happened to arrive — which, for a source that is already
+    # up to date, could be never.
+    from tasks.celery_tasks import rebuild_gold
+
+    rebuild_gold.apply_async(args=[repo_id])
 
     logger.info(
         "gold.definition_set",
