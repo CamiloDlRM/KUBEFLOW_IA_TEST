@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import text
 
 from core.medallion import write_typed
 from models.schemas import DataSource, GoldTable, IngestionRun
@@ -152,6 +153,47 @@ class TestOverview:
 
         body = test_app.get(f"/repos/{own_repo.id}/medallion").json()
         assert body["bronze"]["rows"] == 0
+
+    def test_a_run_that_predates_the_layers_does_not_break_the_overview(
+        self, test_app, db_session, own_repo, storage_patched
+    ):
+        """The bug this found in production.
+
+        ``quality_report`` was added as a nullable column with no default, so
+        every run recorded before the medallion existed carries NULL — and the
+        summariser called ``.get`` on it. Projects with no history answered
+        fine, which is why it survived every test here: the ones that seed a
+        run always seed a report with it.
+        """
+        source = seed_source(db_session, own_repo.id)
+        run = seed_run(db_session, source.id, extracted=100, kept=97)
+        # Set it the way the database does, not the way the model would.
+        db_session.execute(
+            text("UPDATE ingestion_runs SET quality_report = NULL WHERE id = :id"),
+            {"id": run.id},
+        )
+        db_session.commit()
+
+        response = test_app.get(f"/repos/{own_repo.id}/medallion")
+
+        assert response.status_code == 200
+        # With no report to read, silver falls back to the extracted count
+        # rather than reporting zero rows in a layer that holds 100.
+        assert response.json()["silver"]["rows"] == 100
+
+    def test_a_deactivated_source_still_reports_the_objects_it_left_behind(
+        self, test_app, db_session, own_repo, storage_patched
+    ):
+        """Its rows are still in storage and still in gold; hiding them would
+        make the totals stop adding up."""
+        source = seed_source(db_session, own_repo.id)
+        seed_run(db_session, source.id, extracted=100, kept=97)
+        source.is_active = False
+        db_session.add(source)
+        db_session.commit()
+
+        body = test_app.get(f"/repos/{own_repo.id}/medallion").json()
+        assert body["silver"]["rows"] == 97
 
     def test_another_tenants_project_is_not_found(self, test_app, other_repo, storage_patched):
         assert test_app.get(f"/repos/{other_repo.id}/medallion").status_code == 404

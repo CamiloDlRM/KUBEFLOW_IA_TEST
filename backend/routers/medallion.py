@@ -121,7 +121,14 @@ def _summarise(
                 # extracted count: duplicate rows were removed. Reporting the
                 # extracted number here would make the layers look identical
                 # and hide the one thing this view exists to show.
-                stream.rows += int(run.quality_report.get("rows_out", run.rows_extracted))
+                #
+                # `or {}` because a run older than the layers has no report at
+                # all — the column was added nullable, so those rows hold NULL.
+                # Falling back to the extracted count is the honest answer for
+                # them: the rows are in the layer, we just cannot say how many
+                # the cleaning removed.
+                report = run.quality_report or {}
+                stream.rows += int(report.get("rows_out", run.rows_extracted))
 
         if stream.objects or stream.rows:
             summary.streams.append(stream)
