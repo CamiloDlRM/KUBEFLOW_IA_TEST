@@ -78,7 +78,7 @@ export default function GoldDefinition({
       <p className="mt-1 max-w-3xl text-xs text-yellow-200/70">
         {summary.is_default_definition
           ? 'This project has no definition of its own yet, so gold is everything its sources have landed, stacked together. Describe the table you want and it will be written as a query.'
-          : 'Gold is built by this query on every extraction. Change it and the next run uses the new one.'}
+          : 'Gold is built by this query — on every extraction, and again whenever the query itself changes.'}
       </p>
 
       {/* 1. What can be queried */}
@@ -188,7 +188,7 @@ export default function GoldDefinition({
         )}
         {saved && (
           <span className="text-xs text-yellow-200">
-            Saved. It builds on the next extraction.
+            Saved. Gold is rebuilding now, and again on every extraction.
           </span>
         )}
       </div>

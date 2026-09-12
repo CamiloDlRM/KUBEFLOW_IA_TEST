@@ -114,6 +114,14 @@ def _summarise(
             sizes[item.key] = item.size_bytes
 
         for run in runs.get(source.id, []):
+            # Only runs that actually landed in this layer are counted. A run
+            # made before the medallion existed succeeded and has a row count,
+            # but its output went to the datasets bucket — counting it here
+            # would put rows in a layer that does not hold them, and the card
+            # would report more rows than its own file list can account for.
+            if not (run.bronze_key if layer == "bronze" else run.silver_key):
+                continue
+
             if layer == "bronze":
                 stream.rows += run.rows_extracted
             else:
@@ -122,11 +130,10 @@ def _summarise(
                 # extracted number here would make the layers look identical
                 # and hide the one thing this view exists to show.
                 #
-                # `or {}` because a run older than the layers has no report at
-                # all — the column was added nullable, so those rows hold NULL.
-                # Falling back to the extracted count is the honest answer for
-                # them: the rows are in the layer, we just cannot say how many
-                # the cleaning removed.
+                # `or {}` guards a run that landed without a report. Falling
+                # back to the extracted count is the honest answer there: the
+                # rows are in the layer, we just cannot say how many the
+                # cleaning removed.
                 report = run.quality_report or {}
                 stream.rows += int(report.get("rows_out", run.rows_extracted))
 
@@ -416,9 +423,19 @@ async def set_gold_definition(
         table = GoldTable(repo_id=repo_id)
     table.sql = body.sql.strip()
     table.name = body.name
+    table.build_error = ""
     session.add(table)
     session.commit()
     session.refresh(table)
+
+    # Rebuild now rather than at the next extraction. Gold is a function of the
+    # silver layer and the definition; an extraction covers changes to the
+    # first, and this covers the second. Waiting would leave the table stale
+    # until new rows happened to arrive — which, for a source that is already
+    # up to date, could be never.
+    from tasks.celery_tasks import rebuild_gold
+
+    rebuild_gold.apply_async(args=[repo_id])
 
     logger.info(
         "gold.definition_set",

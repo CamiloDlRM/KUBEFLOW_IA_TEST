@@ -1122,6 +1122,47 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
 
 
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.rebuild_gold",
+    max_retries=0,
+)
+def rebuild_gold(self: Any, repo_id: int) -> dict[str, Any]:
+    """Rebuild a project's gold table against its current definition.
+
+    Gold is a function of two things: the silver layer and the definition.
+    Extractions change the first, and this covers the second — without it,
+    editing the definition would leave gold stale until new rows happened to
+    arrive, which for a source that is already up to date could be never.
+
+    Failures are recorded on the gold table rather than raised, because the
+    definition has already been saved by the time this runs: the user needs to
+    see *why* their query did not build, next to the query.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from models.schemas import GoldTable
+
+    log = logger.bind(repo_id=repo_id)
+    engine = create_engine(settings.database_url, echo=False)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gold = _rebuild_gold(engine, repo_id, Path(tmpdir), log)
+        return {"status": "success", "version": gold["version"], "rows": gold["rows"]}
+    except Exception as exc:  # noqa: BLE001 — recorded on the table
+        log.error("gold.rebuild_failed", error=str(exc))
+        with Session(engine) as session:
+            table = session.exec(
+                select(GoldTable).where(GoldTable.repo_id == repo_id)
+            ).first()
+            if table:
+                table.build_error = str(exc)[:2000]
+                session.add(table)
+                session.commit()
+        return {"status": "failed", "error": str(exc)}
+
+
 def _relation_name(source_id: int, source_name: str) -> str:
     """Return the SQL name a source's silver is queried under.
 

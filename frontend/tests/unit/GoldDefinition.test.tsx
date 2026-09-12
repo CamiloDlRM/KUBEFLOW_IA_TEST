@@ -198,7 +198,7 @@ describe('GoldDefinition', () => {
     await waitFor(() =>
       expect(setGoldDefinition).toHaveBeenCalledWith(4, 'SELECT patient_id FROM patients_1'),
     );
-    expect(await screen.findByText(/builds on the next extraction/)).toBeInTheDocument();
+    expect(await screen.findByText(/Gold is rebuilding now/)).toBeInTheDocument();
   });
 
   it('can go back to the default, which is stored as emptiness', async () => {

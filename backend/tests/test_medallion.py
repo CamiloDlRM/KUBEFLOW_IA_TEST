@@ -177,7 +177,10 @@ def test_the_silver_schema_carries_the_types_the_cleaning_claimed(tmp_path: Path
     assert schema["weight"] == "double"
     assert schema["admitted"] == "bool"
     assert schema["recorded_at"].startswith("timestamp")
-    assert schema["code"] == "int64"
+    # A code identifies, so it stays text however numeric it looks — otherwise
+    # the extraction whose codes are all digits and the one containing "E11.9"
+    # give the same column two types in the same accumulating layer.
+    assert schema["code"] == "string"
 
 
 def test_a_date_column_is_stored_as_a_date_not_a_timestamp(tmp_path: Path):
