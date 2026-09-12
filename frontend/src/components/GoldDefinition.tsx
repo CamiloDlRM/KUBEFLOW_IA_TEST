@@ -6,7 +6,7 @@ import {
   setGoldDefinition,
   suggestGold,
 } from '../api/client';
-import type { GoldPreview, LayerSummary } from '../types';
+import type { GoldPreview, GoldRelations, LayerSummary } from '../types';
 import Spinner from './Spinner';
 
 /**
@@ -71,11 +71,7 @@ export default function GoldDefinition({
   });
 
   const relationNames = Object.keys(relations?.relations ?? {});
-  // The default stacks every source with UNION ALL BY NAME. With one source
-  // that is simply all of its rows. With more than one it is a table that is
-  // null by construction — each row carries one source's columns and nothing
-  // in the others' — which is almost never what anybody wants to train on.
-  const stacked = summary.is_default_definition && relationNames.length > 1;
+  const stacking = describeStacking(relations, summary.is_default_definition);
 
   return (
     <div className="border-t border-yellow-900/40 bg-yellow-950/10 px-5 py-5">
@@ -86,19 +82,18 @@ export default function GoldDefinition({
           : 'Gold is built by this query — on every extraction, and again whenever the query itself changes.'}
       </p>
 
-      {stacked && (
+      {stacking && (
+        // One line, stating the fact about this table. The reasoning behind it
+        // belongs in the docs; what a reader needs here is why their preview
+        // is full of nulls and what to do about it.
         <p
           role="alert"
           className="mt-3 max-w-3xl rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-100"
         >
-          <strong className="font-semibold">
-            These {relationNames.length} sources are stacked, not joined.
-          </strong>{' '}
-          Every row comes from one of them and is empty in the other
-          {relationNames.length > 2 ? 's' : ''}' columns — that is what the nulls in the
-          preview are. It loses nothing, which is why it is the default, but it is rarely a
-          table worth training on. Describe what you actually want below and it will be
-          written as a query that joins them.
+          <strong className="font-semibold">Stacked, not joined.</strong> These{' '}
+          {stacking.sources} sources share {stacking.shared} of {stacking.total} columns, so
+          every row is empty in the rest — those are the nulls. Describe the table you want
+          below to join them instead.
         </p>
       )}
 
@@ -293,6 +288,40 @@ export default function GoldDefinition({
       )}
     </div>
   );
+}
+
+/**
+ * Whether the default definition is stacking sources that do not line up.
+ *
+ * Having several sources is not the problem, and warning on that alone would
+ * be wrong in the case stacking is *made* for: two hospitals, two sites, two
+ * years of the same table. Those share every column, `UNION ALL BY NAME`
+ * produces no nulls at all, and appending them is exactly right.
+ *
+ * What produces the nulls is schemas that disagree. So the test is how much
+ * the sources actually have in common — which also lets the warning say how
+ * empty the table will be instead of asserting that it is.
+ *
+ * Returns `null` when there is nothing to warn about.
+ */
+function describeStacking(
+  relations: GoldRelations | undefined,
+  isDefault: boolean,
+): { sources: number; shared: number; total: number } | null {
+  if (!isDefault || !relations) return null;
+
+  const columnSets = Object.values(relations.relations).map(
+    (relation) => new Set(relation.columns.map((column) => column.name)),
+  );
+  if (columnSets.length < 2) return null;
+
+  const everywhere = [...columnSets[0]].filter((name) =>
+    columnSets.every((set) => set.has(name)),
+  );
+  const anywhere = new Set(columnSets.flatMap((set) => [...set]));
+  if (everywhere.length === anywhere.size) return null;
+
+  return { sources: columnSets.length, shared: everywhere.length, total: anywhere.size };
 }
 
 function errorMessage(error: unknown, fallback: string): string {
