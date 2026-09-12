@@ -65,7 +65,7 @@ function renderDiff(data: LayerDiffData = DIFF) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <LayerDiff repoId={4} streams={[]} />
+      <LayerDiff projectId={4} streams={[]} />
     </QueryClientProvider>,
   );
 }
@@ -146,7 +146,7 @@ describe('LayerDiff', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <LayerDiff repoId={4} streams={[]} />
+        <LayerDiff projectId={4} streams={[]} />
       </QueryClientProvider>,
     );
 

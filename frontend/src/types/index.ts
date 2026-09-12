@@ -170,7 +170,7 @@ export interface InviteTokenResponse {
 
 export interface Dataset {
   id: number;
-  repo_id: number;
+  project_id: number;
   name: string;
   description: string;
   bucket: string;
@@ -221,7 +221,7 @@ export interface SourcePreview {
 /** An external system the platform extracts from. */
 export interface DataSource {
   id: number;
-  repo_id: number;
+  project_id: number;
   name: string;
   kind: string;
   host: string;
@@ -281,6 +281,31 @@ export interface IngestionRun {
 /*  The medallion layers                                               */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  Projects                                                           */
+/* ------------------------------------------------------------------ */
+
+/** The code a project has linked, when it has linked any. */
+export interface ProjectRepository {
+  id: number;
+  github_url: string;
+  branch: string;
+  notebook_path: string;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  description: string;
+  owner_id: number | null;
+  created_at: string;
+  /** `null` until a repository is linked — a normal state, not an incomplete
+   *  one: the data factory works either way. */
+  repository: ProjectRepository | null;
+  sources: number;
+  gold_rows: number;
+}
+
 export type Layer = 'bronze' | 'silver' | 'gold';
 
 /** One rule of the cleaning standard, and what it did to this extraction. */
@@ -339,7 +364,7 @@ export interface LayerSummary {
 }
 
 export interface Medallion {
-  repo_id: number;
+  project_id: number;
   bronze: LayerSummary;
   silver: LayerSummary;
   gold: LayerSummary;

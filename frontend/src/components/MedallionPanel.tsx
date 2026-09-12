@@ -19,12 +19,12 @@ import LayerDiff from './LayerDiff';
  * quality report, which lives on each extraction and says what changed and by
  * how much. A badge would assert the same thing without the evidence.
  */
-export default function MedallionPanel({ repoId }: { repoId: number }) {
+export default function MedallionPanel({ projectId }: { projectId: number }) {
   const [selected, setSelected] = useState<Layer>('silver');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['medallion', repoId],
-    queryFn: () => getMedallion(repoId),
+    queryKey: ['medallion', projectId],
+    queryFn: () => getMedallion(projectId),
   });
 
   if (isLoading) {
@@ -69,15 +69,15 @@ export default function MedallionPanel({ repoId }: { repoId: number }) {
             ))}
           </div>
 
-          <LayerDetail repoId={repoId} summary={layers.find((l) => l.layer === selected)!} />
+          <LayerDetail projectId={projectId} summary={layers.find((l) => l.layer === selected)!} />
 
           {/* Bronze and silver are two views of one transition, so either one
               selected shows the diff between them. Gold is not a cleaning of
               anything — it is a query — so it gets its definition instead. */}
           {selected === 'gold' ? (
-            <GoldDefinition repoId={repoId} summary={data.gold} />
+            <GoldDefinition projectId={projectId} summary={data.gold} />
           ) : (
-            <LayerDiff repoId={repoId} streams={data.silver.streams} />
+            <LayerDiff projectId={projectId} streams={data.silver.streams} />
           )}
         </>
       )}
@@ -187,13 +187,13 @@ function LayerCard({
 /*  What is inside the selected layer                                  */
 /* ------------------------------------------------------------------ */
 
-function LayerDetail({ repoId, summary }: { repoId: number; summary: LayerSummary }) {
+function LayerDetail({ projectId, summary }: { projectId: number; summary: LayerSummary }) {
   const metal = METALS[summary.layer];
   const [sourceId, setSourceId] = useState<number | null>(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['layer-preview', repoId, summary.layer, sourceId],
-    queryFn: () => previewLayer(repoId, summary.layer, { sourceId }),
+    queryKey: ['layer-preview', projectId, summary.layer, sourceId],
+    queryFn: () => previewLayer(projectId, summary.layer, { sourceId }),
     retry: false,
   });
 

@@ -30,7 +30,7 @@ import Spinner from './Spinner';
  * password, which is unusual enough to be worth saying out loud in the UI: no
  * credential travels through the browser, and none is stored.
  */
-export default function SourcesPanel({ repoId }: { repoId: number }) {
+export default function SourcesPanel({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -40,13 +40,13 @@ export default function SourcesPanel({ repoId }: { repoId: number }) {
     queryFn: getSources,
   });
 
-  const mine = (sources ?? []).filter((source) => source.repo_id === repoId);
+  const mine = (sources ?? []).filter((source) => source.project_id === projectId);
 
   const ingest = useMutation({
     mutationFn: (sourceId: number) => runIngestion(sourceId),
     onSuccess: (_run, sourceId) => {
       queryClient.invalidateQueries({ queryKey: ['ingestion-runs', sourceId] });
-      queryClient.invalidateQueries({ queryKey: ['datasets', repoId] });
+      queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
     },
   });
 
@@ -79,7 +79,7 @@ export default function SourcesPanel({ repoId }: { repoId: number }) {
 
       {showForm && (
         <SourceForm
-          repoId={repoId}
+          projectId={projectId}
           onDone={() => {
             setShowForm(false);
             queryClient.invalidateQueries({ queryKey: ['sources'] });
@@ -472,9 +472,9 @@ FROM procedures
 WHERE recorded_at > :watermark
 ORDER BY recorded_at`;
 
-function SourceForm({ repoId, onDone }: { repoId: number; onDone: () => void }) {
+function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => void }) {
   const [form, setForm] = useState<CreateSourceRequest>({
-    repo_id: repoId,
+    project_id: projectId,
     name: '',
     kind: 'postgres',
     host: '',
@@ -498,7 +498,7 @@ function SourceForm({ repoId, onDone }: { repoId: number; onDone: () => void }) 
   const look = useMutation({
     mutationFn: (body: CreateSourceRequest) =>
       previewSource({
-        repo_id: body.repo_id,
+        project_id: body.project_id,
         kind: body.kind,
         host: body.host,
         port: body.port,

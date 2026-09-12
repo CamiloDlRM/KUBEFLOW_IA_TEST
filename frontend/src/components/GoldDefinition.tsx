@@ -24,10 +24,10 @@ import Spinner from './Spinner';
  * ordering is what makes this checkable rather than something to be trusted.
  */
 export default function GoldDefinition({
-  repoId,
+  projectId,
   summary,
 }: {
-  repoId: number;
+  projectId: number;
   summary: LayerSummary;
 }) {
   const queryClient = useQueryClient();
@@ -38,12 +38,12 @@ export default function GoldDefinition({
   const [saved, setSaved] = useState(false);
 
   const { data: relations } = useQuery({
-    queryKey: ['gold-relations', repoId],
-    queryFn: () => getGoldRelations(repoId),
+    queryKey: ['gold-relations', projectId],
+    queryFn: () => getGoldRelations(projectId),
   });
 
   const suggest = useMutation({
-    mutationFn: () => suggestGold(repoId, question),
+    mutationFn: () => suggestGold(projectId, question),
     onSuccess: (result) => {
       setExplanation(result.explanation || result.error);
       if (result.sql) {
@@ -55,7 +55,7 @@ export default function GoldDefinition({
   });
 
   const tryIt = useMutation({
-    mutationFn: () => previewGold(repoId, sql),
+    mutationFn: () => previewGold(projectId, sql),
     onSuccess: (result) => {
       setPreview(result);
       setSaved(false);
@@ -63,10 +63,10 @@ export default function GoldDefinition({
   });
 
   const save = useMutation({
-    mutationFn: () => setGoldDefinition(repoId, sql),
+    mutationFn: () => setGoldDefinition(projectId, sql),
     onSuccess: () => {
       setSaved(true);
-      queryClient.invalidateQueries({ queryKey: ['medallion', repoId] });
+      queryClient.invalidateQueries({ queryKey: ['medallion', projectId] });
     },
   });
 

@@ -39,7 +39,7 @@ function layer(overrides: Partial<LayerSummary> = {}): LayerSummary {
 }
 
 const MEDALLION: Medallion = {
-  repo_id: 4,
+  project_id: 4,
   bronze: layer({ layer: 'bronze', bucket: 'bronze', rows: 15_890 }),
   silver: layer({
     rows: 15_884,
@@ -76,7 +76,7 @@ function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MedallionPanel repoId={4} />
+      <MedallionPanel projectId={4} />
     </QueryClientProvider>,
   );
 }
@@ -166,7 +166,7 @@ describe('MedallionPanel', () => {
 
   it('invites an extraction when nothing has landed yet', async () => {
     getMedallion.mockResolvedValue({
-      repo_id: 4,
+      project_id: 4,
       bronze: layer({ layer: 'bronze', rows: 0, objects: 0 }),
       silver: layer({ rows: 0, objects: 0 }),
       gold: layer({ layer: 'gold', rows: 0, objects: 0 }),
