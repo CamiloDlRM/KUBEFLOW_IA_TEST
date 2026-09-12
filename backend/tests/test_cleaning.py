@@ -156,6 +156,22 @@ def test_a_surrogate_key_is_still_an_integer():
     assert report.types["patient_id"] == "integer"
 
 
+def test_the_same_change_is_not_shown_three_times():
+    """The first three changes a rule makes are usually one change repeated —
+    the value that needed correcting is the one that recurs."""
+    report, _ = run(trim_whitespace, table(term=["  a b  ", "  a b  ", "  a b  ", " c  d "]))
+    examples = outcome_of(report, "trim_whitespace").examples
+    assert len(examples) == 2
+    assert examples[0]["after"] == "a b" and examples[1]["after"] == "c d"
+
+
+def test_a_cast_shows_no_example_because_the_value_did_not_change():
+    """"12261" and 12261 render as the same three glyphs; a before/after pair
+    there reads as a rule that ran and did nothing."""
+    report, _ = run(cast_types, table(n=["12261", "12262"]))
+    assert outcome_of(report, "cast_types").examples == []
+
+
 def test_the_cast_reports_columns_typed_not_values_converted():
     """Rendering "12261" as 12261 is not a correction, and counting it as one
     buries the values that genuinely were corrected."""

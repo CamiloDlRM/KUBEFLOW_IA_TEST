@@ -166,6 +166,45 @@ describe('SourcesPanel', () => {
     expect(text).toContain('4duplicaterowsremoved');
   });
 
+  it('keeps a whitespace correction visible instead of collapsing it', async () => {
+    // The most common correction in this report is a whitespace one, and HTML
+    // collapses runs of spaces: rendered plainly, both sides of the example
+    // read identically and the rule looks like it did nothing.
+    getIngestionRuns.mockResolvedValue([
+      {
+        ...RUN,
+        quality_report: {
+          ...RUN.quality_report,
+          rules: [
+            {
+              tier: 'structural',
+              rule: 'trim_whitespace',
+              title: 'Whitespace normalised',
+              columns: ['procedure_text'],
+              cells_changed: 2380,
+              rows_removed: 0,
+              columns_removed: 0,
+              flagged: 0,
+              note: '',
+              examples: [
+                { column: 'procedure_text', before: 'Hospice  care', after: 'Hospice care' },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+    await userEvent.click(await screen.findByText(/values corrected/));
+
+    // The matcher has to opt out of whitespace normalisation too, or it would
+    // hide the very difference this test exists to check.
+    const before = await screen.findByText('Hospice  care', { normalizer: (text) => text });
+    expect(before.textContent).toBe('Hospice  care');
+    expect(before.closest('.whitespace-pre')).not.toBeNull();
+  });
+
   it('says a flagged value was left in place, not fixed', async () => {
     // The distinction the domain tier exists to make: a 400-year-old is a
     // problem somebody has to look at, not a row to quietly delete.

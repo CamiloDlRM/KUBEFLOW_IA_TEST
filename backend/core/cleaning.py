@@ -126,8 +126,21 @@ class RuleOutcome:
     examples: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self, column: str, before: Any, after: Any) -> None:
-        if len(self.examples) < _MAX_EXAMPLES:
-            self.examples.append({"column": column, "before": before, "after": after})
+        """Keep a distinct example of what this rule did.
+
+        Distinct matters: the first three changes a rule makes are usually the
+        same change three times, because the value that needed correcting is
+        the one that repeats. Three copies of it teach a reader nothing that
+        one does, and crowd out the second and third *kinds* of change.
+        """
+        if len(self.examples) >= _MAX_EXAMPLES:
+            return
+        if any(
+            example["before"] == before and example["after"] == after
+            for example in self.examples
+        ):
+            return
+        self.examples.append({"column": column, "before": before, "after": after})
 
     @property
     def changed(self) -> bool:
@@ -429,15 +442,14 @@ def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str
         if kind == "string":
             continue
 
+        # No examples. A cast changes the type, not the value: rendered side by
+        # side, "12261" and 12261 are the same three glyphs, so a before/after
+        # pair here shows a reader nothing and reads like a rule that ran and
+        # did nothing. What the column became is in the note and in
+        # ``report.types``, which is the actual information.
         mapping = dict(zip(present, converted))
         for index, value in enumerate(values):
-            if value is None or value == "":
-                values[index] = None
-                continue
-            new = mapping[value]
-            if new != value:
-                outcome.record(name, value, _displayable(new))
-            values[index] = new
+            values[index] = None if value is None or value == "" else mapping[value]
         outcome.columns.append(name)
 
     if outcome.columns:
