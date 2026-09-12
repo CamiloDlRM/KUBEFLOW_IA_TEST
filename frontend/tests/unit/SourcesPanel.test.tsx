@@ -10,6 +10,7 @@ const createSource = vi.fn();
 const deleteSource = vi.fn();
 const runIngestion = vi.fn();
 const getIngestionRuns = vi.fn();
+const previewSource = vi.fn();
 
 vi.mock('../../src/api/client', () => ({
   getSources: (...args: unknown[]) => getSources(...args),
@@ -17,6 +18,7 @@ vi.mock('../../src/api/client', () => ({
   deleteSource: (...args: unknown[]) => deleteSource(...args),
   runIngestion: (...args: unknown[]) => runIngestion(...args),
   getIngestionRuns: (...args: unknown[]) => getIngestionRuns(...args),
+  previewSource: (...args: unknown[]) => previewSource(...args),
 }));
 
 const SOURCE: DataSource = {
@@ -56,6 +58,45 @@ const RUN: IngestionRun = {
     vocabulary_size: 246,
     by_method: { 'cascade:exact': 5213, 'cascade:fuzzy': 1095 },
   },
+  quality_report: {
+    rows_in: 15884,
+    rows_out: 15880,
+    columns_in: 6,
+    columns_out: 5,
+    cells_changed: 4211,
+    flagged: 3,
+    types: { recorded_at: 'timestamp', procedure_code: 'string' },
+    renamed: { 'Procedure Text': 'procedure_text' },
+    rules: [
+      {
+        tier: 'structural',
+        rule: 'deduplicate_rows',
+        title: 'Exact duplicate rows removed',
+        columns: [],
+        cells_changed: 0,
+        rows_removed: 4,
+        columns_removed: 0,
+        flagged: 0,
+        note: '4 row(s) were byte-for-byte repeats',
+        examples: [],
+      },
+      {
+        tier: 'domain',
+        rule: 'flag_implausible_measurements',
+        title: 'Implausible measurements flagged',
+        columns: ['edad'],
+        cells_changed: 0,
+        rows_removed: 0,
+        columns_removed: 0,
+        flagged: 3,
+        note: 'edad: 3 outside 0–130 years — flagged only, nothing was changed or removed',
+        examples: [{ column: 'edad', before: 400, after: 'outside 0–130 years' }],
+      },
+    ],
+    rules_applied: 9,
+  },
+  bronze_key: 'project-7/source-1/run-1.parquet',
+  silver_key: 'project-7/source-1/run-1.parquet',
   started_at: '2026-09-11T10:05:00Z',
   finished_at: '2026-09-11T10:06:00Z',
   error: '',
@@ -115,6 +156,36 @@ describe('SourcesPanel', () => {
     expect(text.replace(/[.,\s]/g, '')).toContain('140');
   });
 
+  it('says what the cleaning changed between bronze and silver', async () => {
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+
+    const line = await screen.findByText(/values corrected/);
+    const text = (line.textContent ?? '').replace(/[.,\s]/g, '');
+    expect(text).toContain('4211');
+    expect(text).toContain('4duplicaterowsremoved');
+  });
+
+  it('says a flagged value was left in place, not fixed', async () => {
+    // The distinction the domain tier exists to make: a 400-year-old is a
+    // problem somebody has to look at, not a row to quietly delete.
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+
+    expect(await screen.findByText(/flagged, left in place/)).toBeInTheDocument();
+  });
+
+  it('renders the run history of a source with no quality report', async () => {
+    // Runs that completed before the layers existed have none, and a history
+    // that throws on those hides the very thing it was added to enrich.
+    getIngestionRuns.mockResolvedValue([{ ...RUN, quality_report: undefined }]);
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+
+    expect(await screen.findByText(/codes filled/)).toBeInTheDocument();
+    expect(screen.queryByText(/values corrected/)).not.toBeInTheDocument();
+  });
+
   it('marks an empty extraction as nothing new rather than a failure', async () => {
     getIngestionRuns.mockResolvedValue([
       { ...RUN, rows_extracted: 0, normalization: {}, watermark_after: RUN.watermark_before },
@@ -171,6 +242,75 @@ describe('SourcesPanel', () => {
 
     await waitFor(() => expect(createSource).toHaveBeenCalled());
     expect(createSource.mock.calls[0][0]).toMatchObject({ repo_id: 7, name: 'HIS' });
+  });
+
+  it('previews the source before it is saved', async () => {
+    previewSource.mockResolvedValue({
+      columns: ['id', 'procedure_text', 'procedure_code'],
+      rows: [[1, 'APPENDECTOMY', null]],
+      profile: {
+        id: { inferred_type: 'numeric' },
+        procedure_text: { inferred_type: 'text' },
+        procedure_code: { inferred_type: 'categorical' },
+      },
+      truncated: true,
+    });
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
+    const [database, username] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(database, 'hosp');
+    await userEvent.type(username, 'user');
+
+    await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
+
+    // Scoped to the table: 'procedure_text' is also a placeholder in the form.
+    expect(
+      await screen.findByRole('columnheader', { name: /procedure_text/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'APPENDECTOMY' })).toBeInTheDocument();
+    // The inferred type is shown so the text and code columns can be chosen
+    // from what is there rather than from memory.
+    expect(screen.getAllByText('categorical').length).toBeGreaterThan(0);
+    expect(screen.getByText(/nothing was stored/i)).toBeInTheDocument();
+  });
+
+  it('shows a null cell as a dash rather than as empty space', async () => {
+    previewSource.mockResolvedValue({
+      columns: ['procedure_code'],
+      rows: [[null]],
+      profile: { procedure_code: { inferred_type: 'categorical' } },
+      truncated: false,
+    });
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
+    const [db2, user2] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(db2, 'h');
+    await userEvent.type(user2, 'u');
+    await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
+
+    expect(await screen.findByText('—')).toBeInTheDocument();
+  });
+
+  it('reports why a preview failed instead of saving a broken source', async () => {
+    previewSource.mockRejectedValue(new Error('relation "procedures" does not exist'));
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
+    const [db3, user3] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(db3, 'h');
+    await userEvent.type(user3, 'u');
+    await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
+
+    expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
+  });
+
+  it('cannot preview before the connection is filled in', async () => {
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+
+    expect(screen.getByRole('button', { name: /preview data/i })).toBeDisabled();
   });
 
   it('invites an upload when no source is connected', async () => {

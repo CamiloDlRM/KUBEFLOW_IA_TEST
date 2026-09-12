@@ -174,6 +174,24 @@ class AppSettings(BaseSettings):
         default="mlflow",
         description="Bucket used by MLflow as its artifact store.",
     )
+    # The medallion layers get a bucket each rather than three prefixes inside
+    # one. It costs nothing and it means the layers are separable where it
+    # matters: bronze can be made write-once and given a long retention, gold
+    # can be read by a reporting user that was never granted bronze. Sharing a
+    # bucket would make every such policy a prefix rule, which MinIO supports
+    # but nobody reads correctly at a glance.
+    minio_bucket_bronze: str = Field(
+        default="bronze",
+        description="Bucket for the bronze layer: extracts exactly as they left the source.",
+    )
+    minio_bucket_silver: str = Field(
+        default="silver",
+        description="Bucket for the silver layer: typed, cleaned, accumulating.",
+    )
+    minio_bucket_gold: str = Field(
+        default="gold",
+        description="Bucket for the gold layer: the modelled tables a project publishes.",
+    )
     dataset_max_size_mb: int = Field(
         default=512,
         description="Maximum accepted size for an uploaded dataset, in megabytes.",

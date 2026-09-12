@@ -27,6 +27,12 @@ httpx==0.28.0
 # Object storage (MinIO / S3) — datasets and the MLflow artifact store
 boto3==1.35.76
 
+# DuckDB runs the gold definition: a gold table is one query over the silver
+# Parquet files, and running it in-process beats standing up an engine to ask
+# one question per extraction. Parquet itself comes from pyarrow, which is
+# pinned further down — capped at <15 by mlflow, see the note there.
+duckdb==1.1.3
+
 # Email
 aiosmtplib==3.0.2
 
@@ -57,8 +63,11 @@ numpy==1.26.4
 # Dataset readers — needed by pandas for the formats we accept on upload
 # (.parquet -> pyarrow, .xlsx -> openpyxl), both for the preview endpoint and
 # for notebooks that read DATASET_PATH.
-# pyarrow is capped at <15 by mlflow 2.9.2, so 14.0.2 is the highest usable
-# version; bump it only together with mlflow.
+#
+# pyarrow also writes and reads every medallion layer, so this pin is now load
+# bearing in two places. It is capped at <15 by mlflow 2.9.2, which makes
+# 14.0.2 the highest usable version; bump it only together with mlflow, and
+# check `core.medallion` still passes afterwards.
 pyarrow==14.0.2
 openpyxl==3.1.5
 

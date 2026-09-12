@@ -209,6 +209,15 @@ export interface ColumnProfile {
   top_values: { value: string; count: number }[];
 }
 
+/** What an extraction would return, fetched before committing to one. */
+export interface SourcePreview {
+  columns: string[];
+  rows: unknown[][];
+  profile: Record<string, ColumnProfile>;
+  /** Whether the source holds more than the sample shown. */
+  truncated: boolean;
+}
+
 /** An external system the platform extracts from. */
 export interface DataSource {
   id: number;
@@ -255,10 +264,112 @@ export interface IngestionRun {
    *  dataset's silver: kept so the normaliser can be improved and re-run
    *  without going back to a source whose watermark has already moved on. */
   raw_object_key: string;
+  /** Where this run landed in each layer. The same string in two buckets, so
+   *  the lineage of a row is readable from its path alone. */
+  bronze_key: string;
+  silver_key: string;
   profile: Record<string, ColumnProfile>;
   normalization: NormalizationSummary | Record<string, never>;
+  /** What the cleaning standard changed on the way from bronze to silver. */
+  quality_report: QualityReport | Record<string, never>;
   started_at: string | null;
   finished_at: string | null;
+  error: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  The medallion layers                                               */
+/* ------------------------------------------------------------------ */
+
+export type Layer = 'bronze' | 'silver' | 'gold';
+
+/** One rule of the cleaning standard, and what it did to this extraction. */
+export interface CleaningRule {
+  tier: 'structural' | 'categorical' | 'domain';
+  rule: string;
+  title: string;
+  columns: string[];
+  cells_changed: number;
+  rows_removed: number;
+  columns_removed: number;
+  flagged: number;
+  note: string;
+  examples: { column: string; before: unknown; after: unknown }[];
+}
+
+/** The difference between a bronze object and the silver one built from it. */
+export interface QualityReport {
+  rows_in: number;
+  rows_out: number;
+  columns_in: number;
+  columns_out: number;
+  cells_changed: number;
+  flagged: number;
+  types: Record<string, string>;
+  renamed: Record<string, string>;
+  /** Only the rules that changed something; `rules_applied` counts them all. */
+  rules: CleaningRule[];
+  rules_applied: number;
+}
+
+/** One source's contribution to a layer. */
+export interface LayerStream {
+  source_id: number | null;
+  source_name: string;
+  /** The name this stream is queried under in a gold definition. */
+  relation: string;
+  objects: number;
+  rows: number;
+  size_bytes: number;
+}
+
+export interface LayerSummary {
+  layer: Layer;
+  bucket: string;
+  objects: number;
+  rows: number;
+  size_bytes: number;
+  last_updated: string | null;
+  streams: LayerStream[];
+  /** Gold only. */
+  sql: string;
+  is_default_definition: boolean;
+  version: number;
+  build_error: string;
+}
+
+export interface Medallion {
+  repo_id: number;
+  bronze: LayerSummary;
+  silver: LayerSummary;
+  gold: LayerSummary;
+}
+
+export interface LayerPreview {
+  layer: Layer;
+  key: string;
+  columns: { name: string; type: string }[];
+  rows: unknown[][];
+  object_rows: number;
+  truncated: boolean;
+}
+
+export interface GoldRelations {
+  relations: Record<string, { columns: { name: string; type: string }[]; rows: number }>;
+  default_sql: string;
+}
+
+export interface GoldPreview {
+  columns: string[];
+  rows: unknown[][];
+  total_rows: number;
+  relations: Record<string, number>;
+  sql: string;
+}
+
+export interface GoldSuggestion {
+  sql: string;
+  explanation: string;
   error: string;
 }
 

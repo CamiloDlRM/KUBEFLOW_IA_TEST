@@ -274,15 +274,28 @@ class IngestionRun(SQLModel, table=True):
     #: nothing new, not a failure.
     dataset_id: int | None = SQLField(default=None, foreign_key="datasets.id")
 
-    #: Object key of the extract exactly as it came out of the source, before
-    #: normalisation touched it. Kept deliberately: without it, improving the
-    #: normaliser would mean re-extracting from the source, and the watermark
-    #: has already moved past those rows.
-    #:
-    #: It is stored but not registered as a dataset — nothing should train on
-    #: it by accident. The normalised copy is the one that becomes a Dataset.
-    #: This is the bronze layer to that silver one.
+    #: Pre-medallion name for what is now the bronze key, kept so the archives
+    #: of runs made before the layers existed remain addressable — those sit in
+    #: the datasets bucket, not in bronze. Nothing writes it any more.
     raw_object_key: str = SQLField(default="")
+
+    #: Where this run landed in each layer. Bronze is the extract exactly as it
+    #: left the source; silver is that same slice after the cleaning standard.
+    #: Both are Parquet, and the two keys are identical strings in different
+    #: buckets, so the lineage of a row is readable from its path alone.
+    #:
+    #: Neither is registered as a dataset by itself. Silver *accumulates* — a
+    #: source's whole history is every object under its prefix — which is what
+    #: makes an incremental run add to the table rather than replace it.
+    bronze_key: str = SQLField(default="")
+    silver_key: str = SQLField(default="")
+
+    #: What the cleaning standard changed between those two objects: which
+    #: rules fired, how many cells each touched, with examples, and the type
+    #: every column was given. This is the difference between a silver layer
+    #: and a folder called "clean" — without it, the claim that the data was
+    #: cleaned is unverifiable.
+    quality_report: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     #: Per-column profile of what was extracted: types, null rates, cardinality
     #: and the distribution summary. Kept on the run rather than recomputed so
@@ -301,6 +314,49 @@ class IngestionRun(SQLModel, table=True):
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
     error: str = SQLField(default="")
+
+
+class GoldTable(SQLModel, table=True):
+    """The modelled table a project publishes, defined by a query over silver.
+
+    One row per project, for now. The table it describes is rebuilt in full on
+    every extraction rather than appended to, because the interesting gold
+    definitions are not appendable: a table that is one row per patient changes
+    an existing row when a new encounter arrives.
+
+    The definition is SQL and nothing else. When the AI helps write one it
+    produces this string; the platform reads it, runs it and reports on it. A
+    model that returns rows has to be trusted. A model that returns a query can
+    be read, run twice, and diffed.
+    """
+
+    __tablename__ = "gold_tables"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    name: str = SQLField(default="gold")
+
+    #: The definition. Empty means the project has not written one and is using
+    #: the default — everything its sources have ever landed, stacked by column
+    #: name. The default is stored as emptiness rather than as generated SQL so
+    #: that adding a source changes the table without anyone editing anything.
+    sql: str = SQLField(default="")
+
+    #: Incremented on every build. A model trained last month was trained on a
+    #: particular version; a gold table overwritten in place could not say
+    #: which, which is exactly the black box this project exists to avoid.
+    version: int = SQLField(default=0)
+    bucket: str = SQLField(default="")
+    object_key: str = SQLField(default="")
+    rows: int = SQLField(default=0)
+    columns: list[str] = SQLField(default_factory=list, sa_column=Column(JSON))
+    #: Row count per silver relation the build read, so a gold table that
+    #: returns nothing can be told apart from one whose inputs were empty.
+    relations: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+    built_at: datetime | None = SQLField(default=None)
+    build_error: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +629,40 @@ class DataSourceCreateRequest(BaseModel):
     normalize_code_column: str = Field(default="", max_length=128)
 
 
+class DataSourcePreviewRequest(BaseModel):
+    """Ask what an extraction would return, without running one.
+
+    Deliberately does not require the source to exist: the point is to check
+    the query while writing it, not after committing to it. ``name`` is absent
+    for the same reason — you are testing a connection, not registering one.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    repo_id: int
+    kind: str = Field(default="postgres", pattern=r"^postgres$")
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(default=5432, ge=1, le=65535)
+    database: str = Field(..., min_length=1, max_length=128)
+    username: str = Field(..., min_length=1, max_length=128)
+    password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    extraction_sql: str = Field(..., min_length=1, max_length=20_000)
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class DataSourcePreviewResponse(BaseModel):
+    """The first rows an extraction would return."""
+
+    columns: list[str]
+    rows: list[list[Any]]
+    #: Per-column profile of the sample. Says what each column looks like, so
+    #: the text and code fields can be chosen from what is there rather than
+    #: from memory.
+    profile: dict[str, Any]
+    #: Whether the source holds more than the sample shown.
+    truncated: bool
+
+
 class DataSourceResponse(BaseModel):
     """Public view of a data source.
 
@@ -613,11 +703,120 @@ class IngestionRunResponse(BaseModel):
     rows_extracted: int
     dataset_id: int | None
     raw_object_key: str
+    bronze_key: str
+    silver_key: str
     profile: dict[str, Any]
     normalization: dict[str, Any]
+    #: What the cleaning standard changed on the way from bronze to silver.
+    quality_report: dict[str, Any]
     started_at: datetime | None
     finished_at: datetime | None
     error: str
+
+
+# ---------------------------------------------------------------------------
+# Medallion layers
+# ---------------------------------------------------------------------------
+
+
+class LayerStreamResponse(BaseModel):
+    """One source's contribution to a layer."""
+
+    source_id: int | None = None
+    source_name: str = ""
+    #: The name this stream is queried under in a gold definition.
+    relation: str = ""
+    objects: int = 0
+    rows: int = 0
+    size_bytes: int = 0
+
+
+class LayerSummaryResponse(BaseModel):
+    """What one layer currently holds for a project."""
+
+    layer: str
+    bucket: str
+    objects: int = 0
+    rows: int = 0
+    size_bytes: int = 0
+    last_updated: datetime | None = None
+    streams: list[LayerStreamResponse] = Field(default_factory=list)
+    #: Present on gold only: the definition, and whether it is the default.
+    sql: str = ""
+    is_default_definition: bool = True
+    version: int = 0
+    build_error: str = ""
+
+
+class MedallionResponse(BaseModel):
+    """The three layers of one project, side by side."""
+
+    repo_id: int
+    bronze: LayerSummaryResponse
+    silver: LayerSummaryResponse
+    gold: LayerSummaryResponse
+
+
+class LayerPreviewResponse(BaseModel):
+    """A look inside one layer object."""
+
+    layer: str
+    key: str
+    columns: list[dict[str, str]] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    object_rows: int = 0
+    truncated: bool = False
+
+
+class GoldDefinitionRequest(BaseModel):
+    """A project's gold definition."""
+
+    model_config = ConfigDict(strict=True)
+
+    sql: str = Field(default="", max_length=20_000)
+    name: str = Field(default="gold", min_length=1, max_length=60)
+
+
+class GoldPreviewRequest(BaseModel):
+    """A candidate definition to run without saving."""
+
+    model_config = ConfigDict(strict=True)
+
+    sql: str = Field(..., min_length=1, max_length=20_000)
+    limit: int = Field(default=20, ge=1, le=200)
+
+
+class GoldPreviewResponse(BaseModel):
+    """What a candidate definition would produce."""
+
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    total_rows: int = 0
+    relations: dict[str, int] = Field(default_factory=dict)
+    sql: str = ""
+
+
+class GoldSuggestRequest(BaseModel):
+    """A description of the table the user wants."""
+
+    model_config = ConfigDict(strict=True)
+
+    question: str = Field(..., min_length=3, max_length=2_000)
+
+
+class GoldSuggestResponse(BaseModel):
+    """SQL the model wrote, and what it says it does.
+
+    The model returns a query, never rows. That is the whole design: a model
+    that hands back data has to be trusted, and a model that hands back a query
+    can be read, run twice and diffed.
+    """
+
+    sql: str = ""
+    explanation: str = ""
+    #: Set when the suggestion could not be produced or did not survive
+    #: validation, so the caller shows a reason instead of an empty editor.
+    error: str = ""
 
 
 class UpdateProfileRequest(BaseModel):

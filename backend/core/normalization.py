@@ -37,7 +37,7 @@ from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Final, Iterable, Protocol
+from typing import Any, Final, Iterable, Protocol
 
 import structlog
 
@@ -714,6 +714,90 @@ def vocabulary_from_rows(
 
     return Vocabulary(
         Term(code, spellings.most_common(1)[0][0]) for code, spellings in counts.items()
+    )
+
+
+def normalize_rows(
+    rows: list[dict[str, Any]],
+    *,
+    text_column: str,
+    code_column: str,
+    matcher_factory: object | None = None,
+) -> NormalizationSummary:
+    """Fill in the missing codes of ``rows``, in place.
+
+    The same work as :func:`normalize_file` without the file, so the silver
+    build can code a table it already holds instead of writing a CSV in order
+    to read it back. Two columns are added to every row: how each code was
+    decided and how confident that was. They are the audit trail — a row coded
+    by a model and a row coded by exact match are not the same claim, and a
+    reader downstream must be able to tell them apart.
+
+    Rows that cannot be placed keep an empty code. Guessing to raise the fill
+    rate would put a wrong code in a patient record silently, which is the one
+    outcome worth avoiding at any cost to the metric.
+    """
+    if not rows:
+        return NormalizationSummary(0, 0, 0, 0, 0, {})
+
+    fieldnames = list(rows[0].keys())
+    for required in (text_column, code_column):
+        if required not in fieldnames:
+            raise ValueError(
+                f"the extraction does not return a column called {required!r}; "
+                f"it returns {', '.join(fieldnames)}"
+            )
+
+    vocabulary = vocabulary_from_rows(
+        ({key: "" if value is None else str(value) for key, value in row.items()} for row in rows),
+        text_column,
+        code_column,
+    )
+    build = matcher_factory or (lambda v: CascadeMatcher(ExactMatcher(v), FuzzyMatcher(v)))
+    matcher = build(vocabulary)  # type: ignore[operator]
+
+    already_coded = filled = unresolved = 0
+    by_method: dict[str, int] = {}
+    method_column = f"{code_column}_method"
+    confidence_column = f"{code_column}_confidence"
+
+    for row in rows:
+        raw_code = row.get(code_column)
+        code = "" if raw_code is None else str(raw_code).strip()
+        if code:
+            already_coded += 1
+            row[method_column] = "source"
+            row[confidence_column] = 1.0
+            continue
+
+        raw_text = row.get(text_column)
+        result = matcher.match("" if raw_text is None else str(raw_text).strip())
+        if result.matched:
+            filled += 1
+            row[code_column] = result.code or ""
+            row[method_column] = result.method
+            row[confidence_column] = round(result.confidence, 3)
+            by_method[result.method] = by_method.get(result.method, 0) + 1
+        else:
+            unresolved += 1
+            row[method_column] = None
+            row[confidence_column] = None
+
+    logger.info(
+        "normalization.rows_completed",
+        rows=len(rows),
+        already_coded=already_coded,
+        filled=filled,
+        unresolved=unresolved,
+        vocabulary=len(vocabulary),
+    )
+    return NormalizationSummary(
+        rows=len(rows),
+        already_coded=already_coded,
+        filled=filled,
+        unresolved=unresolved,
+        vocabulary_size=len(vocabulary),
+        by_method=by_method,
     )
 
 
