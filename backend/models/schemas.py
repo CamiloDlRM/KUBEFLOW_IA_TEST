@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
@@ -712,6 +712,19 @@ class IngestionRunResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     error: str
+
+    @field_validator("profile", "normalization", "quality_report", mode="before")
+    @classmethod
+    def _absent_is_empty(cls, value: Any) -> Any:
+        """Read a NULL JSON column as an empty one.
+
+        Every JSON column here arrived with a migration, and the rows recorded
+        before it hold NULL. Insisting on a dict turns the whole history into a
+        500 — losing the runs that do have the data along with the ones that do
+        not, which is a poor trade for a field that means "nothing recorded"
+        either way.
+        """
+        return {} if value is None else value
 
 
 # ---------------------------------------------------------------------------

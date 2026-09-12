@@ -185,6 +185,35 @@ class TestListRuns:
         source_id = create_source(test_app, own_repo.id).json()["id"]
         assert test_app.get(f"/sources/{source_id}/runs").json() == []
 
+    def test_a_run_recorded_before_a_json_column_existed_is_still_listed(
+        self, test_app, own_repo, db_session
+    ):
+        """Every JSON column arrives with a migration, and the rows that predate
+        it hold NULL. A response model that insists on a dict turns the whole
+        history into a 500 — losing the runs that *do* have the data along with
+        the ones that do not.
+        """
+        from sqlalchemy import text
+
+        source_id = create_source(test_app, own_repo.id).json()["id"]
+        with patch("tasks.celery_tasks.run_ingestion.apply_async"):
+            run_id = test_app.post(f"/sources/{source_id}/ingest").json()["id"]
+
+        db_session.execute(
+            text(
+                "UPDATE ingestion_runs SET quality_report = NULL, profile = NULL, "
+                "normalization = NULL WHERE id = :id"
+            ),
+            {"id": run_id},
+        )
+        db_session.commit()
+
+        response = test_app.get(f"/sources/{source_id}/runs")
+
+        assert response.status_code == 200
+        assert response.json()[0]["quality_report"] == {}
+        assert response.json()[0]["profile"] == {}
+
 
 class TestDeleteSource:
     def test_delete_deactivates_rather_than_removing(self, test_app, own_repo, db_session):
