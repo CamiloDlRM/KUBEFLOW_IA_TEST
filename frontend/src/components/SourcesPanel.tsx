@@ -343,6 +343,31 @@ function NormalizationBar({ summary }: { summary: NormalizationSummary }) {
   );
 }
 
+/**
+ * One side of a before/after example.
+ *
+ * Quoted and with the whitespace preserved, because the most common correction
+ * in this report is a whitespace one — and HTML collapses runs of spaces, so
+ * `"Hospice  care"` and `"Hospice care"` render identically. The example then
+ * demonstrates precisely the thing it has made invisible, and reads as a rule
+ * that changed nothing.
+ */
+function ExampleValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined) {
+    return <span className="text-slate-600">null</span>;
+  }
+  if (typeof value !== 'string') {
+    return <span>{String(value)}</span>;
+  }
+  return (
+    <span className="whitespace-pre">
+      <span className="text-slate-600">"</span>
+      <span className="text-slate-400">{value}</span>
+      <span className="text-slate-600">"</span>
+    </span>
+  );
+}
+
 /** Narrow the run's quality report.
  *
  * Tolerates the field being absent, not only empty: runs that completed before
@@ -412,16 +437,15 @@ function CleaningReport({ report }: { report: QualityReport }) {
               )}
             </p>
             {rule.examples.length > 0 && (
-              <p className="mt-0.5 font-mono text-[11px] text-slate-500">
-                {rule.examples
-                  .map(
-                    (example) =>
-                      `${String(example.before)} → ${
-                        example.after === null ? 'null' : String(example.after)
-                      }`,
-                  )
-                  .join('   ')}
-              </p>
+              <ul className="mt-0.5 space-y-0.5">
+                {rule.examples.map((example, index) => (
+                  <li key={index} className="font-mono text-[11px] text-slate-500">
+                    <ExampleValue value={example.before} />
+                    <span className="mx-1.5 text-slate-600">→</span>
+                    <ExampleValue value={example.after} />
+                  </li>
+                ))}
+              </ul>
             )}
             {rule.note && <p className="mt-0.5 text-[11px] text-slate-600">{rule.note}</p>}
           </li>
