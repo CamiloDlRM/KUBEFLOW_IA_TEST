@@ -93,7 +93,53 @@ describe('GoldDefinition', () => {
 
     const warning = await screen.findByRole('alert');
     expect(warning).toHaveTextContent(/2 sources are stacked, not joined/);
-    expect(warning).toHaveTextContent(/rarely a table worth training on/);
+    // The count is the evidence: two columns in common out of three.
+    expect(warning).toHaveTextContent(/share only 0 of 3 columns/);
+  });
+
+  it('does not warn when the sources share every column', async () => {
+    // The case stacking is made for: two sites, two years, the same table.
+    // UNION ALL BY NAME produces no nulls at all and appending is correct.
+    const columns = [
+      { name: 'patient_id', type: 'VARCHAR' },
+      { name: 'age', type: 'BIGINT' },
+    ];
+    getGoldRelations.mockResolvedValue({
+      relations: {
+        site_a_1: { rows: 3, columns },
+        site_b_2: { rows: 9, columns },
+      },
+      default_sql: 'SELECT * FROM site_a_1\nUNION ALL BY NAME\nSELECT * FROM site_b_2',
+    });
+    renderPanel();
+
+    await screen.findByText(/no definition of its own yet/);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('warns when the schemas only partly overlap', async () => {
+    getGoldRelations.mockResolvedValue({
+      relations: {
+        a_1: {
+          rows: 3,
+          columns: [
+            { name: 'patient_id', type: 'VARCHAR' },
+            { name: 'age', type: 'BIGINT' },
+          ],
+        },
+        b_2: {
+          rows: 9,
+          columns: [
+            { name: 'patient_id', type: 'VARCHAR' },
+            { name: 'cost', type: 'DOUBLE' },
+          ],
+        },
+      },
+      default_sql: 'x',
+    });
+    renderPanel();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/share only 1 of 3 columns/);
   });
 
   it('does not warn when a single source is the whole project', async () => {
