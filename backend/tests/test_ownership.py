@@ -22,6 +22,7 @@ from tests.conftest import (
     seed_dataset,
     seed_model_deployment,
     seed_pipeline,
+    seed_project,
     seed_repo,
 )
 
@@ -42,6 +43,16 @@ def _seed_theirs(session):
         owner_id=OTHER_USER_ID,
         github_url="https://github.com/theirs/repo",
     )
+
+
+def _project_mine(session):
+    """Seed a project owned by the ``test_app`` member."""
+    return seed_project(session, owner_id=DEFAULT_USER_ID, name="Mine")
+
+
+def _project_theirs(session):
+    """Seed a project owned by the *other* member."""
+    return seed_project(session, owner_id=OTHER_USER_ID, name="Theirs")
 
 
 # ---------------------------------------------------------------------------
@@ -292,34 +303,34 @@ class TestPipelineIsolation:
 # ---------------------------------------------------------------------------
 
 class TestDatasetIsolation:
-    """Datasets inherit the visibility of their repository."""
+    """Datasets inherit the visibility of their project."""
 
-    def test_list_datasets_of_other_members_repo_should_return_404(
+    def test_list_datasets_of_other_members_project_should_return_404(
         self, test_app, db_session
     ):
-        theirs = _seed_theirs(db_session)
+        theirs = _project_theirs(db_session)
         seed_dataset(db_session, theirs.id)
 
-        resp = test_app.get(f"/repos/{theirs.id}/datasets")
+        resp = test_app.get(f"/projects/{theirs.id}/datasets")
 
         assert resp.status_code == 404
 
-    def test_list_datasets_of_own_repo_should_succeed(self, test_app, db_session):
-        mine = _seed_mine(db_session)
+    def test_list_datasets_of_own_project_should_succeed(self, test_app, db_session):
+        mine = _project_mine(db_session)
         dataset = seed_dataset(db_session, mine.id)
 
-        resp = test_app.get(f"/repos/{mine.id}/datasets")
+        resp = test_app.get(f"/projects/{mine.id}/datasets")
 
         assert resp.status_code == 200
         assert [d["id"] for d in resp.json()] == [dataset.id]
 
-    def test_upload_to_other_members_repo_should_return_404(
+    def test_upload_to_other_members_project_should_return_404(
         self, test_app, db_session
     ):
-        theirs = _seed_theirs(db_session)
+        theirs = _project_theirs(db_session)
 
         resp = test_app.post(
-            f"/repos/{theirs.id}/datasets",
+            f"/projects/{theirs.id}/datasets",
             files={"file": ("train.csv", b"a,b\n1,2\n", "text/csv")},
         )
 
@@ -328,7 +339,7 @@ class TestDatasetIsolation:
     def test_activate_other_members_dataset_should_return_404(
         self, test_app, db_session
     ):
-        theirs = _seed_theirs(db_session)
+        theirs = _project_theirs(db_session)
         dataset = seed_dataset(db_session, theirs.id, is_active=False)
 
         resp = test_app.post(f"/datasets/{dataset.id}/activate")
@@ -343,7 +354,7 @@ class TestDatasetIsolation:
     def test_delete_other_members_dataset_should_return_404(
         self, test_app, db_session
     ):
-        theirs = _seed_theirs(db_session)
+        theirs = _project_theirs(db_session)
         dataset = seed_dataset(db_session, theirs.id)
 
         with patch("routers.datasets.delete_object") as delete_object:
@@ -355,7 +366,7 @@ class TestDatasetIsolation:
     def test_preview_other_members_dataset_should_return_404(
         self, test_app, db_session
     ):
-        theirs = _seed_theirs(db_session)
+        theirs = _project_theirs(db_session)
         dataset = seed_dataset(db_session, theirs.id)
 
         with patch("routers.datasets.download_to_path") as download:
@@ -365,10 +376,10 @@ class TestDatasetIsolation:
         download.assert_not_called()
 
     def test_admin_can_see_any_dataset(self, admin_app, db_session):
-        theirs = _seed_theirs(db_session)
+        theirs = _project_theirs(db_session)
         dataset = seed_dataset(db_session, theirs.id)
 
-        resp = admin_app.get(f"/repos/{theirs.id}/datasets")
+        resp = admin_app.get(f"/projects/{theirs.id}/datasets")
 
         assert resp.status_code == 200
         assert [d["id"] for d in resp.json()] == [dataset.id]

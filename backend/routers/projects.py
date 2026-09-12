@@ -51,25 +51,18 @@ def _render(session: Session, project: Project) -> ProjectResponse:
         )
     ).first()
 
-    # The data factory still hangs off the repository. Moving it to the project
-    # is the next step; until then a project's data is whatever its linked
-    # repository holds, and a project with no repository reports none — which
-    # is accurate today and is exactly the limitation that step removes.
-    sources = 0
-    gold = None
-    if repository is not None:
-        sources = len(
-            session.exec(
-                select(DataSource).where(
-                    DataSource.repo_id == repository.id,
-                    DataSource.is_active == True,  # noqa: E712
-                    DataSource.kind != "upload",
-                )
-            ).all()
-        )
-        gold = session.exec(
-            select(GoldTable).where(GoldTable.repo_id == repository.id)
-        ).first()
+    sources = len(
+        session.exec(
+            select(DataSource).where(
+                DataSource.project_id == project.id,
+                DataSource.is_active == True,  # noqa: E712
+                DataSource.kind != "upload",
+            )
+        ).all()
+    )
+    gold = session.exec(
+        select(GoldTable).where(GoldTable.project_id == project.id)
+    ).first()
 
     return ProjectResponse(
         id=project.id or 0,

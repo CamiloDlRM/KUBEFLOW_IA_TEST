@@ -1,4 +1,4 @@
-"""Tests for the dataset endpoints (/repos/{id}/datasets and /datasets/{id}).
+"""Tests for the dataset endpoints (/projects/{id}/datasets and /datasets/{id}).
 
 MinIO is fully mocked: every ``core.storage`` helper used by the router is
 patched, so these tests never touch the network or a real S3 endpoint.
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import seed_dataset, seed_repo
+from tests.conftest import seed_dataset, seed_project
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ def mock_storage():
         patch("routers.datasets.download_to_path") as download,
         patch(
             "routers.datasets.build_dataset_key",
-            side_effect=lambda repo_id, filename: f"repo-{repo_id}/fixed-uuid/{filename}",
+            side_effect=lambda project_id, filename: f"repo-{project_id}/fixed-uuid/{filename}",
         ) as build_key,
     ):
         bundle = MagicMock()
@@ -48,10 +48,10 @@ def _bucket() -> str:
     return get_settings().minio_bucket_datasets
 
 
-def _upload(test_app, repo_id: int, filename: str = "train.csv", content: bytes = b"a,b\n1,2\n"):
+def _upload(test_app, project_id: int, filename: str = "train.csv", content: bytes = b"a,b\n1,2\n"):
     """POST a multipart dataset upload and return the response."""
     return test_app.post(
-        f"/repos/{repo_id}/datasets",
+        f"/projects/{project_id}/datasets",
         files={"file": (filename, io.BytesIO(content), "text/csv")},
         data={"description": "my dataset"},
     )
@@ -62,25 +62,25 @@ def _upload(test_app, repo_id: int, filename: str = "train.csv", content: bytes 
 # ---------------------------------------------------------------------------
 
 class TestUploadDataset:
-    """POST /repos/{repo_id}/datasets"""
+    """POST /projects/{project_id}/datasets"""
 
     def test_upload_when_valid_should_return_201_and_store_object(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
+        project = seed_project(db_session)
 
-        resp = _upload(test_app, repo.id)
+        resp = _upload(test_app, project.id)
 
         assert resp.status_code == 201
         data = resp.json()
-        assert data["repo_id"] == repo.id
+        assert data["project_id"] == project.id
         assert data["name"] == "train.csv"
         assert data["description"] == "my dataset"
         assert data["is_active"] is True
         assert data["size_bytes"] == len(b"a,b\n1,2\n")
         # sha256 of the uploaded bytes
         assert len(data["checksum"]) == 64
-        assert data["object_key"] == f"repo-{repo.id}/fixed-uuid/train.csv"
+        assert data["object_key"] == f"repo-{project.id}/fixed-uuid/train.csv"
 
         mock_storage.upload.assert_called_once()
         args = mock_storage.upload.call_args.args
@@ -90,10 +90,10 @@ class TestUploadDataset:
     def test_upload_when_previous_dataset_exists_should_deactivate_it(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
-        old_id = seed_dataset(db_session, repo.id, name="old.csv", is_active=True).id
+        project = seed_project(db_session)
+        old_id = seed_dataset(db_session, project.id, name="old.csv", is_active=True).id
 
-        resp = _upload(test_app, repo.id, filename="new.csv")
+        resp = _upload(test_app, project.id, filename="new.csv")
 
         assert resp.status_code == 201
         assert resp.json()["is_active"] is True
@@ -121,10 +121,10 @@ class TestUploadDataset:
     def test_upload_when_extension_not_allowed_should_return_415(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
+        project = seed_project(db_session)
 
         resp = test_app.post(
-            f"/repos/{repo.id}/datasets",
+            f"/projects/{project.id}/datasets",
             files={"file": ("model.exe", io.BytesIO(b"MZ"), "application/octet-stream")},
         )
 
@@ -138,14 +138,14 @@ class TestUploadDataset:
         from core.config import AppSettings, get_settings
         from main import app
 
-        repo = seed_repo(db_session)
+        project = seed_project(db_session)
         small_limit = AppSettings(database_url="sqlite://", dataset_max_size_mb=1)
         app.dependency_overrides[get_settings] = lambda: small_limit
 
         try:
             resp = _upload(
                 test_app,
-                repo.id,
+                project.id,
                 filename="big.csv",
                 content=b"x" * (2 * 1024 * 1024),
             )
@@ -159,9 +159,9 @@ class TestUploadDataset:
     def test_upload_when_empty_file_should_return_422(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
+        project = seed_project(db_session)
 
-        resp = _upload(test_app, repo.id, content=b"")
+        resp = _upload(test_app, project.id, content=b"")
 
         assert resp.status_code == 422
         mock_storage.upload.assert_not_called()
@@ -172,30 +172,30 @@ class TestUploadDataset:
 # ---------------------------------------------------------------------------
 
 class TestListDatasets:
-    """GET /repos/{repo_id}/datasets"""
+    """GET /projects/{project_id}/datasets"""
 
     def test_list_when_datasets_exist_should_return_newest_first(
         self, test_app, db_session
     ):
         from datetime import datetime, timezone
 
-        repo = seed_repo(db_session)
+        project = seed_project(db_session)
         seed_dataset(
             db_session,
-            repo.id,
+            project.id,
             name="older.csv",
             is_active=False,
             created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         seed_dataset(
             db_session,
-            repo.id,
+            project.id,
             name="newer.csv",
             is_active=True,
             created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         )
 
-        resp = test_app.get(f"/repos/{repo.id}/datasets")
+        resp = test_app.get(f"/projects/{project.id}/datasets")
 
         assert resp.status_code == 200
         names = [d["name"] for d in resp.json()]
@@ -204,9 +204,9 @@ class TestListDatasets:
     def test_list_when_repo_has_no_datasets_should_return_empty_list(
         self, test_app, db_session
     ):
-        repo = seed_repo(db_session)
+        project = seed_project(db_session)
 
-        resp = test_app.get(f"/repos/{repo.id}/datasets")
+        resp = test_app.get(f"/projects/{project.id}/datasets")
 
         assert resp.status_code == 200
         assert resp.json() == []
@@ -227,9 +227,9 @@ class TestActivateDataset:
     def test_activate_should_enable_target_and_disable_siblings(
         self, test_app, db_session
     ):
-        repo = seed_repo(db_session)
-        current_id = seed_dataset(db_session, repo.id, name="current.csv", is_active=True).id
-        target_id = seed_dataset(db_session, repo.id, name="target.csv", is_active=False).id
+        project = seed_project(db_session)
+        current_id = seed_dataset(db_session, project.id, name="current.csv", is_active=True).id
+        target_id = seed_dataset(db_session, project.id, name="target.csv", is_active=False).id
 
         resp = test_app.post(f"/datasets/{target_id}/activate")
 
@@ -244,8 +244,8 @@ class TestActivateDataset:
         assert db_session.get(Dataset, target_id).is_active is True
 
     def test_activate_should_not_touch_other_repos(self, test_app, db_session):
-        repo_a = seed_repo(db_session, github_url="https://github.com/u/a")
-        repo_b = seed_repo(db_session, github_url="https://github.com/u/b")
+        repo_a = seed_project(db_session, github_url="https://github.com/u/a")
+        repo_b = seed_project(db_session, github_url="https://github.com/u/b")
         other_id = seed_dataset(db_session, repo_b.id, name="b.csv", is_active=True).id
         target_id = seed_dataset(db_session, repo_a.id, name="a.csv", is_active=False).id
 
@@ -273,8 +273,8 @@ class TestDeleteDataset:
     def test_delete_should_remove_object_and_row(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
-        dataset = seed_dataset(db_session, repo.id)
+        project = seed_project(db_session)
+        dataset = seed_dataset(db_session, project.id)
         dataset_id, bucket, object_key = dataset.id, dataset.bucket, dataset.object_key
 
         resp = test_app.delete(f"/datasets/{dataset_id}")
@@ -293,8 +293,8 @@ class TestDeleteDataset:
     ):
         from core.storage import StorageError
 
-        repo = seed_repo(db_session)
-        dataset = seed_dataset(db_session, repo.id)
+        project = seed_project(db_session)
+        dataset = seed_dataset(db_session, project.id)
         dataset_id = dataset.id
         mock_storage.delete.side_effect = StorageError("MinIO unreachable")
 
@@ -323,8 +323,8 @@ class TestPreviewDataset:
     def test_preview_when_csv_should_return_columns_and_rows(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
-        dataset = seed_dataset(db_session, repo.id, name="train.csv")
+        project = seed_project(db_session)
+        dataset = seed_dataset(db_session, project.id, name="train.csv")
 
         def _fake_download(bucket, key, dest_path):
             with open(dest_path, "w", encoding="utf-8") as handle:
@@ -345,8 +345,8 @@ class TestPreviewDataset:
     def test_preview_when_unparsable_should_return_422(
         self, test_app, db_session, mock_storage
     ):
-        repo = seed_repo(db_session)
-        dataset = seed_dataset(db_session, repo.id, name="broken.parquet")
+        project = seed_project(db_session)
+        dataset = seed_dataset(db_session, project.id, name="broken.parquet")
 
         def _fake_download(bucket, key, dest_path):
             with open(dest_path, "wb") as handle:
@@ -365,8 +365,8 @@ class TestPreviewDataset:
     ):
         from core.storage import ObjectNotFoundError
 
-        repo = seed_repo(db_session)
-        dataset = seed_dataset(db_session, repo.id)
+        project = seed_project(db_session)
+        dataset = seed_dataset(db_session, project.id)
         mock_storage.download.side_effect = ObjectNotFoundError("gone")
 
         resp = test_app.get(f"/datasets/{dataset.id}/preview")
@@ -385,11 +385,11 @@ class TestUploadProfiling:
     def test_a_csv_upload_is_profiled(self, test_app, db_session, mock_storage):
         from tests.conftest import DEFAULT_USER_ID, seed_repo
 
-        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        project = seed_project(db_session, owner_id=DEFAULT_USER_ID)
         content = b"age,city\n31,Bogota\n44,Medellin\n29,Bogota\n"
 
         resp = test_app.post(
-            f"/repos/{repo.id}/datasets",
+            f"/projects/{project.id}/datasets",
             files={"file": ("people.csv", content, "text/csv")},
         )
 
@@ -404,9 +404,9 @@ class TestUploadProfiling:
     def test_an_upload_has_no_ingestion_run(self, test_app, db_session, mock_storage):
         from tests.conftest import DEFAULT_USER_ID, seed_repo
 
-        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        project = seed_project(db_session, owner_id=DEFAULT_USER_ID)
         resp = test_app.post(
-            f"/repos/{repo.id}/datasets",
+            f"/projects/{project.id}/datasets",
             files={"file": ("x.csv", b"a\n1\n", "text/csv")},
         )
         assert resp.json()["ingestion_run_id"] is None
@@ -415,9 +415,9 @@ class TestUploadProfiling:
         """Profiling is best-effort: the notebook may read what pandas cannot."""
         from tests.conftest import DEFAULT_USER_ID, seed_repo
 
-        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        project = seed_project(db_session, owner_id=DEFAULT_USER_ID)
         resp = test_app.post(
-            f"/repos/{repo.id}/datasets",
+            f"/projects/{project.id}/datasets",
             files={"file": ("broken.parquet", b"not really parquet", "application/octet-stream")},
         )
 

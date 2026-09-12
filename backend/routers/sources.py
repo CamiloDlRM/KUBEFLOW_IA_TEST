@@ -1,6 +1,6 @@
 """Data source endpoints: register an external system and extract from it.
 
-A source belongs to a repository, so it inherits that repository's owner and
+A source belongs to a project, so it inherits that project's owner and
 every route here is filtered the same way as the rest of the platform —
 somebody else's source answers 404, not 403, so its existence is not disclosed
 either.
@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.ingestion import IngestionError, preview, validate_sql
-from core.ownership import get_visible_repo_or_404, restrict_by_repo
+from core.ownership import get_visible_project_or_404, restrict_by_project
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
@@ -43,10 +43,10 @@ def _get_source_or_404(session: Session, source_id: int, user: User) -> DataSour
     """Return the source, or 404 when the caller may not see it."""
     source = session.get(DataSource, source_id)
     if source is not None:
-        # Visibility is inherited from the repository, so this also covers a
-        # source whose repository was transferred to somebody else.
+        # Visibility is inherited from the project, so this also covers a
+        # source whose project was transferred to somebody else.
         try:
-            get_visible_repo_or_404(session, source.repo_id, user)
+            get_visible_project_or_404(session, source.project_id, user)
         except HTTPException:
             source = None
     if source is None or not source.is_active:
@@ -62,7 +62,7 @@ async def list_sources(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[DataSourceResponse]:
-    """Return the external systems of repositories the caller can see.
+    """Return the external systems of projects the caller can see.
 
     Uploads are modelled as sources so the medallion machinery treats both
     doors alike, but they are not listed here: this endpoint backs the panel
@@ -71,12 +71,12 @@ async def list_sources(
     they are meaningful — as a stream in the layers, and as a relation gold can
     query.
     """
-    statement = restrict_by_repo(
+    statement = restrict_by_project(
         select(DataSource).where(
             DataSource.is_active == True,  # noqa: E712
             DataSource.kind != "upload",
         ),
-        DataSource.repo_id,
+        DataSource.project_id,
         session,
         current_user,
     )
@@ -103,7 +103,7 @@ async def create_source(
     which looks like success while multiplying the data. Better to refuse at
     registration than to discover it from a training set that has grown.
     """
-    get_visible_repo_or_404(session, body.repo_id, current_user)
+    get_visible_project_or_404(session, body.project_id, current_user)
 
     try:
         validate_sql(body.extraction_sql)
@@ -111,7 +111,7 @@ async def create_source(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     source = DataSource(
-        repo_id=body.repo_id,
+        project_id=body.project_id,
         name=body.name,
         kind=body.kind,
         host=body.host,
@@ -129,7 +129,7 @@ async def create_source(
     session.refresh(source)
 
     logger.info(
-        "source.created", source_id=source.id, repo_id=source.repo_id, kind=source.kind
+        "source.created", source_id=source.id, project_id=source.project_id, kind=source.kind
     )
     return DataSourceResponse.model_validate(source)
 
@@ -155,14 +155,14 @@ async def preview_source(
     Declared before ``/{source_id}`` because FastAPI matches routes in order
     and ``preview`` would otherwise be read as a source id.
 
-    The caller must own the repository, and the connection still depends on a
+    The caller must own the project, and the connection still depends on a
     credential an operator provisioned — so this grants no authority that
     registering a source and running it did not already grant.
     """
-    get_visible_repo_or_404(session, body.repo_id, current_user)
+    get_visible_project_or_404(session, body.project_id, current_user)
 
     candidate = DataSource(
-        repo_id=body.repo_id,
+        project_id=body.project_id,
         kind=body.kind,
         host=body.host,
         port=body.port,
@@ -184,7 +184,7 @@ async def preview_source(
 
     logger.info(
         "source.previewed",
-        repo_id=body.repo_id,
+        project_id=body.project_id,
         host=body.host,
         rows=len(result.rows),
         columns=len(result.columns),

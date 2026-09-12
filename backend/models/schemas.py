@@ -197,7 +197,7 @@ class Dataset(SQLModel, table=True):
     __tablename__ = "datasets"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
     name: str = SQLField(default="")  # original filename, e.g. "train.csv"
     description: str = SQLField(default="")
     bucket: str = SQLField(default="")
@@ -244,7 +244,7 @@ class DataSource(SQLModel, table=True):
     __tablename__ = "data_sources"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
     name: str = SQLField(default="", description="Human label, e.g. 'Hospital HIS'.")
     kind: str = SQLField(default="postgres")  # only postgres today
 
@@ -374,7 +374,7 @@ class GoldTable(SQLModel, table=True):
     __tablename__ = "gold_tables"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
     name: str = SQLField(default="gold")
 
     #: The definition. Empty means the project has not written one and is using
@@ -701,7 +701,7 @@ class DataSourceCreateRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    repo_id: int
+    project_id: int
     name: str = Field(..., min_length=1, max_length=120)
     kind: str = Field(default="postgres", pattern=r"^postgres$")
     host: str = Field(..., min_length=1, max_length=255)
@@ -730,7 +730,7 @@ class DataSourcePreviewRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    repo_id: int
+    project_id: int
     kind: str = Field(default="postgres", pattern=r"^postgres$")
     host: str = Field(..., min_length=1, max_length=255)
     port: int = Field(default=5432, ge=1, le=65535)
@@ -764,7 +764,7 @@ class DataSourceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    repo_id: int
+    project_id: int
     name: str
     kind: str
     host: str
@@ -855,7 +855,7 @@ class LayerSummaryResponse(BaseModel):
 class MedallionResponse(BaseModel):
     """The three layers of one project, side by side."""
 
-    repo_id: int
+    project_id: int
     bronze: LayerSummaryResponse
     silver: LayerSummaryResponse
     gold: LayerSummaryResponse
@@ -1043,7 +1043,7 @@ class DatasetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    repo_id: int
+    project_id: int
     name: str
     description: str
     bucket: str
