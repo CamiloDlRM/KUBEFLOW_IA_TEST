@@ -19,6 +19,8 @@ Revision ID: 0014
 Revises: 0013
 Create Date: 2026-09-12
 """
+from datetime import datetime, timezone
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -31,6 +33,23 @@ depends_on = None
 def _columns(table: str) -> set[str]:
     bind = op.get_bind()
     return {c["name"] for c in sa.inspect(bind).get_columns(table)}
+
+
+def _as_datetime(value: object) -> datetime:
+    """Return a timestamp read back from any driver as a datetime.
+
+    Postgres hands back a ``datetime``; SQLite hands back the text it stored.
+    The project inherits its repository's creation time so a migrated list
+    sorts the way its owner remembers, and that is worth one coercion.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
 
 
 def _name_from_url(url: str) -> str:
@@ -65,11 +84,29 @@ def upgrade() -> None:
         op.create_index(
             "ix_repositories_project_id", "repositories", ["project_id"]
         )
-        op.create_foreign_key(
-            "fk_repositories_project_id", "repositories", "projects", ["project_id"], ["id"]
-        )
+        # SQLite cannot ALTER a table to add a constraint — it would need the
+        # copy-and-move dance, and rebuilding the repositories table to gain a
+        # constraint SQLite does not enforce unless asked is a poor trade. The
+        # column and its index are what the application reads; the declared
+        # relationship is enforced where enforcement happens.
+        if bind.dialect.name == "postgresql":
+            op.create_foreign_key(
+                "fk_repositories_project_id",
+                "repositories",
+                "projects",
+                ["project_id"],
+                ["id"],
+            )
 
     # Adopt every existing repository into a project of its own.
+    #
+    # Reflected rather than addressed with raw SQL: the new row's id is needed
+    # to point the repository at it, and only an insert() construct over a
+    # table that knows its primary key can report one. A text() INSERT cannot,
+    # whatever the database — which is how the first version of this got as far
+    # as a deployment before failing.
+    projects = sa.Table("projects", sa.MetaData(), autoload_with=bind)
+
     rows = bind.execute(
         sa.text(
             "SELECT id, github_url, owner_id, created_at FROM repositories "
@@ -78,26 +115,17 @@ def upgrade() -> None:
     ).fetchall()
     for repo_id, github_url, owner_id, created_at in rows:
         result = bind.execute(
-            sa.text(
-                "INSERT INTO projects (name, description, owner_id, created_at, is_active) "
-                "VALUES (:name, :description, :owner_id, :created_at, :is_active)"
-            ),
-            {
-                "name": _name_from_url(github_url),
-                "description": "",
-                "owner_id": owner_id,
-                "created_at": created_at,
-                "is_active": True,
-            },
+            projects.insert().values(
+                name=_name_from_url(github_url),
+                description="",
+                owner_id=owner_id,
+                created_at=_as_datetime(created_at),
+                is_active=True,
+            )
         )
-        project_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
-        if project_id is None:
-            project_id = bind.execute(
-                sa.text("SELECT max(id) FROM projects")
-            ).scalar()
         bind.execute(
             sa.text("UPDATE repositories SET project_id = :pid WHERE id = :rid"),
-            {"pid": project_id, "rid": repo_id},
+            {"pid": result.inserted_primary_key[0], "rid": repo_id},
         )
 
 

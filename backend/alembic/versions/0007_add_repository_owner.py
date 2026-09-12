@@ -9,6 +9,8 @@ Revision ID: 0007
 Revises: 0006
 Create Date: 2026-09-10
 """
+from typing import Any
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -25,14 +27,19 @@ def _column_exists(table: str, column: str) -> bool:
 
 def upgrade() -> None:
     if not _column_exists("repositories", "owner_id"):
+        # The foreign key is added only where a database can add one to an
+        # existing table. SQLite cannot ALTER in a constraint — it needs the
+        # table rebuilt — and does not enforce foreign keys unless asked to,
+        # so declaring one there buys nothing and made the whole migration
+        # chain impossible to run outside Postgres. Which is why, for a long
+        # time, nothing ran it: see tests/test_migrations.py.
+        constraints: list[Any] = []
+        if op.get_bind().dialect.name == "postgresql":
+            constraints.append(sa.ForeignKey("users.id"))
+
         op.add_column(
             "repositories",
-            sa.Column(
-                "owner_id",
-                sa.Integer,
-                sa.ForeignKey("users.id"),
-                nullable=True,
-            ),
+            sa.Column("owner_id", sa.Integer, *constraints, nullable=True),
         )
         op.create_index(
             "ix_repositories_owner_id", "repositories", ["owner_id"], unique=False
