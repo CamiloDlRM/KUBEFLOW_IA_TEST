@@ -386,8 +386,16 @@ function CleaningReport({ report }: { report: QualityReport }) {
               {rule.title}
               {rule.cells_changed > 0 && (
                 <span className="ml-1 text-slate-500">
-                  — {rule.cells_changed.toLocaleString()}{' '}
-                  {rule.rule === 'normalise_column_names' ? 'columns' : 'values'}
+                  — {rule.cells_changed.toLocaleString()} values
+                </span>
+              )}
+              {rule.cells_changed === 0 && rule.columns.length > 0 && (
+                // A rule can act on a column without changing a value: typing
+                // one, or renaming it. Reported as columns so the headline
+                // count stays a count of corrections.
+                <span className="ml-1 text-slate-500">
+                  — {rule.columns.length.toLocaleString()}{' '}
+                  {rule.columns.length === 1 ? 'column' : 'columns'}
                 </span>
               )}
               {rule.rows_removed > 0 && (

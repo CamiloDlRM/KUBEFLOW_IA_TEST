@@ -131,7 +131,20 @@ class RuleOutcome:
 
     @property
     def changed(self) -> bool:
-        return bool(self.cells_changed or self.rows_removed or self.columns_removed or self.flagged)
+        """Whether this rule did anything worth showing.
+
+        ``columns`` counts because a rule can act on a column without changing
+        a cell: giving a column a type is a change to the data's shape, and
+        reporting it as sixty thousand changed values buried the two thousand
+        that were genuinely corrected.
+        """
+        return bool(
+            self.cells_changed
+            or self.rows_removed
+            or self.columns_removed
+            or self.flagged
+            or self.columns
+        )
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -235,14 +248,16 @@ def normalise_column_names(table: Table, report: CleaningReport) -> None:
     for original, target in zip(table.columns, targets):
         if target != original:
             report.renamed[original] = target
-            outcome.cells_changed += 1
+            # Counted as a column, not as a changed value: renaming a header
+            # touches no data, and adding it to the cell total would inflate
+            # the one number a reader uses to judge how much was corrected.
             outcome.columns.append(target)
             outcome.record(original, original, target)
     table.columns = targets
     table.data = rebuilt
 
-    if outcome.cells_changed:
-        outcome.note = f"{outcome.cells_changed} column name(s) rewritten"
+    if outcome.columns:
+        outcome.note = f"{len(outcome.columns)} column name(s) rewritten"
 
 
 _WHITESPACE = re.compile(r"\s+")
@@ -325,6 +340,28 @@ def drop_empty_columns(table: Table, report: CleaningReport) -> None:
         outcome.note = f"no row carried a value in {', '.join(outcome.columns)}"
 
 
+#: Columns whose values identify rather than measure, recognised by name and
+#: never type-cast.
+#:
+#: The decisive argument is not tidiness, it is that silver *accumulates*. A
+#: code column is inferred per extraction: a slice whose ICD-10 codes all happen
+#: to look numeric casts to integer, and the next slice containing ``E11.9``
+#: stays text. Silver would then hold the same column as two different types in
+#: two files, and the gold union has to reconcile them — a schema that changes
+#: depending on which rows arrived that day.
+#:
+#: Leading zeros and meaningless arithmetic are the familiar reasons, and they
+#: apply too: ``80146002 + 1`` is not a procedure.
+#:
+#: Surrogate keys (``id``, ``*_id``) are deliberately absent. A database's own
+#: integer primary key is always digits, so it is subject to neither failure
+#: mode, and turning it into text would make every join downstream a string
+#: comparison for no gain.
+_IDENTIFIER_COLUMNS: Final[re.Pattern] = re.compile(
+    r"(^|_)(code|codigo|cie10|icd10|snomed|ssn|nss|dni|nif|nit|mrn|nhs|zip|"
+    r"postcode|postal_code|phone|telefono|account|cuenta|iban)$"
+)
+
 _INTEGER = re.compile(r"^[+-]?\d+$")
 _DECIMAL = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -358,18 +395,24 @@ def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str
     Integers are tried before decimals so a column of counts does not arrive
     downstream as a float, which is how a patient ends up with 3.0 admissions.
 
-    ``keep_as_text`` names columns that must not be cast whatever they look
-    like. It exists for one specific and instructive failure: a SNOMED code
-    column that happens to hold only digits infers as an integer, and the
-    coding step then writes a *string* code into it, producing a column of
-    mixed types that Parquet cannot store. The deeper reason is the same one
-    that keeps a postcode as text — a code identifies, it does not measure, and
-    ``80146002 + 1`` is not a procedure.
+    Identifier columns are never cast — those named by ``keep_as_text``, and
+    those recognised by name (see :data:`_IDENTIFIER_COLUMNS`). The caller's
+    list exists for one specific and instructive failure: a code column that
+    happens to hold only digits infers as an integer, and the coding step then
+    writes a *string* code into it, producing a column of mixed types that
+    Parquet cannot store. The name-based list exists because that column is an
+    identifier whether or not anybody configured coding for it.
+
+    The count reported is *columns typed*, not cells converted. Rendering
+    ``"12261"`` as ``12261`` is not a correction, and counting it as one buried
+    the two thousand values that genuinely were corrected under sixty thousand
+    that were merely read properly. What each column became is in
+    ``report.types``.
     """
     outcome = report.add(RuleOutcome("structural", "cast_types", "Types inferred and applied"))
     protected = {_snake(name) for name in keep_as_text if name}
     for name in table.columns:
-        if name in protected:
+        if name in protected or _IDENTIFIER_COLUMNS.search(name):
             report.types[name] = "string"
             continue
         values = table.data[name]
@@ -387,7 +430,6 @@ def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str
             continue
 
         mapping = dict(zip(present, converted))
-        changed = 0
         for index, value in enumerate(values):
             if value is None or value == "":
                 values[index] = None
@@ -395,12 +437,15 @@ def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str
             new = mapping[value]
             if new != value:
                 outcome.record(name, value, _displayable(new))
-                changed += 1
             values[index] = new
         outcome.columns.append(name)
-        outcome.cells_changed += changed
+
     if outcome.columns:
-        outcome.note = "a type is claimed only when every value in the column supports it"
+        outcome.note = (
+            f"{len(outcome.columns)} column(s) typed: "
+            + ", ".join(f"{name} → {report.types[name]}" for name in outcome.columns)
+            + ". A type is claimed only when every value in the column supports it."
+        )
 
 
 def _best_cast(present: list[str]) -> tuple[str, list[Any]]:

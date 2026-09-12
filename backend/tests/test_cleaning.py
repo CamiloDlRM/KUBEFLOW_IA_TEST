@@ -131,6 +131,41 @@ def test_one_unparseable_value_keeps_the_whole_column_as_text():
     assert report.types["dose"] == "string"
 
 
+def test_a_code_column_stays_text_however_numeric_this_extraction_looks():
+    """Silver accumulates, so the type has to be stable across extractions.
+
+    A slice whose ICD-10 codes all happen to be digits would cast to integer,
+    and the next slice containing "E11.9" would not — the same column stored as
+    two types in one layer.
+    """
+    report, tbl = run(cast_types, table(encounter_code=["410620009", "162673000"]))
+    assert report.types["encounter_code"] == "string"
+    assert tbl.data["encounter_code"] == ["410620009", "162673000"]
+
+
+def test_an_alphanumeric_code_in_a_later_slice_gets_the_same_type():
+    report, _ = run(cast_types, table(encounter_code=["410620009", "E11.9"]))
+    assert report.types["encounter_code"] == "string"
+
+
+def test_a_surrogate_key_is_still_an_integer():
+    """It is always digits, so it is subject to neither failure mode — and
+    making it text would turn every join downstream into a string compare."""
+    report, _ = run(cast_types, table(id=["1", "2", "3"], patient_id=["10", "11", "12"]))
+    assert report.types["id"] == "integer"
+    assert report.types["patient_id"] == "integer"
+
+
+def test_the_cast_reports_columns_typed_not_values_converted():
+    """Rendering "12261" as 12261 is not a correction, and counting it as one
+    buries the values that genuinely were corrected."""
+    report, _ = run(cast_types, table(n=["1", "2", "3"]))
+    outcome = outcome_of(report, "cast_types")
+    assert outcome.cells_changed == 0
+    assert outcome.columns == ["n"]
+    assert "n → integer" in outcome.note
+
+
 def test_leading_zeros_are_part_of_the_value_so_the_column_stays_text():
     report, tbl = run(cast_types, table(postcode=["05001", "11001"]))
     assert tbl.data["postcode"] == ["05001", "11001"]
