@@ -49,11 +49,16 @@ def seed_source(db_session, repo_id: int, name: str = "Hospital HIS") -> DataSou
     return source
 
 
-def seed_run(db_session, source_id: int, *, extracted: int, kept: int) -> IngestionRun:
+def seed_run(
+    db_session, source_id: int, *, extracted: int, kept: int, landed: bool = True
+) -> IngestionRun:
+    key = f"project-x/source-{source_id}/run-{extracted}.parquet" if landed else ""
     run = IngestionRun(
         source_id=source_id,
         status="success",
         rows_extracted=extracted,
+        bronze_key=key,
+        silver_key=key,
         quality_report={"rows_in": extracted, "rows_out": kept, "cells_changed": 12},
     )
     db_session.add(run)
@@ -177,9 +182,24 @@ class TestOverview:
         response = test_app.get(f"/repos/{own_repo.id}/medallion")
 
         assert response.status_code == 200
-        # With no report to read, silver falls back to the extracted count
-        # rather than reporting zero rows in a layer that holds 100.
+        # It landed in the layer, so its rows count; with no report to read,
+        # silver falls back to the extracted number rather than to zero.
         assert response.json()["silver"]["rows"] == 100
+
+    def test_a_run_that_never_landed_in_a_layer_is_not_counted_in_it(
+        self, test_app, db_session, own_repo, storage_patched
+    ):
+        """Runs from before the medallion wrote their output to the datasets
+        bucket. Counting them here would make the card claim more rows than its
+        own file list can account for — which is what production did."""
+        source = seed_source(db_session, own_repo.id)
+        seed_run(db_session, source.id, extracted=15_884, kept=15_880, landed=False)
+        seed_run(db_session, source.id, extracted=100, kept=97)
+
+        body = test_app.get(f"/repos/{own_repo.id}/medallion").json()
+
+        assert body["bronze"]["rows"] == 100
+        assert body["silver"]["rows"] == 97
 
     def test_a_deactivated_source_still_reports_the_objects_it_left_behind(
         self, test_app, db_session, own_repo, storage_patched
