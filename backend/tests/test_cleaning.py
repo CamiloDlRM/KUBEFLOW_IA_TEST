@@ -373,14 +373,14 @@ def full_table() -> Table:
 
 def test_the_standard_removes_only_the_duplicate_row():
     tbl = full_table()
-    report = clean(tbl)
+    report, _ = clean(tbl)
     assert report.rows_in == 4
     assert report.rows_out == 3
 
 
 def test_the_standard_drops_only_the_empty_column():
     tbl = full_table()
-    report = clean(tbl)
+    report, _ = clean(tbl)
     assert "notes" not in tbl.columns
     assert report.columns_in - report.columns_out == 1
 
@@ -394,7 +394,7 @@ def test_the_standard_leaves_the_flagged_row_in_the_data():
 
 def test_the_standard_keeps_an_identifier_as_text():
     tbl = full_table()
-    report = clean(tbl)
+    report, _ = clean(tbl)
     assert report.types["patient_id"] == "string"
     assert tbl.data["patient_id"] == ["001", "002", "003"]
 
@@ -407,7 +407,7 @@ def test_the_standard_resolves_the_spanish_sex_coding():
 
 def test_the_report_states_every_change_it_made():
     tbl = full_table()
-    summary = clean(tbl).summary()
+    summary = clean(tbl)[0].summary()
     rules = {entry["rule"] for entry in summary["rules"]}
     assert {"normalise_column_names", "trim_whitespace", "sentinel_nulls", "deduplicate_rows"} <= rules
     assert summary["cells_changed"] > 0
@@ -416,26 +416,26 @@ def test_the_report_states_every_change_it_made():
 
 def test_rules_that_changed_nothing_are_not_listed():
     """Twenty 'no change' lines bury the three that matter."""
-    summary = clean(table(a=[1, 2, 3])).summary()
+    summary = clean(table(a=[1, 2, 3]))[0].summary()
     assert all(entry["rule"] != "standardise_sex" for entry in summary["rules"])
     assert summary["rules_applied"] > len(summary["rules"])
 
 
 def test_every_change_carries_an_example():
-    summary = clean(full_table()).summary()
+    summary = clean(full_table())[0].summary()
     changed = [entry for entry in summary["rules"] if entry["cells_changed"]]
     assert changed
     assert all(entry["examples"] for entry in changed)
 
 
 def test_cleaning_an_empty_table_is_not_an_error():
-    report = clean(table(a=[], b=[]))
+    report, _ = clean(table(a=[], b=[]))
     assert report.rows_in == 0 and report.rows_out == 0
 
 
 def test_order_matters_a_null_placeholder_does_not_block_a_numeric_cast():
     """If sentinels were resolved after casting, this column would stay text."""
     tbl = table(age=["40", "N/A", "55"])
-    report = clean(tbl)
+    report, _ = clean(tbl)
     assert report.types["age"] == "integer"
     assert tbl.data["age"] == [40, None, 55]

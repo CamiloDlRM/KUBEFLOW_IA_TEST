@@ -156,6 +156,67 @@ def test_two_repositories_get_a_project_each(migrated, monkeypatch):
     assert distinct == 2
 
 
+def test_a_source_follows_its_repository_into_the_project(migrated, monkeypatch):
+    """0015 moves the data factory. A source left pointing at a repository id
+    that is now a project id would silently belong to the wrong project — or to
+    none, and vanish."""
+    config, engine, url = migrated
+    _upgrade(config, url, "0013", monkeypatch)
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO users (id, username, hashed_password, role, is_active, created_at) "
+                "VALUES (7, 'camilo', 'x', 'admin', 1, :now)"
+            ),
+            {"now": now},
+        )
+        # Two repositories, so a source that simply kept its old number would
+        # land on the wrong project rather than coincidentally on the right one.
+        for repo_id in (1, 2):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO repositories (id, owner_id, github_url, branch, "
+                    "notebook_path, created_at, is_active) VALUES "
+                    "(:id, 7, :url, 'main', 'nb.ipynb', :now, 1)"
+                ),
+                {"id": repo_id, "url": f"https://github.com/a/r{repo_id}.git", "now": now},
+            )
+        connection.execute(
+            sa.text(
+                "INSERT INTO data_sources (id, repo_id, name, kind, host, port, "
+                "database, username, password_env, extraction_sql, watermark_column, "
+                "watermark_value, created_at, is_active) VALUES "
+                "(1, 2, 'Hospital', 'postgres', 'h', 5432, 'd', 'u', 'E', 'sql', 'w', '', :now, 1)"
+            ),
+            {"now": now},
+        )
+
+    _upgrade(config, url, "head", monkeypatch)
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            sa.text(
+                "SELECT s.project_id, r.project_id FROM data_sources s "
+                "JOIN repositories r ON r.id = 2 WHERE s.id = 1"
+            )
+        ).fetchone()
+
+    assert row[0] is not None, "the source lost its owner"
+    assert row[0] == row[1], "the source must land on its own repository's project"
+
+
+def test_the_old_column_is_gone_so_it_cannot_diverge(migrated, monkeypatch):
+    config, engine, url = migrated
+    _upgrade(config, url, "head", monkeypatch)
+
+    for table in ("data_sources", "datasets", "gold_tables"):
+        columns = _columns(engine, table)
+        assert "project_id" in columns
+        assert "repo_id" not in columns, f"{table} kept a second answer to what it belongs to"
+
+
 def test_running_the_upgrade_twice_changes_nothing(migrated, monkeypatch):
     """Both containers run `alembic upgrade head` on boot, and one restarts."""
     config, engine, url = migrated

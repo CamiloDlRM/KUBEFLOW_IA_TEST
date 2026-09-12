@@ -604,13 +604,18 @@ def run_pipeline(
             # directory and its local path is injected as DATASET_PATH, so the
             # notebook never handles S3 credentials.
             dataset_path: str | None = None
-            _phase("dataset", "running", "Looking up the repository's active dataset...")
+            _phase("dataset", "running", "Looking up the project's active dataset...")
 
             with Session(engine) as session:
+                # The dataset belongs to the repository's *project*: the code
+                # and the data are separate things that a project brings
+                # together, so the notebook is handed whatever its project
+                # currently publishes.
+                repo_row = session.get(Repository, repo_id)
                 active_dataset = session.exec(
                     select(Dataset)
                     .where(
-                        Dataset.repo_id == repo_id,
+                        Dataset.project_id == (repo_row.project_id if repo_row else -1),
                         Dataset.is_active == True,  # noqa: E712
                     )
                     .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
@@ -993,7 +998,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             # they must still be recoverable from storage.
             landed = _through_the_layers(
                 engine,
-                repo_id=snapshot.repo_id,
+                project_id=snapshot.project_id,
                 source_id=source_id,
                 run_id=run_id,
                 bronze_path=result.path,
@@ -1017,7 +1022,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
 
         with Session(engine) as session:
             dataset = Dataset(
-                repo_id=snapshot.repo_id,
+                project_id=snapshot.project_id,
                 name=filename,
                 description=(
                     f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after "
@@ -1044,7 +1049,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             # One active dataset per repository, same rule as an upload.
             for other in session.exec(
                 select(Dataset).where(
-                    Dataset.repo_id == snapshot.repo_id,
+                    Dataset.project_id == snapshot.project_id,
                     Dataset.is_active == True,  # noqa: E712
                 )
             ).all():
@@ -1107,7 +1112,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
 def _through_the_layers(
     engine: Any,
     *,
-    repo_id: int,
+    project_id: int,
     source_id: int,
     run_id: str,
     bronze_path: Path,
@@ -1129,7 +1134,7 @@ def _through_the_layers(
     """
     from core import medallion
 
-    layer_key = medallion.bronze_key(repo_id, source_id, run_id)
+    layer_key = medallion.bronze_key(project_id, source_id, run_id)
     medallion.upload_parquet("bronze", layer_key, bronze_path)
     log.info("layers.bronze_written", key=layer_key)
 
@@ -1156,7 +1161,7 @@ def _through_the_layers(
     # just arrived. Without this, landing a slice would register a dataset
     # containing only the newest rows and a model retrained on it would forget
     # everything before them.
-    gold = _rebuild_gold(engine, repo_id, workdir, log)
+    gold = _rebuild_gold(engine, project_id, workdir, log)
 
     return {
         "layer_key": layer_key,
@@ -1206,11 +1211,11 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
             dataset = session.get(Dataset, dataset_id)
             if not dataset:
                 raise RuntimeError(f"dataset {dataset_id} no longer exists")
-            repo_id = dataset.repo_id
+            project_id = dataset.project_id
             filename = dataset.name
             bucket, object_key = dataset.bucket, dataset.object_key
 
-            source = _upload_source(session, repo_id, filename)
+            source = _upload_source(session, project_id, filename)
             source_id = source.id
             run = IngestionRun(source_id=source_id, status="running", started_at=started)
             session.add(run)
@@ -1230,7 +1235,7 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
 
             landed = _through_the_layers(
                 engine,
-                repo_id=repo_id,
+                project_id=project_id,
                 source_id=source_id,
                 run_id=run_id,
                 bronze_path=bronze_path,
@@ -1249,7 +1254,7 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
         stamp = f"{started:%Y%m%dT%H%M%S}"
         with Session(engine) as session:
             trained_on = Dataset(
-                repo_id=repo_id,
+                project_id=project_id,
                 name=f"{_slug(gold['name']) or 'gold'}-v{gold['version']}-{stamp}.parquet",
                 description=(
                     f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after "
@@ -1269,7 +1274,7 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
             )
             for other in session.exec(
                 select(Dataset).where(
-                    Dataset.repo_id == repo_id,
+                    Dataset.project_id == project_id,
                     Dataset.is_active == True,  # noqa: E712
                 )
             ).all():
@@ -1310,7 +1315,7 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
 
 
-def _upload_source(session: Any, repo_id: int, filename: str) -> Any:
+def _upload_source(session: Any, project_id: int, filename: str) -> Any:
     """Find or create the pseudo-source that uploads of ``filename`` land under.
 
     Uploads are modelled as a ``DataSource`` of kind ``upload`` so that every
@@ -1332,7 +1337,7 @@ def _upload_source(session: Any, repo_id: int, filename: str) -> Any:
     stem = Path(filename).stem or "upload"
     existing = session.exec(
         select(DataSource).where(
-            DataSource.repo_id == repo_id,
+            DataSource.project_id == project_id,
             DataSource.kind == "upload",
             DataSource.name == stem,
         )
@@ -1340,7 +1345,7 @@ def _upload_source(session: Any, repo_id: int, filename: str) -> Any:
     if existing:
         return existing
 
-    source = DataSource(repo_id=repo_id, name=stem, kind="upload", is_active=True)
+    source = DataSource(project_id=project_id, name=stem, kind="upload", is_active=True)
     session.add(source)
     session.commit()
     session.refresh(source)
@@ -1352,7 +1357,7 @@ def _upload_source(session: Any, repo_id: int, filename: str) -> Any:
     name="tasks.celery_tasks.rebuild_gold",
     max_retries=0,
 )
-def rebuild_gold(self: Any, repo_id: int) -> dict[str, Any]:
+def rebuild_gold(self: Any, project_id: int) -> dict[str, Any]:
     """Rebuild a project's gold table against its current definition.
 
     Gold is a function of two things: the silver layer and the definition.
@@ -1368,18 +1373,18 @@ def rebuild_gold(self: Any, repo_id: int) -> dict[str, Any]:
 
     from models.schemas import GoldTable
 
-    log = logger.bind(repo_id=repo_id)
+    log = logger.bind(project_id=project_id)
     engine = create_engine(settings.database_url, echo=False)
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            gold = _rebuild_gold(engine, repo_id, Path(tmpdir), log)
+            gold = _rebuild_gold(engine, project_id, Path(tmpdir), log)
         return {"status": "success", "version": gold["version"], "rows": gold["rows"]}
     except Exception as exc:  # noqa: BLE001 — recorded on the table
         log.error("gold.rebuild_failed", error=str(exc))
         with Session(engine) as session:
             table = session.exec(
-                select(GoldTable).where(GoldTable.repo_id == repo_id)
+                select(GoldTable).where(GoldTable.project_id == project_id)
             ).first()
             if table:
                 table.build_error = str(exc)[:2000]
@@ -1403,7 +1408,7 @@ def _relation_name(source_id: int, source_name: str) -> str:
     return f"{slug}_{source_id}" if slug else f"source_{source_id}"
 
 
-def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[str, Any]:
+def _rebuild_gold(engine: Any, project_id: int, workdir: Path, log: Any) -> dict[str, Any]:
     """Rebuild the project's gold table from the whole of its silver.
 
     Every silver object of every source in the project is fetched and exposed
@@ -1426,15 +1431,15 @@ def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[st
 
     with Session(engine) as session:
         sources = session.exec(
-            select(DataSource).where(DataSource.repo_id == repo_id)
+            select(DataSource).where(DataSource.project_id == project_id)
         ).all()
         names = {source.id: _relation_name(source.id or 0, source.name) for source in sources}
 
         table = session.exec(
-            select(GoldTable).where(GoldTable.repo_id == repo_id)
+            select(GoldTable).where(GoldTable.project_id == project_id)
         ).first()
         if table is None:
-            table = GoldTable(repo_id=repo_id)
+            table = GoldTable(project_id=project_id)
             session.add(table)
             session.commit()
             session.refresh(table)
@@ -1450,7 +1455,7 @@ def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[st
         if source_id is None:
             continue
         objects = medallion.list_layer(
-            "silver", medallion.stream_prefix(repo_id, source_id)
+            "silver", medallion.stream_prefix(project_id, source_id)
         )
         paths: list[Path] = []
         for index, item in enumerate(objects):
@@ -1464,7 +1469,7 @@ def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[st
     destination = workdir / "gold.parquet"
     build, _ = gold_module.build(relations, sql, destination)
 
-    object_key = medallion.gold_key(repo_id, table_name, next_version)
+    object_key = medallion.gold_key(project_id, table_name, next_version)
     bucket = medallion.upload_parquet("gold", object_key, destination)
 
     with Session(engine) as session:
@@ -1483,7 +1488,7 @@ def _rebuild_gold(engine: Any, repo_id: int, workdir: Path, log: Any) -> dict[st
 
     log.info(
         "gold.rebuilt",
-        repo_id=repo_id,
+        project_id=project_id,
         version=next_version,
         rows=build.rows,
         relations=build.relations,

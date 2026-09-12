@@ -1,7 +1,7 @@
 """Training dataset endpoints (MinIO-backed).
 
 Users upload a dataset from the UI; the backend stores the bytes in MinIO and
-keeps the metadata in the ``datasets`` table. A repository has at most one
+keeps the metadata in the ``datasets`` table. A project has at most one
 *active* dataset, which the Celery worker downloads and injects into the
 notebook as the ``DATASET_PATH`` papermill parameter.
 """
@@ -18,7 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
-from core.ownership import can_access_repo, get_visible_repo_or_404
+from core.ownership import can_access_project, get_visible_project_or_404
 from core.security import get_current_user
 from core.storage import (
     ObjectNotFoundError,
@@ -34,7 +34,7 @@ from models.schemas import (
     DatasetPreviewResponse,
     DatasetResponse,
     MessageResponse,
-    Repository,
+    Project,
     User,
 )
 
@@ -67,20 +67,20 @@ def _file_extension(filename: str) -> str:
     return os.path.splitext(filename or "")[1].lower()
 
 
-def _get_repo_or_404(session: Session, repo_id: int, user: User) -> Repository:
-    """Return the repository if ``user`` may see it, or raise a 404.
+def _get_project_or_404(session: Session, project_id: int, user: User) -> Project:
+    """Return the project if ``user`` may see it, or raise a 404.
 
-    A repository owned by another member is indistinguishable from a missing
-    one (see ``core.ownership`` for why this is a 404 and not a 403).
+    A project owned by another member is indistinguishable from a missing one
+    (see ``core.ownership`` for why this is a 404 and not a 403).
     """
-    return get_visible_repo_or_404(session, repo_id, user)
+    return get_visible_project_or_404(session, project_id, user)
 
 
 def _get_dataset_or_404(session: Session, dataset_id: int, user: User) -> Dataset:
-    """Return the dataset if its repository is visible to ``user``, else 404.
+    """Return the dataset if its project is visible to ``user``, else 404.
 
-    Datasets inherit their visibility from the repository they belong to, so a
-    dataset of somebody else's repository is reported as non-existent.
+    Datasets inherit their visibility from the project they belong to, so a
+    dataset of somebody else's project is reported as non-existent.
     """
     dataset = session.get(Dataset, dataset_id)
     if not dataset:
@@ -89,12 +89,12 @@ def _get_dataset_or_404(session: Session, dataset_id: int, user: User) -> Datase
             detail=f"Dataset {dataset_id} not found.",
         )
 
-    repo = session.get(Repository, dataset.repo_id)
-    if not can_access_repo(repo, user):
+    project = session.get(Project, dataset.project_id)
+    if not can_access_project(project, user):
         logger.info(
             "ownership.dataset_access_denied",
             dataset_id=dataset_id,
-            repo_id=dataset.repo_id,
+            project_id=dataset.project_id,
             user_id=user.id,
         )
         raise HTTPException(
@@ -104,11 +104,11 @@ def _get_dataset_or_404(session: Session, dataset_id: int, user: User) -> Datase
     return dataset
 
 
-def _deactivate_others(session: Session, repo_id: int, keep_id: int | None) -> None:
-    """Mark every dataset of ``repo_id`` inactive except ``keep_id``."""
+def _deactivate_others(session: Session, project_id: int, keep_id: int | None) -> None:
+    """Mark every dataset of ``project_id`` inactive except ``keep_id``."""
     others = session.exec(
         select(Dataset).where(
-            Dataset.repo_id == repo_id,
+            Dataset.project_id == project_id,
             Dataset.is_active == True,  # noqa: E712 — SQLModel needs the operator
         )
     ).all()
@@ -196,13 +196,13 @@ def _read_dataframe(path: str, extension: str) -> Any:
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/repos/{repo_id}/datasets",
+    "/projects/{project_id}/datasets",
     response_model=DatasetResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Upload a training dataset for a repository",
+    summary="Upload a training dataset for a project",
 )
 async def upload_dataset(
-    repo_id: int,
+    project_id: int,
     settings: Annotated[AppSettings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -217,15 +217,15 @@ async def upload_dataset(
     admin) may upload to it.
 
     Args:
-        repo_id: Owning repository ID.
+        project_id: Owning project ID.
         file: The multipart upload.
         description: Optional free-text description.
 
     Raises:
-        HTTPException: 404 unknown or non-visible repo, 413 too large,
+        HTTPException: 404 unknown or non-visible project, 413 too large,
             415 bad extension, 422 empty file, 502 if MinIO rejects the upload.
     """
-    _get_repo_or_404(session, repo_id, current_user)
+    _get_project_or_404(session, project_id, current_user)
 
     filename = file.filename or ""
     extension = _file_extension(filename)
@@ -239,7 +239,7 @@ async def upload_dataset(
         )
 
     bucket = settings.minio_bucket_datasets
-    object_key = build_dataset_key(repo_id, filename)
+    object_key = build_dataset_key(project_id, filename)
     content_type = file.content_type or ALLOWED_EXTENSIONS[extension]
 
     max_bytes = settings.dataset_max_size_mb * 1024 * 1024
@@ -256,7 +256,7 @@ async def upload_dataset(
             if size_bytes > max_bytes:
                 logger.warning(
                     "dataset.upload_too_large",
-                    repo_id=repo_id,
+                    project_id=project_id,
                     filename=filename,
                     limit_mb=settings.dataset_max_size_mb,
                 )
@@ -292,7 +292,7 @@ async def upload_dataset(
                 upload_fileobj, bucket, object_key, buffer, content_type
             )
         except StorageError as exc:
-            logger.error("dataset.upload_failed", repo_id=repo_id, error=str(exc))
+            logger.error("dataset.upload_failed", project_id=project_id, error=str(exc))
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to store the dataset in object storage: {exc}",
@@ -302,7 +302,7 @@ async def upload_dataset(
         await file.close()
 
     dataset = Dataset(
-        repo_id=repo_id,
+        project_id=project_id,
         name=os.path.basename(filename.replace("\\", "/")),
         description=description or "",
         bucket=bucket,
@@ -316,7 +316,7 @@ async def upload_dataset(
         profile=profile,
         profiled_rows=profiled_rows,
     )
-    _deactivate_others(session, repo_id, keep_id=None)
+    _deactivate_others(session, project_id, keep_id=None)
     session.add(dataset)
     session.commit()
     session.refresh(dataset)
@@ -345,7 +345,7 @@ async def upload_dataset(
     logger.info(
         "dataset.uploaded",
         dataset_id=dataset.id,
-        repo_id=repo_id,
+        project_id=project_id,
         object_key=object_key,
         size_bytes=size_bytes,
     )
@@ -353,12 +353,12 @@ async def upload_dataset(
 
 
 @router.get(
-    "/repos/{repo_id}/datasets",
+    "/projects/{project_id}/datasets",
     response_model=list[DatasetResponse],
     summary="List the datasets of a repository",
 )
 async def list_datasets(
-    repo_id: int,
+    project_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[DatasetResponse]:
@@ -366,11 +366,11 @@ async def list_datasets(
 
     Restricted to repositories the caller owns (admins see any repository).
     """
-    _get_repo_or_404(session, repo_id, current_user)
+    _get_project_or_404(session, project_id, current_user)
 
     datasets = session.exec(
         select(Dataset)
-        .where(Dataset.repo_id == repo_id)
+        .where(Dataset.project_id == project_id)
         .order_by(Dataset.created_at.desc(), Dataset.id.desc())  # type: ignore[union-attr]
     ).all()
     return [DatasetResponse.model_validate(d) for d in datasets]
@@ -386,20 +386,20 @@ async def activate_dataset(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> DatasetResponse:
-    """Activate ``dataset_id`` and deactivate every other dataset of its repo.
+    """Activate ``dataset_id`` and deactivate every other dataset of its project.
 
     Restricted to datasets of repositories the caller can see.
     """
     dataset = _get_dataset_or_404(session, dataset_id, current_user)
 
-    _deactivate_others(session, dataset.repo_id, keep_id=dataset.id)
+    _deactivate_others(session, dataset.project_id, keep_id=dataset.id)
     dataset.is_active = True
     session.add(dataset)
     session.commit()
     session.refresh(dataset)
 
     logger.info(
-        "dataset.activated", dataset_id=dataset_id, repo_id=dataset.repo_id
+        "dataset.activated", dataset_id=dataset_id, project_id=dataset.project_id
     )
     return DatasetResponse.model_validate(dataset)
 

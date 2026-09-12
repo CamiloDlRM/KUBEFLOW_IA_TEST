@@ -23,7 +23,7 @@ vi.mock('../../src/api/client', () => ({
 
 const SOURCE: DataSource = {
   id: 1,
-  repo_id: 7,
+  project_id: 7,
   name: 'Hospital HIS',
   kind: 'postgres',
   host: 'hospital-db',
@@ -106,7 +106,7 @@ function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <SourcesPanel repoId={7} />
+      <SourcesPanel projectId={7} />
     </QueryClientProvider>,
   );
 }
@@ -119,8 +119,8 @@ describe('SourcesPanel', () => {
     runIngestion.mockResolvedValue({ ...RUN, status: 'queued' });
   });
 
-  it('lists only the sources of this repository', async () => {
-    getSources.mockResolvedValue([SOURCE, { ...SOURCE, id: 2, repo_id: 99, name: 'Other repo' }]);
+  it('lists only the sources of this project', async () => {
+    getSources.mockResolvedValue([SOURCE, { ...SOURCE, id: 2, project_id: 99, name: 'Other repo' }]);
     renderPanel();
 
     expect(await screen.findByText('Hospital HIS')).toBeInTheDocument();
@@ -280,7 +280,7 @@ describe('SourcesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /connect source/i }));
 
     await waitFor(() => expect(createSource).toHaveBeenCalled());
-    expect(createSource.mock.calls[0][0]).toMatchObject({ repo_id: 7, name: 'HIS' });
+    expect(createSource.mock.calls[0][0]).toMatchObject({ project_id: 7, name: 'HIS' });
   });
 
   it('previews the source before it is saved', async () => {

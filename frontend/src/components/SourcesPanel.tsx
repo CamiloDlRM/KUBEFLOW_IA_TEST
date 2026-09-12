@@ -30,23 +30,37 @@ import Spinner from './Spinner';
  * password, which is unusual enough to be worth saying out loud in the UI: no
  * credential travels through the browser, and none is stored.
  */
-export default function SourcesPanel({ repoId }: { repoId: number }) {
+export default function SourcesPanel({
+  projectId,
+  mode = 'both',
+}: {
+  projectId: number;
+  /**
+   * Which half to show. The data factory's map splits this across two stages —
+   * connecting a system is one job and extracting from it is another, and
+   * putting both in one panel is what made the old page feel like a wall.
+   * ``both`` keeps the panel usable on its own.
+   */
+  mode?: 'connect' | 'extract' | 'both';
+}) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const showRun = mode !== 'connect';
+  const showAdd = mode !== 'extract';
 
   const { data: sources, isLoading } = useQuery({
     queryKey: ['sources'],
     queryFn: getSources,
   });
 
-  const mine = (sources ?? []).filter((source) => source.repo_id === repoId);
+  const mine = (sources ?? []).filter((source) => source.project_id === projectId);
 
   const ingest = useMutation({
     mutationFn: (sourceId: number) => runIngestion(sourceId),
     onSuccess: (_run, sourceId) => {
       queryClient.invalidateQueries({ queryKey: ['ingestion-runs', sourceId] });
-      queryClient.invalidateQueries({ queryKey: ['datasets', repoId] });
+      queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
     },
   });
 
@@ -69,17 +83,19 @@ export default function SourcesPanel({ repoId }: { repoId: number }) {
             the last one, profiles it and fills in missing codes.
           </p>
         </div>
-        <button
-          onClick={() => setShowForm((open) => !open)}
-          className="shrink-0 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-500"
-        >
-          {showForm ? 'Cancel' : 'Add source'}
-        </button>
+        {showAdd && (
+          <button
+            onClick={() => setShowForm((open) => !open)}
+            className="shrink-0 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-500"
+          >
+            {showForm ? 'Cancel' : 'Add source'}
+          </button>
+        )}
       </header>
 
-      {showForm && (
+      {showAdd && showForm && (
         <SourceForm
-          repoId={repoId}
+          projectId={projectId}
           onDone={() => {
             setShowForm(false);
             queryClient.invalidateQueries({ queryKey: ['sources'] });
@@ -109,7 +125,7 @@ export default function SourcesPanel({ repoId }: { repoId: number }) {
               onToggle={() =>
                 setExpanded((current) => (current === source.id ? null : source.id))
               }
-              onIngest={() => ingest.mutate(source.id)}
+              onIngest={showRun ? () => ingest.mutate(source.id) : null}
               onDelete={() => remove.mutate(source.id)}
               busy={ingest.isPending && ingest.variables === source.id}
               error={
@@ -139,7 +155,7 @@ function SourceRow({
   source: DataSource;
   expanded: boolean;
   onToggle: () => void;
-  onIngest: () => void;
+  onIngest: (() => void) | null;
   onDelete: () => void;
   busy: boolean;
   error: string | null;
@@ -165,13 +181,15 @@ function SourceRow({
                 : 'never run'}
             </p>
           </div>
-          <button
-            onClick={onIngest}
-            disabled={busy}
-            className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-500 disabled:opacity-50"
-          >
-            {busy ? 'Starting…' : 'Run extraction'}
-          </button>
+          {onIngest && (
+            <button
+              onClick={onIngest}
+              disabled={busy}
+              className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-500 disabled:opacity-50"
+            >
+              {busy ? 'Starting…' : 'Run extraction'}
+            </button>
+          )}
           <button
             onClick={onDelete}
             aria-label={`Disconnect ${source.name}`}
@@ -472,9 +490,9 @@ FROM procedures
 WHERE recorded_at > :watermark
 ORDER BY recorded_at`;
 
-function SourceForm({ repoId, onDone }: { repoId: number; onDone: () => void }) {
+function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => void }) {
   const [form, setForm] = useState<CreateSourceRequest>({
-    repo_id: repoId,
+    project_id: projectId,
     name: '',
     kind: 'postgres',
     host: '',
@@ -498,7 +516,7 @@ function SourceForm({ repoId, onDone }: { repoId: number; onDone: () => void }) 
   const look = useMutation({
     mutationFn: (body: CreateSourceRequest) =>
       previewSource({
-        repo_id: body.repo_id,
+        project_id: body.project_id,
         kind: body.kind,
         host: body.host,
         port: body.port,

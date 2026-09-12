@@ -104,22 +104,22 @@ def slugify(value: str, *, fallback: str = "unnamed") -> str:
     return slug[:60] or fallback
 
 
-def bronze_key(repo_id: int, source_id: int, run_id: str) -> str:
+def bronze_key(project_id: int, source_id: int, run_id: str) -> str:
     """Object key for one extraction's bronze landing."""
-    return f"project-{repo_id}/source-{source_id}/run-{slugify(run_id, fallback='run')}.parquet"
+    return f"project-{project_id}/source-{source_id}/run-{slugify(run_id, fallback='run')}.parquet"
 
 
-def silver_key(repo_id: int, source_id: int, run_id: str) -> str:
+def silver_key(project_id: int, source_id: int, run_id: str) -> str:
     """Object key for one extraction's cleaned slice.
 
     Deliberately the same shape as the bronze key: a silver object and the
     bronze object it was built from are the same path in two buckets, so the
     lineage of any row is readable without consulting a table.
     """
-    return f"project-{repo_id}/source-{source_id}/run-{slugify(run_id, fallback='run')}.parquet"
+    return f"project-{project_id}/source-{source_id}/run-{slugify(run_id, fallback='run')}.parquet"
 
 
-def stream_prefix(repo_id: int, source_id: int | None = None) -> str:
+def stream_prefix(project_id: int, source_id: int | None = None) -> str:
     """Prefix covering one source's whole history, or the project's.
 
     The same shape in bronze and in silver, because the keys are the same
@@ -130,25 +130,25 @@ def stream_prefix(repo_id: int, source_id: int | None = None) -> str:
     compaction step, no manifest to keep in step.
     """
     if source_id is None:
-        return f"project-{repo_id}/"
-    return f"project-{repo_id}/source-{source_id}/"
+        return f"project-{project_id}/"
+    return f"project-{project_id}/source-{source_id}/"
 
 
-def gold_key(repo_id: int, table: str, version: int) -> str:
+def gold_key(project_id: int, table: str, version: int) -> str:
     """Object key for one build of a gold table.
 
     Versioned rather than overwritten: a model trained last month was trained
     on a particular build, and a gold table that is redefined in place cannot
     answer which one.
     """
-    return f"project-{repo_id}/{slugify(table, fallback='table')}/v{version:04d}.parquet"
+    return f"project-{project_id}/{slugify(table, fallback='table')}/v{version:04d}.parquet"
 
 
-def gold_prefix(repo_id: int, table: str | None = None) -> str:
+def gold_prefix(project_id: int, table: str | None = None) -> str:
     """Prefix covering a project's gold tables, or one table's versions."""
     if table is None:
-        return f"project-{repo_id}/"
-    return f"project-{repo_id}/{slugify(table, fallback='table')}/"
+        return f"project-{project_id}/"
+    return f"project-{project_id}/{slugify(table, fallback='table')}/"
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +455,7 @@ def promote_to_silver(
     # the coding step below writes text into it. Without this a SNOMED column
     # of pure digits is cast to an integer and the run fails at the final
     # write, after all the expensive work has already been done.
-    report = clean(table, keep_as_text=[code_column] if code_column else [])
+    report, _ = clean(table, keep_as_text=[code_column] if code_column else [])
 
     normalization: dict[str, Any] = {}
     if text_column and code_column:

@@ -117,11 +117,11 @@ def store():
 
 @pytest.fixture()
 def source(db_session):
-    from tests.conftest import DEFAULT_USER_ID, seed_repo
+    from tests.conftest import DEFAULT_USER_ID, seed_project
 
-    repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+    project = seed_project(db_session, owner_id=DEFAULT_USER_ID)
     source = DataSource(
-        repo_id=repo.id,
+        project_id=project.id,
         name="Hospital HIS",
         kind="postgres",
         host="hospital-db",
@@ -303,7 +303,7 @@ class TestGold:
         run_task(db_engine, store, source.id, queued_run.id, extraction_of(extracted))
 
         db_session.expire_all()
-        gold = db_session.query(GoldTable).filter(GoldTable.repo_id == source.repo_id).one()
+        gold = db_session.query(GoldTable).filter(GoldTable.project_id == source.project_id).one()
         assert gold.version == 1
         assert gold.rows == 4, "the duplicate row was removed on the way into silver"
         assert gold.build_error == ""
@@ -334,7 +334,7 @@ class TestGold:
         )
 
         db_session.expire_all()
-        gold = db_session.query(GoldTable).filter(GoldTable.repo_id == source.repo_id).one()
+        gold = db_session.query(GoldTable).filter(GoldTable.project_id == source.project_id).one()
         assert gold.version == 2
         assert gold.rows == 6, "4 from the first slice plus 2 from the second"
         assert len(store.keys_in("silver")) == 2, "silver accumulates rather than replacing"
@@ -344,7 +344,7 @@ class TestGold:
     ):
         db_session.add(
             GoldTable(
-                repo_id=source.repo_id,
+                project_id=source.project_id,
                 name="gold",
                 sql="SELECT procedure_code, count(*) AS n FROM hospital_his_1 GROUP BY 1",
             )
@@ -354,7 +354,7 @@ class TestGold:
         run_task(db_engine, store, source.id, queued_run.id, extraction_of(extracted))
 
         db_session.expire_all()
-        gold = db_session.query(GoldTable).filter(GoldTable.repo_id == source.repo_id).one()
+        gold = db_session.query(GoldTable).filter(GoldTable.project_id == source.project_id).one()
         assert gold.columns == ["procedure_code", "n"]
 
     def test_the_gold_object_holds_the_rows_it_reported(
@@ -363,7 +363,7 @@ class TestGold:
         run_task(db_engine, store, source.id, queued_run.id, extraction_of(extracted))
 
         db_session.expire_all()
-        gold = db_session.query(GoldTable).filter(GoldTable.repo_id == source.repo_id).one()
+        gold = db_session.query(GoldTable).filter(GoldTable.project_id == source.project_id).one()
         local = tmp_path / "gold.parquet"
         store.download_to_path(gold.bucket, gold.object_key, local)
         assert len(list(iter_rows(local))) == gold.rows

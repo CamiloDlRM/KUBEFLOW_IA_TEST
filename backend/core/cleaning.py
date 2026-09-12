@@ -768,7 +768,40 @@ _PIPELINE = (
 )
 
 
-def clean(table: Table, *, keep_as_text: Sequence[str] = ()) -> CleaningReport:
+@dataclass
+class Snapshot:
+    """The first rows of the table at one point in the standard.
+
+    Carries ``row_ids`` — each row's position in the table as it arrived — so
+    two snapshots can be compared cell by cell even after a rule has removed
+    rows. Without it, the first deduplication shifts every row after it and a
+    naive comparison reports the whole table as changed.
+    """
+
+    #: Empty on the snapshot taken before any rule has run.
+    rule: str
+    title: str
+    columns: list[str]
+    rows: list[list[Any]]
+    row_ids: list[int]
+
+
+def _snapshot(table: Table, ids: list[int], rule: str, title: str, sample: int) -> Snapshot:
+    return Snapshot(
+        rule=rule,
+        title=title,
+        columns=list(table.columns),
+        rows=[
+            [table.data[name][index] for name in table.columns]
+            for index in range(min(sample, table.rows))
+        ],
+        row_ids=ids[:sample],
+    )
+
+
+def clean(
+    table: Table, *, keep_as_text: Sequence[str] = (), sample: int = 0
+) -> tuple[CleaningReport, list[Snapshot]]:
     """Apply the standard to ``table`` in place and report what changed.
 
     Args:
@@ -776,14 +809,42 @@ def clean(table: Table, *, keep_as_text: Sequence[str] = ()) -> CleaningReport:
         keep_as_text: Columns that must not be type-cast — identifiers and any
             column a later step will write text into. Matched after the column
             names are standardised, so the caller may pass either spelling.
+        sample: When non-zero, capture the first ``sample`` rows before the
+            first rule and after each one. The counts in the report say how
+            much a rule changed; these say *what*, on the rows themselves,
+            which is the only form of it a reader can check.
+
+    Returns:
+        ``(report, snapshots)``. ``snapshots`` is empty unless ``sample`` was
+        given.
     """
     report = CleaningReport(rows_in=table.rows, columns_in=len(table.columns))
     protected = frozenset(keep_as_text)
+
+    # Row identity is tracked alongside the data rather than inside it: adding
+    # a column to carry it would change what every rule sees, including the
+    # duplicate comparison, which reads every column.
+    ids = list(range(table.rows))
+    snapshots: list[Snapshot] = []
+    if sample:
+        snapshots.append(_snapshot(table, ids, "", "As it arrived", sample))
+
     for rule in _PIPELINE:
+        before = table.rows
         if rule is cast_types:
             rule(table, report, protected)
         else:
             rule(table, report)
+
+        if rule is deduplicate_rows and table.rows != before:
+            outcome = report.outcomes[-1]
+            removed = set(outcome.removed_rows)
+            ids = [row_id for index, row_id in enumerate(ids) if index not in removed]
+
+        if sample:
+            outcome = report.outcomes[-1]
+            snapshots.append(_snapshot(table, ids, outcome.rule, outcome.title, sample))
+
     report.rows_out = table.rows
     report.columns_out = len(table.columns)
 
@@ -794,4 +855,4 @@ def clean(table: Table, *, keep_as_text: Sequence[str] = ()) -> CleaningReport:
         cells_changed=report.cells_changed,
         flagged=report.flagged,
     )
-    return report
+    return report, snapshots

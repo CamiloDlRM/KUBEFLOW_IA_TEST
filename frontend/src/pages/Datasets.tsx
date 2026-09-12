@@ -18,13 +18,13 @@ import { formatDate, formatBytes, repoNameFromUrl } from '../utils/format';
 const ACCEPTED = '.csv,.parquet';
 
 export default function Datasets() {
-  const { repoId } = useParams<{ repoId: string }>();
-  const id = Number(repoId);
+  const { projectId } = useParams<{ projectId: string }>();
+  const id = Number(projectId);
   const queryClient = useQueryClient();
 
   const { data: repos } = useRepos();
   const repo = repos?.find((r) => r.id === id);
-  const repoName = repo ? repoNameFromUrl(repo.github_url) : `repo #${repoId}`;
+  const repoName = repo ? repoNameFromUrl(repo.github_url) : `repo #${projectId}`;
 
   const {
     data: datasets,
@@ -77,14 +77,14 @@ export default function Datasets() {
         </div>
       </div>
 
-      <SourcesPanel repoId={id} />
+      <SourcesPanel projectId={id} />
 
       {/* Above the upload panel, and below the sources: it reads top to bottom
           as the path the data takes — where it comes from, what happens to it,
           and only then the file-upload shortcut. */}
-      <MedallionPanel repoId={id} />
+      <MedallionPanel projectId={id} />
 
-      <UploadPanel repoId={id} />
+      <UploadPanel projectId={id} />
 
       {actionError && (
         <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
@@ -196,7 +196,7 @@ export default function Datasets() {
 /*  Upload panel                                                       */
 /* ------------------------------------------------------------------ */
 
-function UploadPanel({ repoId }: { repoId: number }) {
+function UploadPanel({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -204,12 +204,12 @@ function UploadPanel({ repoId }: { repoId: number }) {
   const [dragging, setDragging] = useState(false);
 
   const uploadMut = useMutation({
-    mutationFn: () => uploadDataset(repoId, file!, description),
+    mutationFn: () => uploadDataset(projectId, file!, description),
     onSuccess: () => {
       setFile(null);
       setDescription('');
       if (inputRef.current) inputRef.current.value = '';
-      queryClient.invalidateQueries({ queryKey: ['datasets', repoId] });
+      queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
     },
   });
 

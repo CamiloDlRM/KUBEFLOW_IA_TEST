@@ -34,6 +34,8 @@ import type {
   LayerPreview,
   Medallion,
   LayerSummary,
+  Project,
+  CleaningSteps,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -161,16 +163,73 @@ export async function triggerPipeline(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Projects                                                           */
+/* ------------------------------------------------------------------ */
+
+export async function getProjects(): Promise<Project[]> {
+  const { data } = await apiClient.get<Project[]>('/projects');
+  return data;
+}
+
+export async function getProject(projectId: number): Promise<Project> {
+  const { data } = await apiClient.get<Project>(`/projects/${projectId}`);
+  return data;
+}
+
+export async function createProject(body: {
+  name: string;
+  description?: string;
+}): Promise<Project> {
+  const { data } = await apiClient.post<Project>('/projects', {
+    name: body.name,
+    description: body.description ?? '',
+  });
+  return data;
+}
+
+export async function updateProject(
+  projectId: number,
+  body: { name?: string; description?: string },
+): Promise<Project> {
+  const { data } = await apiClient.patch<Project>(`/projects/${projectId}`, body);
+  return data;
+}
+
+/** Attach a repository the caller owns. The data factory is untouched. */
+export async function linkRepository(
+  projectId: number,
+  repoId: number,
+): Promise<Project> {
+  const { data } = await apiClient.put<Project>(
+    `/projects/${projectId}/repository`,
+    null,
+    { params: { repo_id: repoId } },
+  );
+  return data;
+}
+
+export async function unlinkRepository(projectId: number): Promise<Project> {
+  const { data } = await apiClient.delete<Project>(
+    `/projects/${projectId}/repository`,
+  );
+  return data;
+}
+
+export async function archiveProject(projectId: number): Promise<void> {
+  await apiClient.delete(`/projects/${projectId}`);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Datasets                                                           */
 /* ------------------------------------------------------------------ */
 
-export async function getDatasets(repoId: number): Promise<Dataset[]> {
-  const { data } = await apiClient.get<Dataset[]>(`/repos/${repoId}/datasets`);
+export async function getDatasets(projectId: number): Promise<Dataset[]> {
+  const { data } = await apiClient.get<Dataset[]>(`/projects/${projectId}/datasets`);
   return data;
 }
 
 export async function uploadDataset(
-  repoId: number,
+  projectId: number,
   file: File,
   description = '',
 ): Promise<Dataset> {
@@ -179,7 +238,7 @@ export async function uploadDataset(
   if (description) form.append('description', description);
 
   const { data } = await apiClient.post<Dataset>(
-    `/repos/${repoId}/datasets`,
+    `/projects/${projectId}/datasets`,
     form,
     {
       // The axios instance defaults to application/json; unsetting it here lets
@@ -332,7 +391,7 @@ export default apiClient;
  * through the browser or lands in the database.
  */
 export interface CreateSourceRequest {
-  repo_id: number;
+  project_id: number;
   name: string;
   kind: string;
   host: string;
@@ -391,19 +450,19 @@ export async function previewSource(
 
 /** The three layers of a project, side by side. Reads no data: the counts are
  *  recorded where they were produced, so this costs the same at any scale. */
-export async function getMedallion(repoId: number): Promise<Medallion> {
-  const { data } = await apiClient.get<Medallion>(`/repos/${repoId}/medallion`);
+export async function getMedallion(projectId: number): Promise<Medallion> {
+  const { data } = await apiClient.get<Medallion>(`/projects/${projectId}/medallion`);
   return data;
 }
 
 /** The first rows of one layer's newest object, with the stored types. */
 export async function previewLayer(
-  repoId: number,
+  projectId: number,
   layer: Layer,
   options: { sourceId?: number | null; limit?: number } = {},
 ): Promise<LayerPreview> {
   const { data } = await apiClient.get<LayerPreview>(
-    `/repos/${repoId}/medallion/${layer}/preview`,
+    `/projects/${projectId}/medallion/${layer}/preview`,
     {
       params: {
         ...(options.sourceId ? { source_id: options.sourceId } : {}),
@@ -427,10 +486,10 @@ const MODEL_TIMEOUT = 120_000;
 
 /** Bronze and silver side by side, for one extraction. */
 export async function getLayerDiff(
-  repoId: number,
+  projectId: number,
   options: { sourceId?: number | null; runId?: string; limit?: number } = {},
 ): Promise<LayerDiff> {
-  const { data } = await apiClient.get<LayerDiff>(`/repos/${repoId}/medallion/diff`, {
+  const { data } = await apiClient.get<LayerDiff>(`/projects/${projectId}/medallion/diff`, {
     timeout: LAYER_TIMEOUT,
     params: {
       ...(options.sourceId ? { source_id: options.sourceId } : {}),
@@ -441,10 +500,29 @@ export async function getLayerDiff(
   return data;
 }
 
+/** The standard replayed a rule at a time over one extraction. */
+export async function getCleaningSteps(
+  projectId: number,
+  options: { sourceId?: number | null; runId?: string; limit?: number } = {},
+): Promise<CleaningSteps> {
+  const { data } = await apiClient.get<CleaningSteps>(
+    `/projects/${projectId}/medallion/steps`,
+    {
+      timeout: LAYER_TIMEOUT,
+      params: {
+        ...(options.sourceId ? { source_id: options.sourceId } : {}),
+        ...(options.runId ? { run_id: options.runId } : {}),
+        ...(options.limit ? { limit: options.limit } : {}),
+      },
+    },
+  );
+  return data;
+}
+
 /** The silver schema a gold definition is written against. */
-export async function getGoldRelations(repoId: number): Promise<GoldRelations> {
+export async function getGoldRelations(projectId: number): Promise<GoldRelations> {
   const { data } = await apiClient.get<GoldRelations>(
-    `/repos/${repoId}/medallion/gold/relations`,
+    `/projects/${projectId}/medallion/gold/relations`,
     { timeout: LAYER_TIMEOUT },
   );
   return data;
@@ -452,12 +530,12 @@ export async function getGoldRelations(repoId: number): Promise<GoldRelations> {
 
 /** Run a candidate definition without saving it — the row count is the point. */
 export async function previewGold(
-  repoId: number,
+  projectId: number,
   sql: string,
   limit = 20,
 ): Promise<GoldPreview> {
   const { data } = await apiClient.post<GoldPreview>(
-    `/repos/${repoId}/medallion/gold/preview`,
+    `/projects/${projectId}/medallion/gold/preview`,
     { sql, limit },
     { timeout: LAYER_TIMEOUT },
   );
@@ -466,11 +544,11 @@ export async function previewGold(
 
 /** Store the definition. It takes effect on the next extraction. */
 export async function setGoldDefinition(
-  repoId: number,
+  projectId: number,
   sql: string,
   name = 'gold',
 ): Promise<LayerSummary> {
-  const { data } = await apiClient.put<LayerSummary>(`/repos/${repoId}/medallion/gold`, {
+  const { data } = await apiClient.put<LayerSummary>(`/projects/${projectId}/medallion/gold`, {
     sql,
     name,
   });
@@ -479,11 +557,11 @@ export async function setGoldDefinition(
 
 /** Ask the model for a definition. It returns SQL, never rows. */
 export async function suggestGold(
-  repoId: number,
+  projectId: number,
   question: string,
 ): Promise<GoldSuggestion> {
   const { data } = await apiClient.post<GoldSuggestion>(
-    `/repos/${repoId}/medallion/gold/suggest`,
+    `/projects/${projectId}/medallion/gold/suggest`,
     { question },
     { timeout: MODEL_TIMEOUT },
   );

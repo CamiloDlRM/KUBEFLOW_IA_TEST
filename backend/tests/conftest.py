@@ -358,6 +358,25 @@ def make_webhook_signature(payload: bytes, secret: str = "test-secret") -> str:
     return f"sha256={digest}"
 
 
+def seed_project(session: Session, **kwargs):
+    """Insert a Project and return it.
+
+    ``owner_id`` defaults to ``DEFAULT_USER_ID`` so a seeded project — and the
+    data factory under it — is visible to the ``test_app`` client. Pass
+    ``owner_id=OTHER_USER_ID`` for another tenant's, or ``owner_id=None`` for a
+    row no member owns.
+    """
+    from models.schemas import Project
+
+    defaults = {"name": "Test project", "owner_id": DEFAULT_USER_ID, "is_active": True}
+    defaults.update(kwargs)
+    project = Project(**defaults)
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
 def seed_repo(session: Session, **kwargs) -> "Repository":
     """Insert a Repository record into the session and return it.
 
@@ -405,16 +424,16 @@ def seed_pipeline(session: Session, repo_id: int, **kwargs) -> "Pipeline":
     return pipeline
 
 
-def seed_dataset(session: Session, repo_id: int, **kwargs) -> "Dataset":
+def seed_dataset(session: Session, project_id: int, **kwargs) -> "Dataset":
     """Insert a Dataset record into the session and return it."""
     from models.schemas import Dataset
 
     defaults = {
-        "repo_id": repo_id,
+        "project_id": project_id,
         "name": "train.csv",
         "description": "seeded dataset",
         "bucket": "datasets",
-        "object_key": f"repo-{repo_id}/00000000-0000-0000-0000-000000000000/train.csv",
+        "object_key": f"project-{project_id}/00000000-0000-0000-0000-000000000000/train.csv",
         "content_type": "text/csv",
         "size_bytes": 128,
         "checksum": "0" * 64,

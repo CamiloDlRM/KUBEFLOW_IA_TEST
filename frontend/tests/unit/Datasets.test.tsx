@@ -8,7 +8,7 @@ import type { Dataset } from '../../src/types';
 
 const mockDataset: Dataset = {
   id: 7,
-  repo_id: 1,
+  project_id: 1,
   name: 'iris.csv',
   description: 'Iris training set',
   bucket: 'datasets',
@@ -52,9 +52,9 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/repos/1/datasets']}>
+      <MemoryRouter initialEntries={['/projects/1/data']}>
         <Routes>
-          <Route path="/repos/:repoId/datasets" element={<Datasets />} />
+          <Route path="/projects/:projectId/data" element={<Datasets />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

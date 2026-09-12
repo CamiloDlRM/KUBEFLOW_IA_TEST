@@ -28,10 +28,13 @@ from sqlmodel import Session, select
 
 from core import gold as gold_module
 from core import medallion
-from core.ownership import get_visible_repo_or_404
+from core.cleaning import Table, clean
+from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
+    CleaningStepResponse,
+    CleaningStepsResponse,
     DataSource,
     DiffColumnResponse,
     DiffRowResponse,
@@ -51,7 +54,7 @@ from models.schemas import (
 )
 
 logger = structlog.get_logger(__name__)
-router = APIRouter(prefix="/repos", tags=["medallion"])
+router = APIRouter(prefix="/projects", tags=["medallion"])
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +69,9 @@ def _relation_name(source_id: int, source_name: str) -> str:
     return worker_name(source_id, source_name)
 
 
-def _sources_of(session: Session, repo_id: int) -> list[DataSource]:
+def _sources_of(session: Session, project_id: int) -> list[DataSource]:
     return list(
-        session.exec(select(DataSource).where(DataSource.repo_id == repo_id)).all()
+        session.exec(select(DataSource).where(DataSource.project_id == project_id)).all()
     )
 
 
@@ -88,12 +91,12 @@ def _runs_by_source(session: Session, source_ids: list[int]) -> dict[int, list[I
     return grouped
 
 
-def _gold_of(session: Session, repo_id: int) -> GoldTable | None:
-    return session.exec(select(GoldTable).where(GoldTable.repo_id == repo_id)).first()
+def _gold_of(session: Session, project_id: int) -> GoldTable | None:
+    return session.exec(select(GoldTable).where(GoldTable.project_id == project_id)).first()
 
 
 def _summarise(
-    layer: str, repo_id: int, sources: list[DataSource], runs: dict[int, list[IngestionRun]]
+    layer: str, project_id: int, sources: list[DataSource], runs: dict[int, list[IngestionRun]]
 ) -> LayerSummaryResponse:
     """Describe bronze or silver without reading a single row."""
     summary = LayerSummaryResponse(layer=layer, bucket=medallion.bucket_for(layer))
@@ -103,7 +106,7 @@ def _summarise(
     for source in sources:
         if source.id is None:
             continue
-        objects = medallion.list_layer(layer, medallion.stream_prefix(repo_id, source.id))
+        objects = medallion.list_layer(layer, medallion.stream_prefix(project_id, source.id))
         stream = LayerStreamResponse(
             source_id=source.id,
             source_name=source.name,
@@ -150,7 +153,7 @@ def _summarise(
     return summary
 
 
-def _summarise_gold(repo_id: int, table: GoldTable | None) -> LayerSummaryResponse:
+def _summarise_gold(project_id: int, table: GoldTable | None) -> LayerSummaryResponse:
     summary = LayerSummaryResponse(layer="gold", bucket=medallion.bucket_for("gold"))
     if table is None:
         return summary
@@ -172,7 +175,7 @@ def _summarise_gold(repo_id: int, table: GoldTable | None) -> LayerSummaryRespon
     if not table.object_key:
         return summary
 
-    objects = medallion.list_layer("gold", medallion.gold_prefix(repo_id, table.name))
+    objects = medallion.list_layer("gold", medallion.gold_prefix(project_id, table.name))
     summary.objects = len(objects)
     summary.size_bytes = sum(item.size_bytes for item in objects)
     summary.rows = table.rows
@@ -184,7 +187,7 @@ def _summarise_gold(repo_id: int, table: GoldTable | None) -> LayerSummaryRespon
     return summary
 
 
-def _silver_paths(repo_id: int, sources: list[DataSource], workdir: Path) -> dict[str, list[Path]]:
+def _silver_paths(project_id: int, sources: list[DataSource], workdir: Path) -> dict[str, list[Path]]:
     """Fetch every silver object of the project, grouped by relation name."""
     relations: dict[str, list[Path]] = {}
     for source in sources:
@@ -193,7 +196,7 @@ def _silver_paths(repo_id: int, sources: list[DataSource], workdir: Path) -> dic
         name = _relation_name(source.id, source.name)
         paths: list[Path] = []
         for index, item in enumerate(
-            medallion.list_layer("silver", medallion.stream_prefix(repo_id, source.id))
+            medallion.list_layer("silver", medallion.stream_prefix(project_id, source.id))
         ):
             local = workdir / name / f"part-{index:05d}.parquet"
             medallion.download_parquet("silver", item.key, local)
@@ -209,36 +212,36 @@ def _silver_paths(repo_id: int, sources: list[DataSource], workdir: Path) -> dic
 
 
 @router.get(
-    "/{repo_id}/medallion",
+    "/{project_id}/medallion",
     response_model=MedallionResponse,
     summary="The three layers of a project, side by side",
 )
 async def get_medallion(
-    repo_id: int,
+    project_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> MedallionResponse:
-    get_visible_repo_or_404(session, repo_id, current_user)
+    get_visible_project_or_404(session, project_id, current_user)
 
-    sources = _sources_of(session, repo_id)
+    sources = _sources_of(session, project_id)
     runs = _runs_by_source(session, [s.id for s in sources if s.id is not None])
-    table = _gold_of(session, repo_id)
+    table = _gold_of(session, project_id)
 
     return MedallionResponse(
-        repo_id=repo_id,
-        bronze=_summarise("bronze", repo_id, sources, runs),
-        silver=_summarise("silver", repo_id, sources, runs),
-        gold=_summarise_gold(repo_id, table),
+        project_id=project_id,
+        bronze=_summarise("bronze", project_id, sources, runs),
+        silver=_summarise("silver", project_id, sources, runs),
+        gold=_summarise_gold(project_id, table),
     )
 
 
 @router.get(
-    "/{repo_id}/medallion/{layer}/preview",
+    "/{project_id}/medallion/{layer}/preview",
     response_model=LayerPreviewResponse,
     summary="Read the first rows of one layer",
 )
 async def preview_layer(
-    repo_id: int,
+    project_id: int,
     layer: str,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -250,14 +253,14 @@ async def preview_layer(
     The same rows appear in bronze and in silver, which is the point: put the
     two side by side and the cleaning is visible rather than asserted.
     """
-    get_visible_repo_or_404(session, repo_id, current_user)
+    get_visible_project_or_404(session, project_id, current_user)
     if layer not in medallion.LAYERS:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"There is no {layer!r} layer."
         )
 
     if layer == "gold":
-        table = _gold_of(session, repo_id)
+        table = _gold_of(session, project_id)
         if table is None or not table.object_key:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -270,12 +273,12 @@ async def preview_layer(
             # objects, or a source id from another tenant would select their
             # prefix inside a project this caller can see.
             source = session.get(DataSource, source_id)
-            if source is None or source.repo_id != repo_id:
+            if source is None or source.project_id != project_id:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Data source {source_id} not found.",
                 )
-        prefix = medallion.stream_prefix(repo_id, source_id)
+        prefix = medallion.stream_prefix(project_id, source_id)
         objects = medallion.list_layer(layer, prefix)
         if not objects:
             raise HTTPException(
@@ -313,12 +316,12 @@ def _jsonable(value: Any) -> Any:
 
 
 @router.get(
-    "/{repo_id}/medallion/diff",
+    "/{project_id}/medallion/diff",
     response_model=LayerDiffResponse,
     summary="Bronze and silver side by side, for one extraction",
 )
 async def diff_layers(
-    repo_id: int,
+    project_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
     source_id: int | None = None,
@@ -337,7 +340,7 @@ async def diff_layers(
     removed; past the number it tracks, the pairing is by position and the
     response says so.
     """
-    get_visible_repo_or_404(session, repo_id, current_user)
+    get_visible_project_or_404(session, project_id, current_user)
 
     statement = select(IngestionRun).where(
         IngestionRun.status == "success",
@@ -345,7 +348,7 @@ async def diff_layers(
     )
     if run_id:
         statement = statement.where(IngestionRun.id == run_id)
-    sources = {s.id: s for s in _sources_of(session, repo_id)}
+    sources = {s.id: s for s in _sources_of(session, project_id)}
     if source_id is not None:
         if source_id not in sources:
             raise HTTPException(
@@ -401,6 +404,173 @@ async def diff_layers(
         silver_rows=silver_total,
         approximate=truncated,
     )
+
+
+@router.get(
+    "/{project_id}/medallion/steps",
+    response_model=CleaningStepsResponse,
+    summary="Every step of the cleaning standard, with the table after each",
+)
+async def cleaning_steps(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    source_id: int | None = None,
+    run_id: str | None = None,
+    limit: int = Query(default=8, ge=1, le=50),
+) -> CleaningStepsResponse:
+    """Replay the standard over one extraction, a rule at a time.
+
+    The quality report says how much each rule changed. This shows the table
+    *after each one*, which is the difference between being told the data was
+    cleaned and watching it happen.
+
+    The replay runs over the whole bronze object rather than over the sample it
+    returns, because most of these rules are decisions about a *column*: the
+    type every value supports, the spelling a category is folded onto, whether
+    a row is a duplicate of one further down. Deciding those from eight rows
+    would produce a demonstration of something the real run never did.
+
+    The cost is one full read of the object per request. That is the same cost
+    the gold endpoints already pay, and the honest one for a claim about what
+    actually happened.
+    """
+    run = _run_for(session, project_id, source_id, run_id, current_user)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bronze = medallion.download_parquet(
+            "bronze", run.bronze_key, Path(tmpdir) / "bronze.parquet"
+        )
+        columns = medallion.columns_of(bronze)
+        rows = list(medallion.iter_rows(bronze))
+
+    source = session.get(DataSource, run.source_id)
+    table = Table.from_rows(rows, columns)
+    report, snapshots = clean(
+        table,
+        keep_as_text=[source.normalize_code_column] if source and source.normalize_code_column else [],
+        sample=limit,
+    )
+
+    return CleaningStepsResponse(
+        run_id=run.id,
+        source_id=run.source_id,
+        rows_in=report.rows_in,
+        rows_out=report.rows_out,
+        sample=limit,
+        steps=_steps(report, snapshots),
+    )
+
+
+def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
+    """Pair each snapshot with the rule that produced it."""
+    steps: list[CleaningStepResponse] = []
+
+    for index, snapshot in enumerate(snapshots):
+        previous = snapshots[index - 1] if index else None
+        outcome = report.outcomes[index - 1] if index else None
+
+        steps.append(
+            CleaningStepResponse(
+                rule=snapshot.rule,
+                title=snapshot.title,
+                tier=outcome.tier if outcome else "",
+                cells_changed=outcome.cells_changed if outcome else 0,
+                rows_removed=outcome.rows_removed if outcome else 0,
+                columns_removed=outcome.columns_removed if outcome else 0,
+                flagged=outcome.flagged if outcome else 0,
+                note=outcome.note if outcome else "",
+                columns=outcome.columns if outcome else [],
+                changed=outcome.changed if outcome else True,
+                preview_columns=snapshot.columns,
+                preview_rows=[[_jsonable(cell) for cell in row] for row in snapshot.rows],
+                changed_cells=_changed_cells(previous, snapshot),
+                removed_rows=_gone(previous, snapshot),
+            )
+        )
+    return steps
+
+
+def _changed_cells(previous: Any, snapshot: Any) -> list[list[bool]]:
+    """Which cells this rule changed, matched by each row's original position.
+
+    Matching by position in the *list* would be wrong the moment a rule removes
+    a row: everything below it shifts up, and a comparison would report the
+    whole table as rewritten by a rule that touched one row.
+    """
+    if previous is None:
+        return [[False] * len(snapshot.columns) for _ in snapshot.rows]
+
+    before = {
+        row_id: dict(zip(previous.columns, row))
+        for row_id, row in zip(previous.row_ids, previous.rows)
+    }
+
+    marks: list[list[bool]] = []
+    for row_id, row in zip(snapshot.row_ids, snapshot.rows):
+        earlier = before.get(row_id)
+        marks.append(
+            [
+                # A column that did not exist before is a change; one whose
+                # value differs is a change; renaming is handled by the column
+                # name being the key, so a rename alone marks nothing.
+                earlier is None or name not in earlier or earlier[name] != value
+                for name, value in zip(snapshot.columns, row)
+            ]
+        )
+    return marks
+
+
+def _gone(previous: Any, snapshot: Any) -> list[list[Any]]:
+    """Rows that were in the previous snapshot and are not in this one."""
+    if previous is None:
+        return []
+    surviving = set(snapshot.row_ids)
+    return [
+        [_jsonable(cell) for cell in row]
+        for row_id, row in zip(previous.row_ids, previous.rows)
+        if row_id not in surviving
+    ]
+
+
+def _run_for(
+    session: Session,
+    project_id: int,
+    source_id: int | None,
+    run_id: str | None,
+    user: User,
+) -> IngestionRun:
+    """The extraction a layer view is about: the newest that reached silver."""
+    get_visible_project_or_404(session, project_id, user)
+
+    statement = select(IngestionRun).where(
+        IngestionRun.status == "success",
+        IngestionRun.silver_key != "",
+    )
+    if run_id:
+        statement = statement.where(IngestionRun.id == run_id)
+    sources = {s.id: s for s in _sources_of(session, project_id)}
+    if source_id is not None:
+        if source_id not in sources:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Data source {source_id} not found.",
+            )
+        statement = statement.where(IngestionRun.source_id == source_id)
+    else:
+        statement = statement.where(
+            IngestionRun.source_id.in_(list(sources))  # type: ignore[attr-defined]
+        )
+
+    run = session.exec(
+        statement.order_by(IngestionRun.started_at.desc().nullslast())  # type: ignore[union-attr]
+    ).first()
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No extraction has been through the layers yet.",
+        )
+    return run
 
 
 def _removed_rows(report: dict[str, Any]) -> tuple[set[int], bool]:
@@ -537,11 +707,11 @@ def _pair_rows(
 
 
 @router.get(
-    "/{repo_id}/medallion/gold/relations",
+    "/{project_id}/medallion/gold/relations",
     summary="What a gold definition can be written against",
 )
 async def gold_relations(
-    repo_id: int,
+    project_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
@@ -550,11 +720,11 @@ async def gold_relations(
     This is the schema a person — or the model — writes a query against, so it
     has to be available without reading the data itself.
     """
-    get_visible_repo_or_404(session, repo_id, current_user)
-    sources = _sources_of(session, repo_id)
+    get_visible_project_or_404(session, project_id, current_user)
+    sources = _sources_of(session, project_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        relations = _silver_paths(repo_id, sources, Path(tmpdir))
+        relations = _silver_paths(project_id, sources, Path(tmpdir))
         if not relations:
             return {"relations": {}, "default_sql": ""}
         described = gold_module.describe_relations(relations)
@@ -563,12 +733,12 @@ async def gold_relations(
 
 
 @router.post(
-    "/{repo_id}/medallion/gold/preview",
+    "/{project_id}/medallion/gold/preview",
     response_model=GoldPreviewResponse,
     summary="Run a candidate gold definition without saving it",
 )
 async def preview_gold(
-    repo_id: int,
+    project_id: int,
     body: GoldPreviewRequest,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -581,11 +751,11 @@ async def preview_gold(
     beside it is the cheapest way to catch it before it becomes the table
     everything trains on.
     """
-    get_visible_repo_or_404(session, repo_id, current_user)
-    sources = _sources_of(session, repo_id)
+    get_visible_project_or_404(session, project_id, current_user)
+    sources = _sources_of(session, project_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        relations = _silver_paths(repo_id, sources, Path(tmpdir))
+        relations = _silver_paths(project_id, sources, Path(tmpdir))
         if not relations:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -610,12 +780,12 @@ async def preview_gold(
 
 
 @router.put(
-    "/{repo_id}/medallion/gold",
+    "/{project_id}/medallion/gold",
     response_model=LayerSummaryResponse,
     summary="Set the project's gold definition",
 )
 async def set_gold_definition(
-    repo_id: int,
+    project_id: int,
     body: GoldDefinitionRequest,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -630,7 +800,7 @@ async def set_gold_definition(
     that will fail on every future extraction should be rejected while the
     person writing it still has the context to fix it.
     """
-    get_visible_repo_or_404(session, repo_id, current_user)
+    get_visible_project_or_404(session, project_id, current_user)
 
     if body.sql.strip():
         try:
@@ -640,9 +810,9 @@ async def set_gold_definition(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             )
 
-    table = _gold_of(session, repo_id)
+    table = _gold_of(session, project_id)
     if table is None:
-        table = GoldTable(repo_id=repo_id)
+        table = GoldTable(project_id=project_id)
     table.sql = body.sql.strip()
     table.name = body.name
     table.build_error = ""
@@ -657,24 +827,24 @@ async def set_gold_definition(
     # up to date, could be never.
     from tasks.celery_tasks import rebuild_gold
 
-    rebuild_gold.apply_async(args=[repo_id])
+    rebuild_gold.apply_async(args=[project_id])
 
     logger.info(
         "gold.definition_set",
-        repo_id=repo_id,
+        project_id=project_id,
         default=not table.sql,
         length=len(table.sql),
     )
-    return _summarise_gold(repo_id, table)
+    return _summarise_gold(project_id, table)
 
 
 @router.post(
-    "/{repo_id}/medallion/gold/suggest",
+    "/{project_id}/medallion/gold/suggest",
     response_model=GoldSuggestResponse,
     summary="Ask the model to write a gold definition",
 )
 async def suggest_gold(
-    repo_id: int,
+    project_id: int,
     body: GoldSuggestRequest,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -687,11 +857,11 @@ async def suggest_gold(
     if they run it. A model that hands back data has to be trusted; a model that
     hands back a query can be read, run twice and diffed.
     """
-    get_visible_repo_or_404(session, repo_id, current_user)
-    sources = _sources_of(session, repo_id)
+    get_visible_project_or_404(session, project_id, current_user)
+    sources = _sources_of(session, project_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        relations = _silver_paths(repo_id, sources, Path(tmpdir))
+        relations = _silver_paths(project_id, sources, Path(tmpdir))
         if not relations:
             return GoldSuggestResponse(
                 error="There is no silver data to describe yet — run an extraction first."

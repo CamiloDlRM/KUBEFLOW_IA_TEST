@@ -197,7 +197,7 @@ class Dataset(SQLModel, table=True):
     __tablename__ = "datasets"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
     name: str = SQLField(default="")  # original filename, e.g. "train.csv"
     description: str = SQLField(default="")
     bucket: str = SQLField(default="")
@@ -244,7 +244,7 @@ class DataSource(SQLModel, table=True):
     __tablename__ = "data_sources"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
     name: str = SQLField(default="", description="Human label, e.g. 'Hospital HIS'.")
     kind: str = SQLField(default="postgres")  # only postgres today
 
@@ -374,7 +374,7 @@ class GoldTable(SQLModel, table=True):
     __tablename__ = "gold_tables"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    repo_id: int = SQLField(foreign_key="repositories.id", index=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
     name: str = SQLField(default="gold")
 
     #: The definition. Empty means the project has not written one and is using
@@ -701,7 +701,7 @@ class DataSourceCreateRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    repo_id: int
+    project_id: int
     name: str = Field(..., min_length=1, max_length=120)
     kind: str = Field(default="postgres", pattern=r"^postgres$")
     host: str = Field(..., min_length=1, max_length=255)
@@ -730,7 +730,7 @@ class DataSourcePreviewRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    repo_id: int
+    project_id: int
     kind: str = Field(default="postgres", pattern=r"^postgres$")
     host: str = Field(..., min_length=1, max_length=255)
     port: int = Field(default=5432, ge=1, le=65535)
@@ -764,7 +764,7 @@ class DataSourceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    repo_id: int
+    project_id: int
     name: str
     kind: str
     host: str
@@ -855,7 +855,7 @@ class LayerSummaryResponse(BaseModel):
 class MedallionResponse(BaseModel):
     """The three layers of one project, side by side."""
 
-    repo_id: int
+    project_id: int
     bronze: LayerSummaryResponse
     silver: LayerSummaryResponse
     gold: LayerSummaryResponse
@@ -912,6 +912,48 @@ class LayerDiffResponse(BaseModel):
     #: pairing past that point is by position rather than known. Said out loud
     #: rather than left for a reader to discover.
     approximate: bool = False
+
+
+class CleaningStepResponse(BaseModel):
+    """One rule of the cleaning standard, and the table right after it ran."""
+
+    #: Empty on the first step, which is the data as it arrived.
+    rule: str = ""
+    title: str = ""
+    tier: str = ""
+    cells_changed: int = 0
+    rows_removed: int = 0
+    columns_removed: int = 0
+    flagged: int = 0
+    note: str = ""
+    #: Columns this rule acted on.
+    columns: list[str] = Field(default_factory=list)
+    #: Whether it did anything. Steps that did nothing are still returned, so a
+    #: reader can see that the rule ran and found nothing to do — which is a
+    #: different statement from the rule not existing.
+    changed: bool = False
+
+    #: The table at this point: column names, and the first rows.
+    preview_columns: list[str] = Field(default_factory=list)
+    preview_rows: list[list[Any]] = Field(default_factory=list)
+    #: Per cell, whether this rule changed it from the previous step. Rows are
+    #: matched by their position in the data as it arrived, so a deduplication
+    #: earlier in the standard does not make everything after it look changed.
+    changed_cells: list[list[bool]] = Field(default_factory=list)
+    #: Rows present before this step and gone after it.
+    removed_rows: list[list[Any]] = Field(default_factory=list)
+
+
+class CleaningStepsResponse(BaseModel):
+    """Every step of the standard, in order, for one extraction."""
+
+    run_id: str
+    source_id: int
+    rows_in: int = 0
+    rows_out: int = 0
+    #: How many rows each preview shows.
+    sample: int = 0
+    steps: list[CleaningStepResponse] = Field(default_factory=list)
 
 
 class GoldDefinitionRequest(BaseModel):
@@ -1043,7 +1085,7 @@ class DatasetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    repo_id: int
+    project_id: int
     name: str
     description: str
     bucket: str

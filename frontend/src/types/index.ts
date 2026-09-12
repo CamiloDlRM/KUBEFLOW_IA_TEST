@@ -170,7 +170,7 @@ export interface InviteTokenResponse {
 
 export interface Dataset {
   id: number;
-  repo_id: number;
+  project_id: number;
   name: string;
   description: string;
   bucket: string;
@@ -221,7 +221,7 @@ export interface SourcePreview {
 /** An external system the platform extracts from. */
 export interface DataSource {
   id: number;
-  repo_id: number;
+  project_id: number;
   name: string;
   kind: string;
   host: string;
@@ -281,6 +281,31 @@ export interface IngestionRun {
 /*  The medallion layers                                               */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  Projects                                                           */
+/* ------------------------------------------------------------------ */
+
+/** The code a project has linked, when it has linked any. */
+export interface ProjectRepository {
+  id: number;
+  github_url: string;
+  branch: string;
+  notebook_path: string;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  description: string;
+  owner_id: number | null;
+  created_at: string;
+  /** `null` until a repository is linked — a normal state, not an incomplete
+   *  one: the data factory works either way. */
+  repository: ProjectRepository | null;
+  sources: number;
+  gold_rows: number;
+}
+
 export type Layer = 'bronze' | 'silver' | 'gold';
 
 /** One rule of the cleaning standard, and what it did to this extraction. */
@@ -339,7 +364,7 @@ export interface LayerSummary {
 }
 
 export interface Medallion {
-  repo_id: number;
+  project_id: number;
   bronze: LayerSummary;
   silver: LayerSummary;
   gold: LayerSummary;
@@ -383,6 +408,37 @@ export interface LayerDiff {
   silver_rows: number;
   /** Pairing past the tracked removals is by position rather than known. */
   approximate: boolean;
+}
+
+/** One rule of the cleaning standard, and the table right after it ran. */
+export interface CleaningStep {
+  /** Empty on the first step, which is the data as it arrived. */
+  rule: string;
+  title: string;
+  tier: '' | 'structural' | 'categorical' | 'domain';
+  cells_changed: number;
+  rows_removed: number;
+  columns_removed: number;
+  flagged: number;
+  note: string;
+  columns: string[];
+  changed: boolean;
+  preview_columns: string[];
+  preview_rows: unknown[][];
+  /** Per cell, whether this rule changed it. Rows are matched by their place
+   *  in the data as it arrived, so an earlier removal does not make everything
+   *  below it look rewritten. */
+  changed_cells: boolean[][];
+  removed_rows: unknown[][];
+}
+
+export interface CleaningSteps {
+  run_id: string;
+  source_id: number;
+  rows_in: number;
+  rows_out: number;
+  sample: number;
+  steps: CleaningStep[];
 }
 
 export interface GoldRelations {

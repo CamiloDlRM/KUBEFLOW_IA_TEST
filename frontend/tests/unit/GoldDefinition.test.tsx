@@ -48,7 +48,7 @@ function renderPanel(summary: LayerSummary = SUMMARY) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <GoldDefinition repoId={4} summary={summary} />
+      <GoldDefinition projectId={4} summary={summary} />
     </QueryClientProvider>,
   );
 }

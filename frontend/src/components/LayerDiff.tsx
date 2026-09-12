@@ -26,18 +26,18 @@ import Spinner from './Spinner';
  * bronze, and it should look like a deletion because that is what it is.
  */
 export default function LayerDiff({
-  repoId,
+  projectId,
   streams,
 }: {
-  repoId: number;
+  projectId: number;
   streams: LayerStream[];
 }) {
   const sources = streams.filter((stream) => stream.source_id !== null);
   const [sourceId, setSourceId] = useState<number | null>(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['layer-diff', repoId, sourceId],
-    queryFn: () => getLayerDiff(repoId, { sourceId }),
+    queryKey: ['layer-diff', projectId, sourceId],
+    queryFn: () => getLayerDiff(projectId, { sourceId }),
     retry: false,
   });
 
