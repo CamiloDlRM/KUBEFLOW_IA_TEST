@@ -914,6 +914,48 @@ class LayerDiffResponse(BaseModel):
     approximate: bool = False
 
 
+class CleaningStepResponse(BaseModel):
+    """One rule of the cleaning standard, and the table right after it ran."""
+
+    #: Empty on the first step, which is the data as it arrived.
+    rule: str = ""
+    title: str = ""
+    tier: str = ""
+    cells_changed: int = 0
+    rows_removed: int = 0
+    columns_removed: int = 0
+    flagged: int = 0
+    note: str = ""
+    #: Columns this rule acted on.
+    columns: list[str] = Field(default_factory=list)
+    #: Whether it did anything. Steps that did nothing are still returned, so a
+    #: reader can see that the rule ran and found nothing to do — which is a
+    #: different statement from the rule not existing.
+    changed: bool = False
+
+    #: The table at this point: column names, and the first rows.
+    preview_columns: list[str] = Field(default_factory=list)
+    preview_rows: list[list[Any]] = Field(default_factory=list)
+    #: Per cell, whether this rule changed it from the previous step. Rows are
+    #: matched by their position in the data as it arrived, so a deduplication
+    #: earlier in the standard does not make everything after it look changed.
+    changed_cells: list[list[bool]] = Field(default_factory=list)
+    #: Rows present before this step and gone after it.
+    removed_rows: list[list[Any]] = Field(default_factory=list)
+
+
+class CleaningStepsResponse(BaseModel):
+    """Every step of the standard, in order, for one extraction."""
+
+    run_id: str
+    source_id: int
+    rows_in: int = 0
+    rows_out: int = 0
+    #: How many rows each preview shows.
+    sample: int = 0
+    steps: list[CleaningStepResponse] = Field(default_factory=list)
+
+
 class GoldDefinitionRequest(BaseModel):
     """A project's gold definition."""
 

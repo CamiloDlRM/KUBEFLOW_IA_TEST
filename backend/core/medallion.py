@@ -455,7 +455,7 @@ def promote_to_silver(
     # the coding step below writes text into it. Without this a SNOMED column
     # of pure digits is cast to an integer and the run fails at the final
     # write, after all the expensive work has already been done.
-    report = clean(table, keep_as_text=[code_column] if code_column else [])
+    report, _ = clean(table, keep_as_text=[code_column] if code_column else [])
 
     normalization: dict[str, Any] = {}
     if text_column and code_column:

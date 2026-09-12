@@ -167,7 +167,7 @@ def test_the_silver_schema_carries_the_types_the_cleaning_claimed(tmp_path: Path
             "code": ["80146002", "73761001"],
         },
     )
-    report = clean(table)
+    report, _ = clean(table)
 
     path = tmp_path / "silver.parquet"
     write_typed(table.columns, table.data, report.types, path)
@@ -230,7 +230,7 @@ def test_a_bronze_file_can_be_cleaned_into_silver_end_to_end(tmp_path: Path):
 
     columns, rows = read_head(bronze)
     table = Table.from_rows([dict(zip(columns, row)) for row in rows], columns)
-    report = clean(table)
+    report, _ = clean(table)
 
     silver = tmp_path / "silver.parquet"
     write_typed(table.columns, table.data, report.types, silver)

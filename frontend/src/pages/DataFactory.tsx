@@ -10,6 +10,7 @@ import UploadPanel from '../components/UploadPanel';
 import SourcePreviews from '../components/SourcePreviews';
 import LayerStage from '../components/LayerStage';
 import LayerDiff from '../components/LayerDiff';
+import CleaningSteps from '../components/CleaningSteps';
 import GoldDefinition from '../components/GoldDefinition';
 
 /**
@@ -109,6 +110,10 @@ export default function DataFactory() {
         {current === 'silver' && (
           <>
             <LayerStage projectId={id} summary={medallion.silver} />
+            {/* The steps first, then the diff. The steps answer "what did the
+                cleaning do", which is the question; the diff answers "show me
+                bronze and silver together", which is the check. */}
+            <CleaningSteps projectId={id} streams={medallion.silver.streams} />
             <LayerDiff projectId={id} streams={medallion.silver.streams} />
           </>
         )}

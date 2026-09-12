@@ -35,6 +35,7 @@ import type {
   Medallion,
   LayerSummary,
   Project,
+  CleaningSteps,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -496,6 +497,25 @@ export async function getLayerDiff(
       ...(options.limit ? { limit: options.limit } : {}),
     },
   });
+  return data;
+}
+
+/** The standard replayed a rule at a time over one extraction. */
+export async function getCleaningSteps(
+  projectId: number,
+  options: { sourceId?: number | null; runId?: string; limit?: number } = {},
+): Promise<CleaningSteps> {
+  const { data } = await apiClient.get<CleaningSteps>(
+    `/projects/${projectId}/medallion/steps`,
+    {
+      timeout: LAYER_TIMEOUT,
+      params: {
+        ...(options.sourceId ? { source_id: options.sourceId } : {}),
+        ...(options.runId ? { run_id: options.runId } : {}),
+        ...(options.limit ? { limit: options.limit } : {}),
+      },
+    },
+  );
   return data;
 }
 

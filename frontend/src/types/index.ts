@@ -410,6 +410,37 @@ export interface LayerDiff {
   approximate: boolean;
 }
 
+/** One rule of the cleaning standard, and the table right after it ran. */
+export interface CleaningStep {
+  /** Empty on the first step, which is the data as it arrived. */
+  rule: string;
+  title: string;
+  tier: '' | 'structural' | 'categorical' | 'domain';
+  cells_changed: number;
+  rows_removed: number;
+  columns_removed: number;
+  flagged: number;
+  note: string;
+  columns: string[];
+  changed: boolean;
+  preview_columns: string[];
+  preview_rows: unknown[][];
+  /** Per cell, whether this rule changed it. Rows are matched by their place
+   *  in the data as it arrived, so an earlier removal does not make everything
+   *  below it look rewritten. */
+  changed_cells: boolean[][];
+  removed_rows: unknown[][];
+}
+
+export interface CleaningSteps {
+  run_id: string;
+  source_id: number;
+  rows_in: number;
+  rows_out: number;
+  sample: number;
+  steps: CleaningStep[];
+}
+
 export interface GoldRelations {
   relations: Record<string, { columns: { name: string; type: string }[]; rows: number }>;
   default_sql: string;

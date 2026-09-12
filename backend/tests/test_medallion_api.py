@@ -281,6 +281,51 @@ class TestPreview:
         assert "gold table yet" in response.json()["detail"]
 
 
+@pytest.fixture()
+def diffed(db_session, own_project, storage_patched, tmp_path):
+    """One extraction carried through the layers, with a removed row."""
+    from core.cleaning import Table, clean
+    from core.medallion import BronzeWriter, write_typed
+
+    source = seed_source(db_session, own_project.id)
+    raw = [
+        # Renamed column, whitespace to trim, a sentinel null, a cast.
+        {"Patient ID": "p1", "Procedure Text": "  Hospice  care ", "Edad": "44", "Notes": None},
+        {"Patient ID": "p2", "Procedure Text": "Colonoscopy", "Edad": "N/A", "Notes": None},
+        # Byte-for-byte repeat of the first row.
+        {"Patient ID": "p1", "Procedure Text": "  Hospice  care ", "Edad": "44", "Notes": None},
+        {"Patient ID": "p3", "Procedure Text": "Appendectomy", "Edad": "71", "Notes": None},
+    ]
+    columns = list(raw[0])
+    bronze = tmp_path / "bronze.parquet"
+    with BronzeWriter(bronze, columns) as writer:
+        for row in raw:
+            writer.write(row[name] for name in columns)
+
+    table = Table.from_rows(raw, columns)
+    report, _ = clean(table)
+    silver = tmp_path / "silver.parquet"
+    write_typed(table.columns, table.data, report.types, silver)
+
+    key = f"project-{own_project.id}/source-{source.id}/run-d.parquet"
+    put_object(storage_patched, "bronze", key, bronze)
+    put_object(storage_patched, "silver", key, silver)
+
+    run = IngestionRun(
+        source_id=source.id,
+        status="success",
+        rows_extracted=len(raw),
+        bronze_key=key,
+        silver_key=key,
+        quality_report=report.summary(),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    return run
+
+
 # ---------------------------------------------------------------------------
 # Bronze and silver side by side
 # ---------------------------------------------------------------------------
@@ -292,50 +337,6 @@ class TestDiff:
     Every assertion here is about a claim a reader can check with their eyes,
     which is the whole reason the view exists.
     """
-
-    @pytest.fixture()
-    def diffed(self, db_session, own_project, storage_patched, tmp_path):
-        """One extraction carried through the layers, with a removed row."""
-        from core.cleaning import Table, clean
-        from core.medallion import BronzeWriter, write_typed
-
-        source = seed_source(db_session, own_project.id)
-        raw = [
-            # Renamed column, whitespace to trim, a sentinel null, a cast.
-            {"Patient ID": "p1", "Procedure Text": "  Hospice  care ", "Edad": "44", "Notes": None},
-            {"Patient ID": "p2", "Procedure Text": "Colonoscopy", "Edad": "N/A", "Notes": None},
-            # Byte-for-byte repeat of the first row.
-            {"Patient ID": "p1", "Procedure Text": "  Hospice  care ", "Edad": "44", "Notes": None},
-            {"Patient ID": "p3", "Procedure Text": "Appendectomy", "Edad": "71", "Notes": None},
-        ]
-        columns = list(raw[0])
-        bronze = tmp_path / "bronze.parquet"
-        with BronzeWriter(bronze, columns) as writer:
-            for row in raw:
-                writer.write(row[name] for name in columns)
-
-        table = Table.from_rows(raw, columns)
-        report = clean(table)
-        silver = tmp_path / "silver.parquet"
-        write_typed(table.columns, table.data, report.types, silver)
-
-        key = f"project-{own_project.id}/source-{source.id}/run-d.parquet"
-        put_object(storage_patched, "bronze", key, bronze)
-        put_object(storage_patched, "silver", key, silver)
-
-        run = IngestionRun(
-            source_id=source.id,
-            status="success",
-            rows_extracted=len(raw),
-            bronze_key=key,
-            silver_key=key,
-            quality_report=report.summary(),
-            started_at=datetime.now(timezone.utc),
-        )
-        db_session.add(run)
-        db_session.commit()
-        db_session.refresh(run)
-        return run
 
     def test_a_cast_reads_as_a_type_change_not_as_unchanged(
         self, test_app, own_project, diffed
@@ -446,6 +447,121 @@ class TestDiff:
             f"/projects/{own_project.id}/medallion/diff", params={"source_id": theirs.id}
         )
         assert response.status_code == 404
+
+
+class TestCleaningSteps:
+    """The standard replayed a rule at a time, with the table after each.
+
+    The counts say how much changed; this says what, on the rows. The care goes
+    into two things: that the decisions are the ones the real run made, and that
+    the highlighting survives a rule removing a row.
+    """
+
+    def test_the_first_step_is_the_data_as_it_arrived(self, test_app, own_project, diffed):
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+
+        first = body["steps"][0]
+        assert first["rule"] == ""
+        assert first["title"] == "As it arrived"
+        assert first["preview_columns"][0] == "Patient ID", "bronze's own column names"
+        assert all(cell is False for row in first["changed_cells"] for cell in row)
+
+    def test_every_rule_of_the_standard_appears_in_order(
+        self, test_app, own_project, diffed
+    ):
+        """Including the ones that found nothing to do: a rule that ran and
+        changed nothing is a different statement from a rule that is absent."""
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+
+        rules = [step["rule"] for step in body["steps"][1:]]
+        assert rules == [
+            "normalise_column_names",
+            "trim_whitespace",
+            "sentinel_nulls",
+            "drop_empty_columns",
+            "cast_types",
+            "deduplicate_rows",
+            "fold_categories",
+            "standardise_sex",
+            "flag_implausible_measurements",
+        ]
+
+    def test_a_step_shows_the_table_as_it_was_after_that_rule(
+        self, test_app, own_project, diffed
+    ):
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+        steps = {step["rule"]: step for step in body["steps"]}
+
+        # Before the rename the columns are the source's; after it they are not.
+        assert "Patient ID" in steps[""]["preview_columns"]
+        assert "patient_id" in steps["normalise_column_names"]["preview_columns"]
+
+    def test_a_changed_cell_is_marked_and_an_untouched_one_is_not(
+        self, test_app, own_project, diffed
+    ):
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+        step = next(s for s in body["steps"] if s["rule"] == "trim_whitespace")
+
+        column = step["preview_columns"].index("procedure_text")
+        other = step["preview_columns"].index("patient_id")
+        assert step["changed_cells"][0][column] is True
+        assert step["changed_cells"][0][other] is False
+
+    def test_the_row_a_rule_removed_is_shown_on_that_step(
+        self, test_app, own_project, diffed
+    ):
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+        step = next(s for s in body["steps"] if s["rule"] == "deduplicate_rows")
+
+        assert step["rows_removed"] == 1
+        assert len(step["removed_rows"]) == 1
+
+    def test_a_removal_does_not_make_every_later_row_look_changed(
+        self, test_app, own_project, diffed
+    ):
+        """Rows are matched by their position in the data as it arrived. By
+        list position, the deduplication shifts everything below it up and the
+        next rule would appear to have rewritten the whole table."""
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+        after = next(s for s in body["steps"] if s["rule"] == "fold_categories")
+
+        assert not any(cell for row in after["changed_cells"] for cell in row)
+
+    def test_the_cast_marks_the_cells_whose_type_it_changed(
+        self, test_app, own_project, diffed
+    ):
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+        step = next(s for s in body["steps"] if s["rule"] == "cast_types")
+
+        column = step["preview_columns"].index("edad")
+        assert step["changed_cells"][0][column] is True
+        assert step["preview_rows"][0][column] == 44
+
+    def test_the_decisions_are_the_ones_the_whole_extraction_produced(
+        self, test_app, own_project, diffed
+    ):
+        """Replaying over the eight rows shown would decide the type from eight
+        values. These rules are decisions about a column, so they are made over
+        the whole object and only the preview is a sample."""
+        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
+
+        assert body["rows_in"] == 4
+        assert body["rows_out"] == 3
+        assert body["sample"] == 8
+
+    def test_a_project_with_nothing_through_the_layers_says_so(
+        self, test_app, own_project, storage_patched
+    ):
+        response = test_app.get(f"/projects/{own_project.id}/medallion/steps")
+        assert response.status_code == 404
+
+    def test_another_tenant_cannot_replay_this_cleaning(
+        self, other_member_app, own_project, diffed
+    ):
+        assert (
+            other_member_app.get(f"/projects/{own_project.id}/medallion/steps").status_code
+            == 404
+        )
 
 
 # ---------------------------------------------------------------------------

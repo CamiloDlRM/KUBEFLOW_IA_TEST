@@ -28,10 +28,13 @@ from sqlmodel import Session, select
 
 from core import gold as gold_module
 from core import medallion
+from core.cleaning import Table, clean
 from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
+    CleaningStepResponse,
+    CleaningStepsResponse,
     DataSource,
     DiffColumnResponse,
     DiffRowResponse,
@@ -401,6 +404,173 @@ async def diff_layers(
         silver_rows=silver_total,
         approximate=truncated,
     )
+
+
+@router.get(
+    "/{project_id}/medallion/steps",
+    response_model=CleaningStepsResponse,
+    summary="Every step of the cleaning standard, with the table after each",
+)
+async def cleaning_steps(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    source_id: int | None = None,
+    run_id: str | None = None,
+    limit: int = Query(default=8, ge=1, le=50),
+) -> CleaningStepsResponse:
+    """Replay the standard over one extraction, a rule at a time.
+
+    The quality report says how much each rule changed. This shows the table
+    *after each one*, which is the difference between being told the data was
+    cleaned and watching it happen.
+
+    The replay runs over the whole bronze object rather than over the sample it
+    returns, because most of these rules are decisions about a *column*: the
+    type every value supports, the spelling a category is folded onto, whether
+    a row is a duplicate of one further down. Deciding those from eight rows
+    would produce a demonstration of something the real run never did.
+
+    The cost is one full read of the object per request. That is the same cost
+    the gold endpoints already pay, and the honest one for a claim about what
+    actually happened.
+    """
+    run = _run_for(session, project_id, source_id, run_id, current_user)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bronze = medallion.download_parquet(
+            "bronze", run.bronze_key, Path(tmpdir) / "bronze.parquet"
+        )
+        columns = medallion.columns_of(bronze)
+        rows = list(medallion.iter_rows(bronze))
+
+    source = session.get(DataSource, run.source_id)
+    table = Table.from_rows(rows, columns)
+    report, snapshots = clean(
+        table,
+        keep_as_text=[source.normalize_code_column] if source and source.normalize_code_column else [],
+        sample=limit,
+    )
+
+    return CleaningStepsResponse(
+        run_id=run.id,
+        source_id=run.source_id,
+        rows_in=report.rows_in,
+        rows_out=report.rows_out,
+        sample=limit,
+        steps=_steps(report, snapshots),
+    )
+
+
+def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
+    """Pair each snapshot with the rule that produced it."""
+    steps: list[CleaningStepResponse] = []
+
+    for index, snapshot in enumerate(snapshots):
+        previous = snapshots[index - 1] if index else None
+        outcome = report.outcomes[index - 1] if index else None
+
+        steps.append(
+            CleaningStepResponse(
+                rule=snapshot.rule,
+                title=snapshot.title,
+                tier=outcome.tier if outcome else "",
+                cells_changed=outcome.cells_changed if outcome else 0,
+                rows_removed=outcome.rows_removed if outcome else 0,
+                columns_removed=outcome.columns_removed if outcome else 0,
+                flagged=outcome.flagged if outcome else 0,
+                note=outcome.note if outcome else "",
+                columns=outcome.columns if outcome else [],
+                changed=outcome.changed if outcome else True,
+                preview_columns=snapshot.columns,
+                preview_rows=[[_jsonable(cell) for cell in row] for row in snapshot.rows],
+                changed_cells=_changed_cells(previous, snapshot),
+                removed_rows=_gone(previous, snapshot),
+            )
+        )
+    return steps
+
+
+def _changed_cells(previous: Any, snapshot: Any) -> list[list[bool]]:
+    """Which cells this rule changed, matched by each row's original position.
+
+    Matching by position in the *list* would be wrong the moment a rule removes
+    a row: everything below it shifts up, and a comparison would report the
+    whole table as rewritten by a rule that touched one row.
+    """
+    if previous is None:
+        return [[False] * len(snapshot.columns) for _ in snapshot.rows]
+
+    before = {
+        row_id: dict(zip(previous.columns, row))
+        for row_id, row in zip(previous.row_ids, previous.rows)
+    }
+
+    marks: list[list[bool]] = []
+    for row_id, row in zip(snapshot.row_ids, snapshot.rows):
+        earlier = before.get(row_id)
+        marks.append(
+            [
+                # A column that did not exist before is a change; one whose
+                # value differs is a change; renaming is handled by the column
+                # name being the key, so a rename alone marks nothing.
+                earlier is None or name not in earlier or earlier[name] != value
+                for name, value in zip(snapshot.columns, row)
+            ]
+        )
+    return marks
+
+
+def _gone(previous: Any, snapshot: Any) -> list[list[Any]]:
+    """Rows that were in the previous snapshot and are not in this one."""
+    if previous is None:
+        return []
+    surviving = set(snapshot.row_ids)
+    return [
+        [_jsonable(cell) for cell in row]
+        for row_id, row in zip(previous.row_ids, previous.rows)
+        if row_id not in surviving
+    ]
+
+
+def _run_for(
+    session: Session,
+    project_id: int,
+    source_id: int | None,
+    run_id: str | None,
+    user: User,
+) -> IngestionRun:
+    """The extraction a layer view is about: the newest that reached silver."""
+    get_visible_project_or_404(session, project_id, user)
+
+    statement = select(IngestionRun).where(
+        IngestionRun.status == "success",
+        IngestionRun.silver_key != "",
+    )
+    if run_id:
+        statement = statement.where(IngestionRun.id == run_id)
+    sources = {s.id: s for s in _sources_of(session, project_id)}
+    if source_id is not None:
+        if source_id not in sources:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Data source {source_id} not found.",
+            )
+        statement = statement.where(IngestionRun.source_id == source_id)
+    else:
+        statement = statement.where(
+            IngestionRun.source_id.in_(list(sources))  # type: ignore[attr-defined]
+        )
+
+    run = session.exec(
+        statement.order_by(IngestionRun.started_at.desc().nullslast())  # type: ignore[union-attr]
+    ).first()
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No extraction has been through the layers yet.",
+        )
+    return run
 
 
 def _removed_rows(report: dict[str, Any]) -> tuple[set[int], bool]:
