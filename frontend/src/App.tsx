@@ -9,6 +9,7 @@ import AddRepository from './pages/AddRepository';
 import Datasets from './pages/Datasets';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
+import DataFactory from './pages/DataFactory';
 import PipelineDetail from './pages/PipelineDetail';
 import Models from './pages/Models';
 import Dashboards from './pages/Dashboards';
@@ -45,7 +46,11 @@ export default function App() {
         <Route path="/repos/new" element={<AddRepository />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
-        <Route path="/projects/:projectId/data" element={<Datasets />} />
+        <Route path="/projects/:projectId/data" element={<DataFactory />} />
+        {/* The builds gold has produced, with the one the pipeline uses. Its
+            own route rather than a seventh stage: it is a record of outputs,
+            not a step in making them. */}
+        <Route path="/projects/:projectId/datasets" element={<Datasets />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
         <Route path="/dashboards" element={<Dashboards />} />
