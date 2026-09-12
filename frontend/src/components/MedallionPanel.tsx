@@ -4,6 +4,7 @@ import { getMedallion, previewLayer } from '../api/client';
 import type { Layer, LayerSummary } from '../types';
 import Spinner from './Spinner';
 import GoldDefinition from './GoldDefinition';
+import LayerDiff from './LayerDiff';
 
 /**
  * The three layers of a project, side by side.
@@ -70,7 +71,14 @@ export default function MedallionPanel({ repoId }: { repoId: number }) {
 
           <LayerDetail repoId={repoId} summary={layers.find((l) => l.layer === selected)!} />
 
-          {selected === 'gold' && <GoldDefinition repoId={repoId} summary={data.gold} />}
+          {/* Bronze and silver are two views of one transition, so either one
+              selected shows the diff between them. Gold is not a cleaning of
+              anything — it is a query — so it gets its definition instead. */}
+          {selected === 'gold' ? (
+            <GoldDefinition repoId={repoId} summary={data.gold} />
+          ) : (
+            <LayerDiff repoId={repoId} streams={data.silver.streams} />
+          )}
         </>
       )}
     </section>

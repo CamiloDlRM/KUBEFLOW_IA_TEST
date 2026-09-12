@@ -61,6 +61,11 @@ TIERS: Final[tuple[str, str, str]] = ("structural", "categorical", "domain")
 #: carrying the data itself.
 _MAX_EXAMPLES: Final[int] = 3
 
+#: How many removed row numbers the report carries. Enough to line up the two
+#: layers for any preview a person will read, bounded so the report cannot grow
+#: with the extraction.
+_MAX_REMOVED_TRACKED: Final[int] = 2_000
+
 
 # ---------------------------------------------------------------------------
 # The table being cleaned
@@ -124,6 +129,13 @@ class RuleOutcome:
     flagged: int = 0
     note: str = ""
     examples: list[dict[str, Any]] = field(default_factory=list)
+    #: Bronze row numbers this rule removed, so a later reader can line the two
+    #: layers up again. Only deduplication fills it — it is the one rule that
+    #: removes rows — and it is capped: past the cap the two layers can only be
+    #: aligned approximately, which the diff says out loud rather than
+    #: pretending otherwise.
+    removed_rows: list[int] = field(default_factory=list)
+    removed_rows_truncated: bool = False
 
     def record(self, column: str, before: Any, after: Any) -> None:
         """Keep a distinct example of what this rule did.
@@ -171,6 +183,8 @@ class RuleOutcome:
             "flagged": self.flagged,
             "note": self.note,
             "examples": self.examples,
+            "removed_rows": self.removed_rows,
+            "removed_rows_truncated": self.removed_rows_truncated,
         }
 
 
@@ -525,6 +539,10 @@ def deduplicate_rows(table: Table, report: CleaningReport) -> None:
         )
         if signature in seen:
             outcome.rows_removed += 1
+            if len(outcome.removed_rows) < _MAX_REMOVED_TRACKED:
+                outcome.removed_rows.append(index)
+            else:
+                outcome.removed_rows_truncated = True
             continue
         seen.add(signature)
         keep.append(index)
