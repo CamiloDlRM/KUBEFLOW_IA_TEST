@@ -26,6 +26,13 @@ import type {
   DataSource,
   IngestionRun,
   SourcePreview,
+  GoldPreview,
+  GoldRelations,
+  GoldSuggestion,
+  Layer,
+  LayerPreview,
+  Medallion,
+  LayerSummary,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -374,5 +381,80 @@ export async function previewSource(
   body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number },
 ): Promise<SourcePreview> {
   const { data } = await apiClient.post<SourcePreview>('/sources/preview', body);
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  The medallion layers                                               */
+/* ------------------------------------------------------------------ */
+
+/** The three layers of a project, side by side. Reads no data: the counts are
+ *  recorded where they were produced, so this costs the same at any scale. */
+export async function getMedallion(repoId: number): Promise<Medallion> {
+  const { data } = await apiClient.get<Medallion>(`/repos/${repoId}/medallion`);
+  return data;
+}
+
+/** The first rows of one layer's newest object, with the stored types. */
+export async function previewLayer(
+  repoId: number,
+  layer: Layer,
+  options: { sourceId?: number | null; limit?: number } = {},
+): Promise<LayerPreview> {
+  const { data } = await apiClient.get<LayerPreview>(
+    `/repos/${repoId}/medallion/${layer}/preview`,
+    {
+      params: {
+        ...(options.sourceId ? { source_id: options.sourceId } : {}),
+        ...(options.limit ? { limit: options.limit } : {}),
+      },
+    },
+  );
+  return data;
+}
+
+/** The silver schema a gold definition is written against. */
+export async function getGoldRelations(repoId: number): Promise<GoldRelations> {
+  const { data } = await apiClient.get<GoldRelations>(
+    `/repos/${repoId}/medallion/gold/relations`,
+  );
+  return data;
+}
+
+/** Run a candidate definition without saving it — the row count is the point. */
+export async function previewGold(
+  repoId: number,
+  sql: string,
+  limit = 20,
+): Promise<GoldPreview> {
+  const { data } = await apiClient.post<GoldPreview>(
+    `/repos/${repoId}/medallion/gold/preview`,
+    { sql, limit },
+  );
+  return data;
+}
+
+/** Store the definition. It takes effect on the next extraction. */
+export async function setGoldDefinition(
+  repoId: number,
+  sql: string,
+  name = 'gold',
+): Promise<LayerSummary> {
+  const { data } = await apiClient.put<LayerSummary>(`/repos/${repoId}/medallion/gold`, {
+    sql,
+    name,
+  });
+  return data;
+}
+
+/** Ask the model for a definition. It returns SQL, never rows. */
+export async function suggestGold(
+  repoId: number,
+  question: string,
+): Promise<GoldSuggestion> {
+  const { data } = await apiClient.post<GoldSuggestion>(
+    `/repos/${repoId}/medallion/gold/suggest`,
+    { question },
+  );
   return data;
 }

@@ -58,6 +58,45 @@ const RUN: IngestionRun = {
     vocabulary_size: 246,
     by_method: { 'cascade:exact': 5213, 'cascade:fuzzy': 1095 },
   },
+  quality_report: {
+    rows_in: 15884,
+    rows_out: 15880,
+    columns_in: 6,
+    columns_out: 5,
+    cells_changed: 4211,
+    flagged: 3,
+    types: { recorded_at: 'timestamp', procedure_code: 'string' },
+    renamed: { 'Procedure Text': 'procedure_text' },
+    rules: [
+      {
+        tier: 'structural',
+        rule: 'deduplicate_rows',
+        title: 'Exact duplicate rows removed',
+        columns: [],
+        cells_changed: 0,
+        rows_removed: 4,
+        columns_removed: 0,
+        flagged: 0,
+        note: '4 row(s) were byte-for-byte repeats',
+        examples: [],
+      },
+      {
+        tier: 'domain',
+        rule: 'flag_implausible_measurements',
+        title: 'Implausible measurements flagged',
+        columns: ['edad'],
+        cells_changed: 0,
+        rows_removed: 0,
+        columns_removed: 0,
+        flagged: 3,
+        note: 'edad: 3 outside 0–130 years — flagged only, nothing was changed or removed',
+        examples: [{ column: 'edad', before: 400, after: 'outside 0–130 years' }],
+      },
+    ],
+    rules_applied: 9,
+  },
+  bronze_key: 'project-7/source-1/run-1.parquet',
+  silver_key: 'project-7/source-1/run-1.parquet',
   started_at: '2026-09-11T10:05:00Z',
   finished_at: '2026-09-11T10:06:00Z',
   error: '',
@@ -115,6 +154,36 @@ describe('SourcesPanel', () => {
     expect(text).toMatch(/terms learned from the coded rows/);
     expect(text.replace(/[.,\s]/g, '')).toContain('6308');
     expect(text.replace(/[.,\s]/g, '')).toContain('140');
+  });
+
+  it('says what the cleaning changed between bronze and silver', async () => {
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+
+    const line = await screen.findByText(/values corrected/);
+    const text = (line.textContent ?? '').replace(/[.,\s]/g, '');
+    expect(text).toContain('4211');
+    expect(text).toContain('4duplicaterowsremoved');
+  });
+
+  it('says a flagged value was left in place, not fixed', async () => {
+    // The distinction the domain tier exists to make: a 400-year-old is a
+    // problem somebody has to look at, not a row to quietly delete.
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+
+    expect(await screen.findByText(/flagged, left in place/)).toBeInTheDocument();
+  });
+
+  it('renders the run history of a source with no quality report', async () => {
+    // Runs that completed before the layers existed have none, and a history
+    // that throws on those hides the very thing it was added to enrich.
+    getIngestionRuns.mockResolvedValue([{ ...RUN, quality_report: undefined }]);
+    renderPanel();
+    await userEvent.click(await screen.findByText('Hospital HIS'));
+
+    expect(await screen.findByText(/codes filled/)).toBeInTheDocument();
+    expect(screen.queryByText(/values corrected/)).not.toBeInTheDocument();
   });
 
   it('marks an empty extraction as nothing new rather than a failure', async () => {

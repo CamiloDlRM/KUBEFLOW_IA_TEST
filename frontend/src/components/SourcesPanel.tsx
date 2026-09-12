@@ -9,7 +9,13 @@ import {
   runIngestion,
   type CreateSourceRequest,
 } from '../api/client';
-import type { DataSource, IngestionRun, NormalizationSummary, SourcePreview } from '../types';
+import type {
+  DataSource,
+  IngestionRun,
+  NormalizationSummary,
+  QualityReport,
+  SourcePreview,
+} from '../types';
 import Spinner from './Spinner';
 
 /**
@@ -244,6 +250,7 @@ function RunHistory({ sourceId }: { sourceId: number }) {
 
 function RunRow({ run }: { run: IngestionRun }) {
   const normalization = asSummary(run.normalization);
+  const report = asReport(run.quality_report);
 
   return (
     <li className="rounded border border-slate-800 bg-slate-950/50 px-3 py-2 text-sm">
@@ -272,6 +279,8 @@ function RunRow({ run }: { run: IngestionRun }) {
 
       {normalization && <NormalizationBar summary={normalization} />}
 
+      {report && <CleaningReport report={report} />}
+
       {run.error && <p className="mt-1 text-xs text-red-400">{run.error}</p>}
     </li>
   );
@@ -290,9 +299,10 @@ function RunRow({ run }: { run: IngestionRun }) {
  * union, so test for the shape.
  */
 function asSummary(
-  value: IngestionRun['normalization'],
+  value: IngestionRun['normalization'] | undefined,
 ): NormalizationSummary | null {
-  const candidate = value as NormalizationSummary;
+  const candidate = value as NormalizationSummary | undefined;
+  if (!candidate) return null;
   return typeof candidate.rows === 'number' || candidate.error ? candidate : null;
 }
 
@@ -330,6 +340,86 @@ function NormalizationBar({ summary }: { summary: NormalizationSummary }) {
         {summary.vocabulary_size.toLocaleString()} terms learned from the coded rows
       </p>
     </div>
+  );
+}
+
+/** Narrow the run's quality report.
+ *
+ * Tolerates the field being absent, not only empty: runs that completed before
+ * the layers existed have no report, and a component that throws on those
+ * would hide the history it was added to enrich.
+ */
+function asReport(value: IngestionRun['quality_report'] | undefined): QualityReport | null {
+  const candidate = value as QualityReport | undefined;
+  return candidate && typeof candidate.rows_in === 'number' ? candidate : null;
+}
+
+/**
+ * What the cleaning standard changed between bronze and silver.
+ *
+ * Collapsed by default and expandable, because the summary line answers the
+ * usual question — was anything actually done — and the rule list answers the
+ * one that matters when the answer looks wrong. Both are needed: a silver
+ * layer whose difference from bronze cannot be stated is a copy, and a wall of
+ * rules nobody opens is the same thing with more scrolling.
+ */
+function CleaningReport({ report }: { report: QualityReport }) {
+  const droppedRows = report.rows_in - report.rows_out;
+  const droppedColumns = report.columns_in - report.columns_out;
+
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-slate-400 hover:text-slate-200">
+        Cleaned into silver: {report.cells_changed.toLocaleString()} values corrected
+        {droppedRows > 0 && `, ${droppedRows.toLocaleString()} duplicate rows removed`}
+        {droppedColumns > 0 && `, ${droppedColumns} empty columns dropped`}
+        {report.flagged > 0 && `, ${report.flagged.toLocaleString()} values flagged`}
+      </summary>
+
+      <ul className="mt-2 space-y-1.5 border-l border-slate-700 pl-3">
+        {report.rules.map((rule) => (
+          <li key={rule.rule}>
+            <p className="text-slate-300">
+              <span className="mr-1.5 rounded bg-slate-800 px-1 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                {rule.tier}
+              </span>
+              {rule.title}
+              {rule.cells_changed > 0 && (
+                <span className="ml-1 text-slate-500">
+                  — {rule.cells_changed.toLocaleString()}{' '}
+                  {rule.rule === 'normalise_column_names' ? 'columns' : 'values'}
+                </span>
+              )}
+              {rule.rows_removed > 0 && (
+                <span className="ml-1 text-slate-500">
+                  — {rule.rows_removed.toLocaleString()} rows
+                </span>
+              )}
+              {rule.flagged > 0 && (
+                // Flagged, not fixed. Saying so here is the point: the value is
+                // still in the data and somebody has to look at it.
+                <span className="ml-1 text-amber-400">
+                  — {rule.flagged.toLocaleString()} flagged, left in place
+                </span>
+              )}
+            </p>
+            {rule.examples.length > 0 && (
+              <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+                {rule.examples
+                  .map(
+                    (example) =>
+                      `${String(example.before)} → ${
+                        example.after === null ? 'null' : String(example.after)
+                      }`,
+                  )
+                  .join('   ')}
+              </p>
+            )}
+            {rule.note && <p className="mt-0.5 text-[11px] text-slate-600">{rule.note}</p>}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

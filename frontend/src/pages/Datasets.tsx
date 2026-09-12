@@ -12,6 +12,7 @@ import { useRepos } from '../hooks/usePipelines';
 import type { Dataset } from '../types';
 import Spinner from '../components/Spinner';
 import SourcesPanel from '../components/SourcesPanel';
+import MedallionPanel from '../components/MedallionPanel';
 import { formatDate, formatBytes, repoNameFromUrl } from '../utils/format';
 
 const ACCEPTED = '.csv,.parquet';
@@ -77,6 +78,11 @@ export default function Datasets() {
       </div>
 
       <SourcesPanel repoId={id} />
+
+      {/* Above the upload panel, and below the sources: it reads top to bottom
+          as the path the data takes — where it comes from, what happens to it,
+          and only then the file-upload shortcut. */}
+      <MedallionPanel repoId={id} />
 
       <UploadPanel repoId={id} />
 
