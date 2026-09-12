@@ -33,6 +33,8 @@ from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     DataSource,
+    DiffColumnResponse,
+    DiffRowResponse,
     GoldDefinitionRequest,
     GoldPreviewRequest,
     GoldPreviewResponse,
@@ -40,6 +42,7 @@ from models.schemas import (
     GoldSuggestResponse,
     GoldTable,
     IngestionRun,
+    LayerDiffResponse,
     LayerPreviewResponse,
     LayerStreamResponse,
     LayerSummaryResponse,
@@ -307,6 +310,225 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return value
+
+
+@router.get(
+    "/{repo_id}/medallion/diff",
+    response_model=LayerDiffResponse,
+    summary="Bronze and silver side by side, for one extraction",
+)
+async def diff_layers(
+    repo_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    source_id: int | None = None,
+    run_id: str | None = None,
+    limit: int = Query(default=25, ge=1, le=200),
+) -> LayerDiffResponse:
+    """Pair each bronze row with the silver row built from it.
+
+    The counts in the quality report say *how much* changed. This says *what*,
+    on the actual rows — which is the only form of the claim a person can check
+    rather than take on trust.
+
+    Pairing is possible because a run's bronze and silver objects are the same
+    key in two buckets and the cleaning preserves row order. The one rule that
+    breaks a positional pairing is deduplication, so it records which rows it
+    removed; past the number it tracks, the pairing is by position and the
+    response says so.
+    """
+    get_visible_repo_or_404(session, repo_id, current_user)
+
+    statement = select(IngestionRun).where(
+        IngestionRun.status == "success",
+        IngestionRun.silver_key != "",
+    )
+    if run_id:
+        statement = statement.where(IngestionRun.id == run_id)
+    sources = {s.id: s for s in _sources_of(session, repo_id)}
+    if source_id is not None:
+        if source_id not in sources:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Data source {source_id} not found.",
+            )
+        statement = statement.where(IngestionRun.source_id == source_id)
+    else:
+        statement = statement.where(
+            IngestionRun.source_id.in_(list(sources))  # type: ignore[attr-defined]
+        )
+
+    run = session.exec(
+        statement.order_by(IngestionRun.started_at.desc().nullslast())  # type: ignore[union-attr]
+    ).first()
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No extraction has been through the layers yet.",
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bronze = medallion.download_parquet(
+            "bronze", run.bronze_key, Path(tmpdir) / "bronze.parquet"
+        )
+        silver = medallion.download_parquet(
+            "silver", run.silver_key, Path(tmpdir) / "silver.parquet"
+        )
+        bronze_schema = medallion.read_schema(bronze)
+        silver_schema = medallion.read_schema(silver)
+        bronze_total = medallion.row_count(bronze)
+        silver_total = medallion.row_count(silver)
+
+        removed, truncated = _removed_rows(run.quality_report or {})
+        # Read enough bronze rows to still produce `limit` pairs after the
+        # removed ones are accounted for.
+        take = limit + len(removed & set(range(limit + len(removed))))
+        _, bronze_rows = medallion.read_head(bronze, limit=take)
+        _, silver_rows = medallion.read_head(silver, limit=limit)
+
+    columns = _pair_columns(
+        bronze_schema, silver_schema, (run.quality_report or {}).get("renamed", {})
+    )
+    rows = _pair_rows(columns, bronze_rows, silver_rows, removed, limit)
+
+    return LayerDiffResponse(
+        run_id=run.id,
+        source_id=run.source_id,
+        key=run.silver_key,
+        columns=columns,
+        rows=rows,
+        bronze_rows=bronze_total,
+        silver_rows=silver_total,
+        approximate=truncated,
+    )
+
+
+def _removed_rows(report: dict[str, Any]) -> tuple[set[int], bool]:
+    """Which bronze rows the cleaning removed, and whether the list is partial."""
+    for rule in report.get("rules", []):
+        if rule.get("rule") == "deduplicate_rows":
+            return set(rule.get("removed_rows", [])), bool(
+                rule.get("removed_rows_truncated")
+            )
+    return set(), False
+
+
+def _pair_columns(
+    bronze_schema: dict[str, str],
+    silver_schema: dict[str, str],
+    renamed: dict[str, str],
+) -> list[DiffColumnResponse]:
+    """Line the two schemas up, following the renames the cleaning recorded."""
+    paired: list[DiffColumnResponse] = []
+    claimed: set[str] = set()
+
+    for name, kind in bronze_schema.items():
+        target = renamed.get(name, name)
+        if target in silver_schema:
+            claimed.add(target)
+            change = "kept"
+            if target != name:
+                change = "renamed"
+            elif silver_schema[target] != kind:
+                change = "retyped"
+            paired.append(
+                DiffColumnResponse(
+                    bronze=name,
+                    silver=target,
+                    bronze_type=kind,
+                    silver_type=silver_schema[target],
+                    change=change,
+                )
+            )
+        else:
+            # Dropped: the column held nothing in any row.
+            paired.append(
+                DiffColumnResponse(bronze=name, bronze_type=kind, change="dropped")
+            )
+
+    # Whatever silver has that bronze did not: the coding step's audit columns.
+    for name, kind in silver_schema.items():
+        if name not in claimed:
+            paired.append(
+                DiffColumnResponse(silver=name, silver_type=kind, change="added")
+            )
+    return paired
+
+
+def _classify(before: Any, after: Any) -> str:
+    """Say what happened to one cell.
+
+    ``type`` is its own answer rather than being folded into ``same``: casting
+    ``"12261"`` to ``12261`` renders identically, and a diff that called that
+    unchanged would hide the single most common thing the cleaning does.
+    """
+    if before is None and after is None:
+        return "same"
+    if after is None:
+        return "null"
+    if before is None:
+        return "value"
+    if str(before) == str(after):
+        return "same" if type(before) is type(after) else "type"
+    return "value"
+
+
+def _pair_rows(
+    columns: list[DiffColumnResponse],
+    bronze_rows: list[list[Any]],
+    silver_rows: list[list[Any]],
+    removed: set[int],
+    limit: int,
+) -> list[DiffRowResponse]:
+    """Walk both sides together, skipping the rows the cleaning removed."""
+    bronze_index = {column.bronze: position for position, column in enumerate(columns) if column.bronze}
+    silver_index = {column.silver: position for position, column in enumerate(columns) if column.silver}
+    bronze_order = [name for name in bronze_index]
+    silver_order = [name for name in silver_index]
+
+    paired: list[DiffRowResponse] = []
+    silver_cursor = 0
+    for row_number, bronze_row in enumerate(bronze_rows):
+        if len(paired) >= limit:
+            break
+        left = [None] * len(columns)
+        for position, name in enumerate(bronze_order):
+            left[bronze_index[name]] = _jsonable(bronze_row[position])
+
+        if row_number in removed:
+            paired.append(
+                DiffRowResponse(
+                    row=row_number,
+                    bronze=left,
+                    silver=[],
+                    cells=["absent"] * len(columns),
+                    removed=True,
+                )
+            )
+            continue
+
+        if silver_cursor >= len(silver_rows):
+            break
+        silver_row = silver_rows[silver_cursor]
+        silver_cursor += 1
+
+        right = [None] * len(columns)
+        for position, name in enumerate(silver_order):
+            right[silver_index[name]] = _jsonable(silver_row[position])
+
+        cells = []
+        for position, column in enumerate(columns):
+            if column.bronze is None:
+                cells.append("value" if right[position] is not None else "same")
+            elif column.silver is None:
+                cells.append("absent")
+            else:
+                cells.append(_classify(left[position], right[position]))
+
+        paired.append(
+            DiffRowResponse(row=row_number, bronze=left, silver=right, cells=cells)
+        )
+    return paired
 
 
 # ---------------------------------------------------------------------------

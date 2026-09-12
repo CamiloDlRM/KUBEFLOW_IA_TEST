@@ -282,6 +282,173 @@ class TestPreview:
 
 
 # ---------------------------------------------------------------------------
+# Bronze and silver side by side
+# ---------------------------------------------------------------------------
+
+
+class TestDiff:
+    """The counts say how much changed; this says what, on the actual rows.
+
+    Every assertion here is about a claim a reader can check with their eyes,
+    which is the whole reason the view exists.
+    """
+
+    @pytest.fixture()
+    def diffed(self, db_session, own_repo, storage_patched, tmp_path):
+        """One extraction carried through the layers, with a removed row."""
+        from core.cleaning import Table, clean
+        from core.medallion import BronzeWriter, write_typed
+
+        source = seed_source(db_session, own_repo.id)
+        raw = [
+            # Renamed column, whitespace to trim, a sentinel null, a cast.
+            {"Patient ID": "p1", "Procedure Text": "  Hospice  care ", "Edad": "44", "Notes": None},
+            {"Patient ID": "p2", "Procedure Text": "Colonoscopy", "Edad": "N/A", "Notes": None},
+            # Byte-for-byte repeat of the first row.
+            {"Patient ID": "p1", "Procedure Text": "  Hospice  care ", "Edad": "44", "Notes": None},
+            {"Patient ID": "p3", "Procedure Text": "Appendectomy", "Edad": "71", "Notes": None},
+        ]
+        columns = list(raw[0])
+        bronze = tmp_path / "bronze.parquet"
+        with BronzeWriter(bronze, columns) as writer:
+            for row in raw:
+                writer.write(row[name] for name in columns)
+
+        table = Table.from_rows(raw, columns)
+        report = clean(table)
+        silver = tmp_path / "silver.parquet"
+        write_typed(table.columns, table.data, report.types, silver)
+
+        key = f"project-{own_repo.id}/source-{source.id}/run-d.parquet"
+        put_object(storage_patched, "bronze", key, bronze)
+        put_object(storage_patched, "silver", key, silver)
+
+        run = IngestionRun(
+            source_id=source.id,
+            status="success",
+            rows_extracted=len(raw),
+            bronze_key=key,
+            silver_key=key,
+            quality_report=report.summary(),
+            started_at=datetime.now(timezone.utc),
+        )
+        db_session.add(run)
+        db_session.commit()
+        db_session.refresh(run)
+        return run
+
+    def test_a_cast_reads_as_a_type_change_not_as_unchanged(
+        self, test_app, own_repo, diffed
+    ):
+        """"44" and 44 render identically — a diff that called that unchanged
+        would hide the most common thing the cleaning does."""
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        position = next(
+            index for index, c in enumerate(body["columns"]) if c["silver"] == "edad"
+        )
+        assert body["rows"][0]["cells"][position] == "type"
+        assert body["rows"][0]["bronze"][position] == "44"
+        assert body["rows"][0]["silver"][position] == 44
+
+    def test_a_whitespace_correction_reads_as_a_value_change(
+        self, test_app, own_repo, diffed
+    ):
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        position = next(
+            index for index, c in enumerate(body["columns"]) if c["silver"] == "procedure_text"
+        )
+        assert body["rows"][0]["cells"][position] == "value"
+        assert body["rows"][0]["bronze"][position] == "  Hospice  care "
+        assert body["rows"][0]["silver"][position] == "Hospice care"
+
+    def test_a_sentinel_becoming_null_reads_as_a_null(self, test_app, own_repo, diffed):
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        position = next(
+            index for index, c in enumerate(body["columns"]) if c["silver"] == "edad"
+        )
+        assert body["rows"][1]["cells"][position] == "null"
+        assert body["rows"][1]["silver"][position] is None
+
+    def test_a_renamed_column_is_one_column_with_two_names(
+        self, test_app, own_repo, diffed
+    ):
+        """Not a drop and an add, which is what a naive schema comparison gives."""
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        renamed = [c for c in body["columns"] if c["change"] == "renamed"]
+        assert {"Patient ID", "Procedure Text", "Edad"} <= {c["bronze"] for c in renamed}
+        assert all(c["silver"] for c in renamed)
+
+    def test_an_empty_column_shows_as_dropped(self, test_app, own_repo, diffed):
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        dropped = [c for c in body["columns"] if c["change"] == "dropped"]
+        assert [c["bronze"] for c in dropped] == ["Notes"]
+        assert dropped[0]["silver"] is None
+
+    def test_the_column_carries_the_type_on_each_side(self, test_app, own_repo, diffed):
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        edad = next(c for c in body["columns"] if c["silver"] == "edad")
+        assert edad["bronze_type"] == "string"
+        assert edad["silver_type"] == "int64"
+
+    def test_a_removed_row_has_no_silver_side(self, test_app, own_repo, diffed):
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        removed = [row for row in body["rows"] if row["removed"]]
+        assert len(removed) == 1
+        assert removed[0]["row"] == 2
+        assert removed[0]["silver"] == []
+
+    def test_rows_after_a_removal_stay_aligned(self, test_app, own_repo, diffed):
+        """The reason deduplication records which rows it removed. Aligning by
+        position alone would pair bronze row 3 with silver row 2 and report
+        every cell of both as changed."""
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+
+        last = body["rows"][-1]
+        assert last["row"] == 3
+        position = next(
+            index for index, c in enumerate(body["columns"]) if c["silver"] == "patient_id"
+        )
+        assert last["bronze"][position] == "p3"
+        assert last["silver"][position] == "p3"
+
+    def test_the_row_counts_of_both_objects_are_reported(
+        self, test_app, own_repo, diffed
+    ):
+        body = test_app.get(f"/repos/{own_repo.id}/medallion/diff").json()
+        assert body["bronze_rows"] == 4
+        assert body["silver_rows"] == 3
+        assert body["approximate"] is False
+
+    def test_a_project_with_nothing_through_the_layers_says_so(
+        self, test_app, own_repo, storage_patched
+    ):
+        response = test_app.get(f"/repos/{own_repo.id}/medallion/diff")
+        assert response.status_code == 404
+        assert "been through the layers" in response.json()["detail"]
+
+    def test_another_tenant_cannot_read_this_diff(self, other_member_app, own_repo, diffed):
+        assert (
+            other_member_app.get(f"/repos/{own_repo.id}/medallion/diff").status_code == 404
+        )
+
+    def test_a_source_from_another_project_is_not_found(
+        self, test_app, db_session, own_repo, other_repo, diffed
+    ):
+        theirs = seed_source(db_session, other_repo.id, name="Theirs")
+        response = test_app.get(
+            f"/repos/{own_repo.id}/medallion/diff", params={"source_id": theirs.id}
+        )
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Defining gold
 # ---------------------------------------------------------------------------
 

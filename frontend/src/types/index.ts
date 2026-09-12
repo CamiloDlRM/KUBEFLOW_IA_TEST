@@ -354,6 +354,37 @@ export interface LayerPreview {
   truncated: boolean;
 }
 
+/** One column, as it appears on each side of the cleaning. */
+export interface DiffColumn {
+  /** `null` on a side means the column is not there. */
+  bronze: string | null;
+  silver: string | null;
+  bronze_type: string;
+  silver_type: string;
+  change: 'kept' | 'renamed' | 'dropped' | 'added' | 'retyped';
+}
+
+export interface DiffRow {
+  /** Row number in the bronze object, so the pairing is checkable. */
+  row: number;
+  bronze: unknown[];
+  silver: unknown[];
+  cells: ('same' | 'value' | 'type' | 'null' | 'absent')[];
+  removed: boolean;
+}
+
+export interface LayerDiff {
+  run_id: string;
+  source_id: number;
+  key: string;
+  columns: DiffColumn[];
+  rows: DiffRow[];
+  bronze_rows: number;
+  silver_rows: number;
+  /** Pairing past the tracked removals is by position rather than known. */
+  approximate: boolean;
+}
+
 export interface GoldRelations {
   relations: Record<string, { columns: { name: string; type: string }[]; rows: number }>;
   default_sql: string;

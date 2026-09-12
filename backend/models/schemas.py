@@ -781,6 +781,48 @@ class LayerPreviewResponse(BaseModel):
     truncated: bool = False
 
 
+class DiffColumnResponse(BaseModel):
+    """One column, as it appears on each side of the cleaning."""
+
+    #: ``None`` on a side means the column is not there: dropped because it was
+    #: empty, or added by the coding step.
+    bronze: str | None = None
+    silver: str | None = None
+    bronze_type: str = ""
+    silver_type: str = ""
+    #: kept | renamed | dropped | added | retyped
+    change: str = "kept"
+
+
+class DiffRowResponse(BaseModel):
+    """One row on both sides, with what happened to each cell."""
+
+    #: Row number in the bronze object, so the pairing is checkable.
+    row: int
+    bronze: list[Any] = Field(default_factory=list)
+    silver: list[Any] = Field(default_factory=list)
+    #: Per cell: same | value | type | null | absent
+    cells: list[str] = Field(default_factory=list)
+    #: True when the cleaning removed this row — it has no silver side.
+    removed: bool = False
+
+
+class LayerDiffResponse(BaseModel):
+    """Bronze and silver side by side, for one extraction."""
+
+    run_id: str
+    source_id: int
+    key: str
+    columns: list[DiffColumnResponse] = Field(default_factory=list)
+    rows: list[DiffRowResponse] = Field(default_factory=list)
+    bronze_rows: int = 0
+    silver_rows: int = 0
+    #: Set when deduplication removed more rows than the report tracks, so the
+    #: pairing past that point is by position rather than known. Said out loud
+    #: rather than left for a reader to discover.
+    approximate: bool = False
+
+
 class GoldDefinitionRequest(BaseModel):
     """A project's gold definition."""
 

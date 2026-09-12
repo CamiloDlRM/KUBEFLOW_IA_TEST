@@ -30,6 +30,7 @@ import type {
   GoldRelations,
   GoldSuggestion,
   Layer,
+  LayerDiff,
   LayerPreview,
   Medallion,
   LayerSummary,
@@ -410,6 +411,21 @@ export async function previewLayer(
       },
     },
   );
+  return data;
+}
+
+/** Bronze and silver side by side, for one extraction. */
+export async function getLayerDiff(
+  repoId: number,
+  options: { sourceId?: number | null; runId?: string; limit?: number } = {},
+): Promise<LayerDiff> {
+  const { data } = await apiClient.get<LayerDiff>(`/repos/${repoId}/medallion/diff`, {
+    params: {
+      ...(options.sourceId ? { source_id: options.sourceId } : {}),
+      ...(options.runId ? { run_id: options.runId } : {}),
+      ...(options.limit ? { limit: options.limit } : {}),
+    },
+  });
   return data;
 }
 
