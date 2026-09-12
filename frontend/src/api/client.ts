@@ -414,12 +414,24 @@ export async function previewLayer(
   return data;
 }
 
+/**
+ * How long the medallion's heavy endpoints are given.
+ *
+ * The client's default is 15 seconds, which suits a database read and not much
+ * else. These three fetch every silver object of a project before they can
+ * answer, and the suggestion waits on a language model as well — the default
+ * aborted that one at 15 seconds, which the UI then had no way to report.
+ */
+const LAYER_TIMEOUT = 60_000;
+const MODEL_TIMEOUT = 120_000;
+
 /** Bronze and silver side by side, for one extraction. */
 export async function getLayerDiff(
   repoId: number,
   options: { sourceId?: number | null; runId?: string; limit?: number } = {},
 ): Promise<LayerDiff> {
   const { data } = await apiClient.get<LayerDiff>(`/repos/${repoId}/medallion/diff`, {
+    timeout: LAYER_TIMEOUT,
     params: {
       ...(options.sourceId ? { source_id: options.sourceId } : {}),
       ...(options.runId ? { run_id: options.runId } : {}),
@@ -433,6 +445,7 @@ export async function getLayerDiff(
 export async function getGoldRelations(repoId: number): Promise<GoldRelations> {
   const { data } = await apiClient.get<GoldRelations>(
     `/repos/${repoId}/medallion/gold/relations`,
+    { timeout: LAYER_TIMEOUT },
   );
   return data;
 }
@@ -446,6 +459,7 @@ export async function previewGold(
   const { data } = await apiClient.post<GoldPreview>(
     `/repos/${repoId}/medallion/gold/preview`,
     { sql, limit },
+    { timeout: LAYER_TIMEOUT },
   );
   return data;
 }
@@ -471,6 +485,7 @@ export async function suggestGold(
   const { data } = await apiClient.post<GoldSuggestion>(
     `/repos/${repoId}/medallion/gold/suggest`,
     { question },
+    { timeout: MODEL_TIMEOUT },
   );
   return data;
 }

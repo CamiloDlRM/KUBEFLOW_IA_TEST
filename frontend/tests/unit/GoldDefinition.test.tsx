@@ -78,6 +78,44 @@ describe('GoldDefinition', () => {
     expect(await screen.findByText(/no definition of its own yet/)).toBeInTheDocument();
   });
 
+  it('warns that the default stacks several sources rather than joining them', async () => {
+    // The nulls a user finds in the gold preview are structural: each row
+    // carries one source's columns and nothing in the other's. Letting them
+    // discover that by scrolling is how somebody trains on a half-empty table.
+    getGoldRelations.mockResolvedValue({
+      relations: {
+        patients_1: RELATIONS.relations.patients_1,
+        encounters_2: { rows: 5, columns: [{ name: 'encounter_id', type: 'VARCHAR' }] },
+      },
+      default_sql: 'SELECT * FROM patients_1\nUNION ALL BY NAME\nSELECT * FROM encounters_2',
+    });
+    renderPanel();
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent(/2 sources are stacked, not joined/);
+    expect(warning).toHaveTextContent(/rarely a table worth training on/);
+  });
+
+  it('does not warn when a single source is the whole project', async () => {
+    renderPanel();
+    await screen.findByText(/no definition of its own yet/);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('does not warn once the project has written its own query', async () => {
+    getGoldRelations.mockResolvedValue({
+      relations: {
+        patients_1: RELATIONS.relations.patients_1,
+        encounters_2: { rows: 5, columns: [{ name: 'encounter_id', type: 'VARCHAR' }] },
+      },
+      default_sql: 'x',
+    });
+    renderPanel({ ...SUMMARY, sql: 'SELECT 1', is_default_definition: false });
+
+    await screen.findByText(/on every extraction/);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('asks the model for a query and puts it in an editable box', async () => {
     suggestGold.mockResolvedValue({
       sql: 'SELECT patient_id, age FROM patients_1',
@@ -110,6 +148,34 @@ describe('GoldDefinition', () => {
     await userEvent.click(screen.getByRole('button', { name: /write the query/i }));
 
     expect(await screen.findByText(/No AI provider is configured/)).toBeInTheDocument();
+  });
+
+  it('says so when the call for a suggestion fails outright', async () => {
+    // The failure this was written for: the client aborted the request at 15
+    // seconds, the button went back to its resting label, and nothing at all
+    // appeared — indistinguishable from a feature that does nothing.
+    suggestGold.mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }));
+    renderPanel();
+
+    await userEvent.type(screen.getByPlaceholderText(/one row per patient/), 'anything');
+    await userEvent.click(screen.getByRole('button', { name: /write the query/i }));
+
+    expect(await screen.findByText(/took too long to answer/)).toBeInTheDocument();
+  });
+
+  it('says so when saving fails', async () => {
+    setGoldDefinition.mockRejectedValue({
+      response: { data: { detail: 'a gold definition must start with SELECT or WITH' } },
+    });
+    renderPanel();
+    await userEvent.type(screen.getByLabelText(/the query that builds gold/i), 'SELECT 1');
+    await userEvent.click(screen.getByRole('button', { name: /run it/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /use this definition/i })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /use this definition/i }));
+
+    expect(await screen.findByText(/must start with SELECT/)).toBeInTheDocument();
   });
 
   it('will not save a definition that has never been run', async () => {

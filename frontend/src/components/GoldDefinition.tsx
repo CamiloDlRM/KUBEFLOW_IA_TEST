@@ -71,6 +71,11 @@ export default function GoldDefinition({
   });
 
   const relationNames = Object.keys(relations?.relations ?? {});
+  // The default stacks every source with UNION ALL BY NAME. With one source
+  // that is simply all of its rows. With more than one it is a table that is
+  // null by construction — each row carries one source's columns and nothing
+  // in the others' — which is almost never what anybody wants to train on.
+  const stacked = summary.is_default_definition && relationNames.length > 1;
 
   return (
     <div className="border-t border-yellow-900/40 bg-yellow-950/10 px-5 py-5">
@@ -80,6 +85,22 @@ export default function GoldDefinition({
           ? 'This project has no definition of its own yet, so gold is everything its sources have landed, stacked together. Describe the table you want and it will be written as a query.'
           : 'Gold is built by this query — on every extraction, and again whenever the query itself changes.'}
       </p>
+
+      {stacked && (
+        <p
+          role="alert"
+          className="mt-3 max-w-3xl rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-100"
+        >
+          <strong className="font-semibold">
+            These {relationNames.length} sources are stacked, not joined.
+          </strong>{' '}
+          Every row comes from one of them and is empty in the other
+          {relationNames.length > 2 ? 's' : ''}' columns — that is what the nulls in the
+          preview are. It loses nothing, which is why it is the default, but it is rarely a
+          table worth training on. Describe what you actually want below and it will be
+          written as a query that joins them.
+        </p>
+      )}
 
       {/* 1. What can be queried */}
       {relationNames.length > 0 && (
@@ -134,6 +155,15 @@ export default function GoldDefinition({
       </div>
 
       {explanation && <p className="mt-2 text-xs text-yellow-200/80">{explanation}</p>}
+
+      {/* A failed call has to say so. Without this the button simply went back
+          to its resting label and nothing appeared — which is indistinguishable
+          from a feature that does nothing. */}
+      {suggest.isError && (
+        <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+          {errorMessage(suggest.error, 'The query could not be written.')}
+        </p>
+      )}
 
       {/* 3. The query itself — a draft, not an answer */}
       <label className="mt-4 block text-xs text-slate-400">
@@ -195,7 +225,13 @@ export default function GoldDefinition({
 
       {tryIt.isError && (
         <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
-          {errorMessage(tryIt.error)}
+          {errorMessage(tryIt.error, 'The query could not be run.')}
+        </p>
+      )}
+
+      {save.isError && (
+        <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+          {errorMessage(save.error, 'The definition could not be saved.')}
         </p>
       )}
 
@@ -259,8 +295,13 @@ export default function GoldDefinition({
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
   if (detail) return detail;
-  return error instanceof Error ? error.message : 'The query could not be run.';
+  // A timeout is the one failure worth naming, because the useful response to
+  // it is "try again", not "something is broken".
+  if ((error as { code?: string })?.code === 'ECONNABORTED') {
+    return 'It took too long to answer and the request was given up on. Try again, or write the query by hand from the schema above.';
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
 }
