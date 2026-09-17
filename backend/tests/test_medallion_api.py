@@ -449,6 +449,19 @@ class TestDiff:
         assert response.status_code == 404
 
 
+def _step(test_app, project, rule: str) -> dict:
+    body = test_app.get(f"/projects/{project.id}/medallion/steps").json()
+    return next(step for step in body["steps"] if step["rule"] == rule)
+
+
+def _column(step: dict, name: str) -> int:
+    return next(
+        index
+        for index, column in enumerate(step["preview_columns"])
+        if column["after"] == name
+    )
+
+
 class TestCleaningSteps:
     """The standard replayed a rule at a time, with the table after each.
 
@@ -463,8 +476,11 @@ class TestCleaningSteps:
         first = body["steps"][0]
         assert first["rule"] == ""
         assert first["title"] == "As it arrived"
-        assert first["preview_columns"][0] == "Patient ID", "bronze's own column names"
-        assert all(cell is False for row in first["changed_cells"] for cell in row)
+        assert first["preview_columns"][0]["after"] == "Patient ID", "bronze's own names"
+        assert all(
+            cell == "same" for row in first["preview_rows"] for cell in row["cells"]
+        ), "nothing to compare against yet, so nothing is claimed to have changed"
+        assert all(row["before"] == [] for row in first["preview_rows"])
 
     def test_every_rule_of_the_standard_appears_in_order(
         self, test_app, own_project, diffed
@@ -486,35 +502,65 @@ class TestCleaningSteps:
             "flag_implausible_measurements",
         ]
 
-    def test_a_step_shows_the_table_as_it_was_after_that_rule(
+    def test_a_step_shows_the_rows_before_and_after_that_one_rule(
         self, test_app, own_project, diffed
     ):
-        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
-        steps = {step["rule"]: step for step in body["steps"]}
+        """The counts say how much a rule changed. This says what it was, which
+        is the only form of the claim a reader can check."""
+        step = _step(test_app, own_project, "trim_whitespace")
+        column = _column(step, "procedure_text")
+        row = step["preview_rows"][0]
 
-        # Before the rename the columns are the source's; after it they are not.
-        assert "Patient ID" in steps[""]["preview_columns"]
-        assert "patient_id" in steps["normalise_column_names"]["preview_columns"]
+        assert row["before"][column] == "  Hospice  care "
+        assert row["after"][column] == "Hospice care"
 
     def test_a_changed_cell_is_marked_and_an_untouched_one_is_not(
         self, test_app, own_project, diffed
     ):
-        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
-        step = next(s for s in body["steps"] if s["rule"] == "trim_whitespace")
+        step = _step(test_app, own_project, "trim_whitespace")
+        row = step["preview_rows"][0]
 
-        column = step["preview_columns"].index("procedure_text")
-        other = step["preview_columns"].index("patient_id")
-        assert step["changed_cells"][0][column] is True
-        assert step["changed_cells"][0][other] is False
+        assert row["cells"][_column(step, "procedure_text")] == "changed"
+        assert row["cells"][_column(step, "patient_id")] == "same"
 
-    def test_the_row_a_rule_removed_is_shown_on_that_step(
+    def test_a_rename_names_both_sides_and_marks_no_cell(
         self, test_app, own_project, diffed
     ):
-        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
-        step = next(s for s in body["steps"] if s["rule"] == "deduplicate_rows")
+        """Columns are tracked by identity, not by name. Keyed by name, every
+        cell of a renamed column looks like a value that appeared from
+        nowhere — which would make the loudest step of the standard the one
+        that touches no data at all."""
+        step = _step(test_app, own_project, "normalise_column_names")
+        column = step["preview_columns"][0]
+
+        assert (column["before"], column["after"]) == ("Patient ID", "patient_id")
+        assert column["change"] == "renamed"
+        assert all(
+            cell == "same" for row in step["preview_rows"] for cell in row["cells"]
+        )
+
+    def test_a_dropped_column_is_struck_from_the_header_not_from_every_row(
+        self, test_app, own_project, diffed
+    ):
+        step = _step(test_app, own_project, "drop_empty_columns")
+        dropped = next(c for c in step["preview_columns"] if c["change"] == "dropped")
+
+        assert dropped["before"] == "notes"
+        assert dropped["after"] is None
+        # "absent", not "changed": the column left, its values did not change.
+        assert all(row["cells"][-1] == "absent" for row in step["preview_rows"])
+
+    def test_the_row_a_rule_removed_is_shown_in_place(
+        self, test_app, own_project, diffed
+    ):
+        step = _step(test_app, own_project, "deduplicate_rows")
+        removed = [row for row in step["preview_rows"] if row["removed"]]
 
         assert step["rows_removed"] == 1
-        assert len(step["removed_rows"]) == 1
+        assert [row["row"] for row in removed] == [2]
+        assert removed[0]["after"] == [], "there is no after; that is the point"
+        # In place, between the rows it sat between, rather than listed apart.
+        assert [row["row"] for row in step["preview_rows"]] == [0, 1, 2, 3]
 
     def test_a_removal_does_not_make_every_later_row_look_changed(
         self, test_app, own_project, diffed
@@ -522,20 +568,22 @@ class TestCleaningSteps:
         """Rows are matched by their position in the data as it arrived. By
         list position, the deduplication shifts everything below it up and the
         next rule would appear to have rewritten the whole table."""
-        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
-        after = next(s for s in body["steps"] if s["rule"] == "fold_categories")
+        after = _step(test_app, own_project, "fold_categories")
 
-        assert not any(cell for row in after["changed_cells"] for cell in row)
+        assert not any(
+            cell == "changed" for row in after["preview_rows"] for cell in row["cells"]
+        )
 
-    def test_the_cast_marks_the_cells_whose_type_it_changed(
-        self, test_app, own_project, diffed
-    ):
-        body = test_app.get(f"/projects/{own_project.id}/medallion/steps").json()
-        step = next(s for s in body["steps"] if s["rule"] == "cast_types")
+    def test_the_cast_shows_the_text_it_replaced(self, test_app, own_project, diffed):
+        """`"44"` and `44` are the same two glyphs. Without the before value
+        the most common thing the cleaning does looks like nothing at all."""
+        step = _step(test_app, own_project, "cast_types")
+        column = _column(step, "edad")
+        row = step["preview_rows"][0]
 
-        column = step["preview_columns"].index("edad")
-        assert step["changed_cells"][0][column] is True
-        assert step["preview_rows"][0][column] == 44
+        assert row["before"][column] == "44"
+        assert row["after"][column] == 44
+        assert row["cells"][column] == "changed"
 
     def test_the_decisions_are_the_ones_the_whole_extraction_produced(
         self, test_app, own_project, diffed

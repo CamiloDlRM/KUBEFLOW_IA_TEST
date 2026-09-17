@@ -11,7 +11,7 @@ const getSources = vi.fn();
 const getMedallion = vi.fn();
 const previewLayer = vi.fn();
 const previewSource = vi.fn();
-const getLayerDiff = vi.fn();
+const getCleaningSteps = vi.fn();
 const getGoldRelations = vi.fn();
 const getIngestionRuns = vi.fn();
 
@@ -21,7 +21,7 @@ vi.mock('../../src/api/client', () => ({
   getMedallion: (...a: unknown[]) => getMedallion(...a),
   previewLayer: (...a: unknown[]) => previewLayer(...a),
   previewSource: (...a: unknown[]) => previewSource(...a),
-  getLayerDiff: (...a: unknown[]) => getLayerDiff(...a),
+  getCleaningSteps: (...a: unknown[]) => getCleaningSteps(...a),
   getGoldRelations: (...a: unknown[]) => getGoldRelations(...a),
   getIngestionRuns: (...a: unknown[]) => getIngestionRuns(...a),
   createSource: vi.fn(),
@@ -106,7 +106,7 @@ describe('DataFactory', () => {
     getMedallion.mockResolvedValue(medallion());
     previewLayer.mockRejectedValue(new Error('nothing yet'));
     previewSource.mockResolvedValue({ columns: [], rows: [], profile: {}, truncated: false });
-    getLayerDiff.mockRejectedValue(new Error('nothing yet'));
+    getCleaningSteps.mockRejectedValue(new Error('nothing yet'));
     getGoldRelations.mockResolvedValue({ relations: {}, default_sql: '' });
     getIngestionRuns.mockResolvedValue([]);
   });

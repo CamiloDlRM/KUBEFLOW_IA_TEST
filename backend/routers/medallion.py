@@ -33,6 +33,8 @@ from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
+    CleaningColumnResponse,
+    CleaningRowResponse,
     CleaningStepResponse,
     CleaningStepsResponse,
     DataSource,
@@ -469,6 +471,7 @@ def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
     for index, snapshot in enumerate(snapshots):
         previous = snapshots[index - 1] if index else None
         outcome = report.outcomes[index - 1] if index else None
+        alignment = _align(previous, snapshot)
 
         steps.append(
             CleaningStepResponse(
@@ -482,55 +485,124 @@ def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
                 note=outcome.note if outcome else "",
                 columns=outcome.columns if outcome else [],
                 changed=outcome.changed if outcome else True,
-                preview_columns=snapshot.columns,
-                preview_rows=[[_jsonable(cell) for cell in row] for row in snapshot.rows],
-                changed_cells=_changed_cells(previous, snapshot),
-                removed_rows=_gone(previous, snapshot),
+                preview_columns=[
+                    CleaningColumnResponse(
+                        before=previous.columns[before] if before is not None else None,
+                        after=snapshot.columns[after] if after is not None else None,
+                        change=change,
+                    )
+                    for before, after, change in alignment
+                ],
+                preview_rows=_paired_rows(previous, snapshot, alignment),
             )
         )
     return steps
 
 
-def _changed_cells(previous: Any, snapshot: Any) -> list[list[bool]]:
-    """Which cells this rule changed, matched by each row's original position.
+def _align(previous: Any, snapshot: Any) -> list[tuple[int | None, int | None, str]]:
+    """One entry per column of the merged view: ``(before, after, change)``.
 
-    Matching by position in the *list* would be wrong the moment a rule removes
-    a row: everything below it shifts up, and a comparison would report the
-    whole table as rewritten by a rule that touched one row.
+    ``before`` and ``after`` are indices into the two snapshots' rows, so the
+    caller can read the same column out of both even though a rule may have
+    renamed it or dropped the one to its left. No rule adds or reorders a
+    column, so walking the earlier snapshot reaches every column there is.
     """
     if previous is None:
-        return [[False] * len(snapshot.columns) for _ in snapshot.rows]
+        return [(None, index, "same") for index in range(len(snapshot.columns))]
 
-    before = {
-        row_id: dict(zip(previous.columns, row))
-        for row_id, row in zip(previous.row_ids, previous.rows)
-    }
+    after_at = {column_id: index for index, column_id in enumerate(snapshot.column_ids)}
 
-    marks: list[list[bool]] = []
-    for row_id, row in zip(snapshot.row_ids, snapshot.rows):
-        earlier = before.get(row_id)
-        marks.append(
-            [
-                # A column that did not exist before is a change; one whose
-                # value differs is a change; renaming is handled by the column
-                # name being the key, so a rename alone marks nothing.
-                earlier is None or name not in earlier or earlier[name] != value
-                for name, value in zip(snapshot.columns, row)
-            ]
-        )
-    return marks
+    aligned: list[tuple[int | None, int | None, str]] = []
+    for before, column_id in enumerate(previous.column_ids):
+        after = after_at.get(column_id)
+        if after is None:
+            aligned.append((before, None, "dropped"))
+        elif snapshot.columns[after] != previous.columns[before]:
+            aligned.append((before, after, "renamed"))
+        else:
+            aligned.append((before, after, "same"))
+    return aligned
 
 
-def _gone(previous: Any, snapshot: Any) -> list[list[Any]]:
-    """Rows that were in the previous snapshot and are not in this one."""
+def _paired_rows(
+    previous: Any, snapshot: Any, alignment: list[tuple[int | None, int | None, str]]
+) -> list[CleaningRowResponse]:
+    """Each previewed row as this rule found it and as it left it.
+
+    Rows are keyed by their position in the data as it arrived. Matching by
+    position in the *list* would be wrong the moment a rule removes a row:
+    everything below it shifts up, and the comparison would report the whole
+    table as rewritten by a rule that touched one row.
+
+    Two cases have no "before" and must not be dressed up as changes. The first
+    step has nothing earlier to compare against. And a row that only entered
+    the sample because a rule above removed one was never on screen before, so
+    nothing about it can be said to have changed.
+    """
     if previous is None:
-        return []
-    surviving = set(snapshot.row_ids)
-    return [
-        [_jsonable(cell) for cell in row]
-        for row_id, row in zip(previous.row_ids, previous.rows)
-        if row_id not in surviving
-    ]
+        return [
+            CleaningRowResponse(
+                row=row_id,
+                after=[_jsonable(cell) for cell in row],
+                cells=["same"] * len(alignment),
+            )
+            for row_id, row in zip(snapshot.row_ids, snapshot.rows)
+        ]
+
+    earlier = dict(zip(previous.row_ids, previous.rows))
+    later = dict(zip(snapshot.row_ids, snapshot.rows))
+
+    rows: list[CleaningRowResponse] = []
+    # Sorted by original position, so a removed row stays where it was rather
+    # than being listed apart from the rows it sat between.
+    for row_id in sorted(set(earlier) | set(later)):
+        was, now = earlier.get(row_id), later.get(row_id)
+
+        if now is None:
+            rows.append(
+                CleaningRowResponse(
+                    row=row_id,
+                    before=[
+                        _jsonable(was[before]) if before is not None else None
+                        for before, _, _ in alignment
+                    ],
+                    cells=["same"] * len(alignment),
+                    removed=True,
+                )
+            )
+            continue
+
+        after_values = [
+            _jsonable(now[after]) if after is not None else None
+            for _, after, _ in alignment
+        ]
+        if was is None:
+            rows.append(
+                CleaningRowResponse(
+                    row=row_id, after=after_values, cells=["same"] * len(alignment)
+                )
+            )
+            continue
+
+        rows.append(
+            CleaningRowResponse(
+                row=row_id,
+                before=[
+                    _jsonable(was[before]) if before is not None else None
+                    for before, _, _ in alignment
+                ],
+                after=after_values,
+                cells=[
+                    "absent"
+                    if after is None
+                    else "changed"
+                    if was[before] != now[after]
+                    else "same"
+                    for before, after, _ in alignment
+                ],
+            )
+        )
+    return rows
 
 
 def _run_for(
