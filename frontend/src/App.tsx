@@ -12,7 +12,6 @@ import ProjectDetail from './pages/ProjectDetail';
 import DataFactory from './pages/DataFactory';
 import PipelineDetail from './pages/PipelineDetail';
 import Models from './pages/Models';
-import Dashboards from './pages/Dashboards';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
 import ConfirmChange from './pages/ConfirmChange';
@@ -53,7 +52,9 @@ export default function App() {
         <Route path="/projects/:projectId/datasets" element={<Datasets />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
-        <Route path="/dashboards" element={<Dashboards />} />
+        {/* The Grafana panels are a section of the dashboard now. Kept as a
+            redirect because the old path is in people's bookmarks. */}
+        <Route path="/dashboards" element={<Navigate to="/" replace />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
