@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, TOKEN_KEY } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import Spinner from '../components/Spinner';
+import Spinner from './Spinner';
 
 /* ------------------------------------------------------------------ */
 /*  Grafana embed configuration                                        */
@@ -132,12 +132,20 @@ function extractTicket(embedUrl?: string): string | null {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Page                                                               */
+/*  The section                                                        */
 /* ------------------------------------------------------------------ */
 
 type EmbedStatus = 'loading' | 'ready' | 'error';
 
-export default function Dashboards() {
+/**
+ * The Grafana panels, as a section of the dashboard rather than a page.
+ *
+ * They used to be a second page called "Dashboards", one nav item below a page
+ * called "Dashboard". Two things with the same name is a question the reader
+ * has to answer before they can click anything, and the honest answer was that
+ * there was no difference worth a second page: both were "how is it going".
+ */
+export default function MetricsPanels() {
   const { isAdmin } = useAuth();
 
   const tabs = useMemo(
@@ -206,15 +214,15 @@ export default function Dashboards() {
   }, [openSession]);
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
+    <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="text-2xl font-bold text-slate-100">Dashboards</h2>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+            Model metrics
+          </h3>
           <p className="mt-1 max-w-2xl text-sm text-slate-400">
-            Live metrics for your models - training runs, accuracy over time and
-            inference traffic - rendered straight from Grafana. The view refreshes
-            itself every 30 seconds.
+            Training runs, accuracy over time and inference traffic, rendered straight
+            from Grafana. Refreshes itself every 30 seconds.
           </p>
         </div>
         <a
@@ -263,7 +271,10 @@ export default function Dashboards() {
                 src={frameSrc}
                 onLoad={() => setStatus('ready')}
                 onError={() => setStatus('error')}
-                className="h-[calc(100vh-260px)] min-h-[420px] w-full border-0"
+                // A share of the viewport rather than "the rest of the page":
+                // this no longer starts near the top, so subtracting a fixed
+                // header height would leave it hanging off the bottom.
+                className="h-[70vh] min-h-[420px] w-full border-0"
               />
             )}
             {status === 'loading' && (
@@ -275,7 +286,7 @@ export default function Dashboards() {
           </>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -283,7 +294,7 @@ export default function Dashboards() {
 
 function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void }) {
   return (
-    <div className="flex h-[calc(100vh-260px)] min-h-[420px] flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="flex h-[70vh] min-h-[420px] flex-col items-center justify-center gap-4 px-6 text-center">
       <div className="rounded-full bg-red-900/30 p-3 text-red-400">
         <WarningIcon />
       </div>

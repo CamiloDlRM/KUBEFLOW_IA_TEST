@@ -70,8 +70,8 @@ Recent additions on top of the base push-to-deploy platform:
 - 🔐 **Landing page + authentication** — a public marketing landing at `/`, JWT
   login, user invites with email confirmation, self-service password/username
   changes, and an admin panel.
-- 📊 **Grafana dashboards, per user** — a **Dashboards** section embeds Grafana
-  in the app. Every panel is scoped to the signed-in user, so you see the
+- 📊 **Grafana dashboards, per user** — the Dashboard's **Model metrics**
+  section embeds Grafana. Every panel is scoped to the signed-in user, so you see the
   accuracy, run history and success rate of *your* models and nobody else's.
   Admins additionally get a platform-wide operations dashboard. See
   [Dashboards (Grafana)](#dashboards-grafana).
@@ -316,8 +316,10 @@ so there is nothing to set up by hand.
 
 ## Dashboards (Grafana)
 
-The **Dashboards** page embeds Grafana directly in the app. It refreshes every
-30 seconds, so a run in progress updates the charts as it goes.
+The **Model metrics** section of the Dashboard embeds Grafana directly in the
+app. It refreshes every 30 seconds, so a run in progress updates the charts as
+it goes. (It used to be a page of its own called "Dashboards", one nav item
+below the page called "Dashboard"; `/dashboards` still redirects there.)
 
 Two dashboards are provisioned:
 
@@ -523,7 +525,7 @@ full annotated list. The most relevant ones:
 | `MINIO_BUCKET_DATASETS` | `datasets` | Bucket for user-uploaded datasets |
 | `MINIO_BUCKET_MLFLOW` | `mlflow` | Bucket used as the MLflow artifact store |
 | `DATASET_MAX_SIZE_MB` | `512` | Maximum accepted size for an uploaded dataset |
-| `GRAFANA_ENABLED` | `true` | Expose the Dashboards section and proxy Grafana |
+| `GRAFANA_ENABLED` | `true` | Expose the Model metrics section and proxy Grafana |
 | `GRAFANA_INTERNAL_URL` | `http://grafana:3000` | Grafana as seen from the backend (proxy target) |
 | `GRAFANA_AUTH_PROXY_HEADER` | `X-WEBAUTH-USER` | Header Grafana trusts to identify the user |
 | `GRAFANA_DB_USER` / `GRAFANA_DB_PASSWORD` | `grafana_ro` | Read-only Postgres role the dashboards query through |

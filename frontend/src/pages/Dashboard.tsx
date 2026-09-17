@@ -1,11 +1,24 @@
 import { Link } from 'react-router-dom';
 import { useRepos, usePipelines, useServiceHealth } from '../hooks/usePipelines';
 import PipelineStatus from '../components/PipelineStatus';
+import MetricsPanels from '../components/MetricsPanels';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
 
 /**
- * Health and the last few runs. Not a list of repositories.
+ * One dashboard: is it up, what has run, and how is it doing.
+ *
+ * The Grafana panels used to be a separate page called "Dashboards", sitting
+ * one nav item below this one called "Dashboard". Nobody can tell those apart
+ * from the sidebar, and there was no difference worth a second page: both
+ * answer "how is it going". They are a section here now.
+ *
+ * The panels go last despite being the thing worth looking at longest, because
+ * they are also seventy percent of the viewport tall. Above them, the two
+ * things you read in a glance and leave: whether the services are up, and what
+ * ran recently.
+ *
+ * Not a list of repositories.
  *
  * A repository is no longer something you own at the top level: it is
  * something a project links to, alongside its data. Listing repositories here
@@ -129,6 +142,8 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      <MetricsPanels />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import Dashboards from '../../src/pages/Dashboards';
+import MetricsPanels from '../../src/components/MetricsPanels';
 
 const API_BASE = 'http://api.test';
 
@@ -20,12 +20,12 @@ function renderPage({ isAdmin = false } = {}) {
   useAuthMock.mockReturnValue({ isAdmin });
   return render(
     <MemoryRouter>
-      <Dashboards />
+      <MetricsPanels />
     </MemoryRouter>,
   );
 }
 
-describe('Dashboards page', () => {
+describe('MetricsPanels', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // The page primes the Grafana proxy session cookie before mounting the
@@ -46,7 +46,9 @@ describe('Dashboards page', () => {
   it('embeds the mlops-ml dashboard through the backend proxy', async () => {
     renderPage();
 
-    expect(screen.getByRole('heading', { name: 'Dashboards' })).toBeInTheDocument();
+    // "Model metrics", not "Dashboards": the app has one dashboard, and this
+    // is a section of it.
+    expect(screen.getByRole('heading', { name: 'Model metrics' })).toBeInTheDocument();
 
     const frame = await screen.findByTitle('Grafana dashboard: My Models');
     expect(frame).toHaveAttribute(
