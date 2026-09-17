@@ -423,13 +423,31 @@ export interface CleaningStep {
   note: string;
   columns: string[];
   changed: boolean;
-  preview_columns: string[];
-  preview_rows: unknown[][];
-  /** Per cell, whether this rule changed it. Rows are matched by their place
-   *  in the data as it arrived, so an earlier removal does not make everything
-   *  below it look rewritten. */
-  changed_cells: boolean[][];
-  removed_rows: unknown[][];
+  /** The first rows before and after this one rule, on aligned columns. Rows
+   *  are matched by their place in the data as it arrived, so an earlier
+   *  removal does not make everything below it look rewritten. */
+  preview_columns: CleaningColumn[];
+  preview_rows: CleaningRow[];
+}
+
+/** One column, named on both sides of a single rule. */
+export interface CleaningColumn {
+  /** Its name before the rule; null only on the first step. */
+  before: string | null;
+  /** Its name after; null when the rule dropped it. */
+  after: string | null;
+  change: 'same' | 'renamed' | 'dropped';
+}
+
+export interface CleaningRow {
+  /** Its position in the data as it arrived. */
+  row: number;
+  /** Empty when there is nothing to compare against: the first step, or a row
+   *  that only entered the sample because a rule above removed one. */
+  before: unknown[];
+  after: unknown[];
+  cells: ('same' | 'changed' | 'absent')[];
+  removed: boolean;
 }
 
 export interface CleaningSteps {

@@ -914,6 +914,42 @@ class LayerDiffResponse(BaseModel):
     approximate: bool = False
 
 
+class CleaningColumnResponse(BaseModel):
+    """One column, named on both sides of a single rule.
+
+    Tracked by identity rather than by name so a rename reads as a rename
+    instead of as every value in the column being replaced.
+    """
+
+    #: Its name before this rule. ``None`` only on the first step, which has no
+    #: "before" at all.
+    before: str | None = None
+    #: Its name after. ``None`` when this rule dropped the column.
+    after: str | None = None
+    #: ``same`` | ``renamed`` | ``dropped``.
+    change: str = "same"
+
+
+class CleaningRowResponse(BaseModel):
+    """One row of the preview, as this rule left it — and as it found it.
+
+    ``before`` is empty when there is nothing to compare against: the first
+    step, or a row that only entered the sample because a rule above removed
+    one. Claiming those rows changed would be the easiest way to make this view
+    lie.
+    """
+
+    #: Its position in the data as it arrived, which is what makes the two
+    #: sides line up after a rule removes a row.
+    row: int
+    before: list[Any] = Field(default_factory=list)
+    after: list[Any] = Field(default_factory=list)
+    #: Per column, ``same`` | ``changed`` | ``absent``.
+    cells: list[str] = Field(default_factory=list)
+    #: This rule removed the row; there is no "after".
+    removed: bool = False
+
+
 class CleaningStepResponse(BaseModel):
     """One rule of the cleaning standard, and the table right after it ran."""
 
@@ -933,15 +969,12 @@ class CleaningStepResponse(BaseModel):
     #: different statement from the rule not existing.
     changed: bool = False
 
-    #: The table at this point: column names, and the first rows.
-    preview_columns: list[str] = Field(default_factory=list)
-    preview_rows: list[list[Any]] = Field(default_factory=list)
-    #: Per cell, whether this rule changed it from the previous step. Rows are
-    #: matched by their position in the data as it arrived, so a deduplication
-    #: earlier in the standard does not make everything after it look changed.
-    changed_cells: list[list[bool]] = Field(default_factory=list)
-    #: Rows present before this step and gone after it.
-    removed_rows: list[list[Any]] = Field(default_factory=list)
+    #: The first rows, before and after this one rule, on aligned columns. Rows
+    #: are matched by their position in the data as it arrived, so a
+    #: deduplication earlier in the standard does not make everything after it
+    #: look changed; rows this rule removed are kept, in place.
+    preview_columns: list[CleaningColumnResponse] = Field(default_factory=list)
+    preview_rows: list[CleaningRowResponse] = Field(default_factory=list)
 
 
 class CleaningStepsResponse(BaseModel):

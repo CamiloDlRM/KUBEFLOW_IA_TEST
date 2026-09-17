@@ -776,6 +776,11 @@ class Snapshot:
     two snapshots can be compared cell by cell even after a rule has removed
     rows. Without it, the first deduplication shifts every row after it and a
     naive comparison reports the whole table as changed.
+
+    ``column_ids`` is the same idea for columns, and it is needed for the same
+    reason twice over: a rule that renames a column would otherwise look like a
+    rule that replaced every value in it, and a rule that drops one would
+    misalign everything to its right.
     """
 
     #: Empty on the snapshot taken before any rule has run.
@@ -784,9 +789,17 @@ class Snapshot:
     columns: list[str]
     rows: list[list[Any]]
     row_ids: list[int]
+    column_ids: list[int]
 
 
-def _snapshot(table: Table, ids: list[int], rule: str, title: str, sample: int) -> Snapshot:
+def _snapshot(
+    table: Table,
+    ids: list[int],
+    column_ids: list[int],
+    rule: str,
+    title: str,
+    sample: int,
+) -> Snapshot:
     return Snapshot(
         rule=rule,
         title=title,
@@ -796,6 +809,7 @@ def _snapshot(table: Table, ids: list[int], rule: str, title: str, sample: int) 
             for index in range(min(sample, table.rows))
         ],
         row_ids=ids[:sample],
+        column_ids=list(column_ids),
     )
 
 
@@ -825,12 +839,14 @@ def clean(
     # a column to carry it would change what every rule sees, including the
     # duplicate comparison, which reads every column.
     ids = list(range(table.rows))
+    column_ids = list(range(len(table.columns)))
     snapshots: list[Snapshot] = []
     if sample:
-        snapshots.append(_snapshot(table, ids, "", "As it arrived", sample))
+        snapshots.append(_snapshot(table, ids, column_ids, "", "As it arrived", sample))
 
     for rule in _PIPELINE:
         before = table.rows
+        before_columns = list(table.columns)
         if rule is cast_types:
             rule(table, report, protected)
         else:
@@ -841,9 +857,18 @@ def clean(
             removed = set(outcome.removed_rows)
             ids = [row_id for index, row_id in enumerate(ids) if index not in removed]
 
+        # No rule adds or reorders a column, so the count changing means one was
+        # dropped, and the survivors kept the names they had a moment ago. A
+        # rename leaves the count alone, which is why identity survives it.
+        if len(table.columns) != len(before_columns):
+            position = {name: index for index, name in enumerate(before_columns)}
+            column_ids = [column_ids[position[name]] for name in table.columns]
+
         if sample:
             outcome = report.outcomes[-1]
-            snapshots.append(_snapshot(table, ids, outcome.rule, outcome.title, sample))
+            snapshots.append(
+                _snapshot(table, ids, column_ids, outcome.rule, outcome.title, sample)
+            )
 
     report.rows_out = table.rows
     report.columns_out = len(table.columns)

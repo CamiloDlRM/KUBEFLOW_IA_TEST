@@ -9,7 +9,6 @@ import SourcesPanel from '../components/SourcesPanel';
 import UploadPanel from '../components/UploadPanel';
 import SourcePreviews from '../components/SourcePreviews';
 import LayerStage from '../components/LayerStage';
-import LayerDiff from '../components/LayerDiff';
 import CleaningSteps from '../components/CleaningSteps';
 import GoldDefinition from '../components/GoldDefinition';
 
@@ -110,11 +109,11 @@ export default function DataFactory() {
         {current === 'silver' && (
           <>
             <LayerStage projectId={id} summary={medallion.silver} />
-            {/* The steps first, then the diff. The steps answer "what did the
-                cleaning do", which is the question; the diff answers "show me
-                bronze and silver together", which is the check. */}
+            {/* One view of the transition, not two. The bronze-to-silver diff
+                used to sit below this as its own section; it is the same claim
+                at a coarser grain, and it now lives inside each step, where
+                the highlight can say which rule did it. */}
             <CleaningSteps projectId={id} streams={medallion.silver.streams} />
-            <LayerDiff projectId={id} streams={medallion.silver.streams} />
           </>
         )}
 
