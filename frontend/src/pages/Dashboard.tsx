@@ -1,36 +1,25 @@
 import { Link } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRepos, usePipelines, useServiceHealth } from '../hooks/usePipelines';
-import { deleteRepo } from '../api/client';
-import RepoCard from '../components/RepoCard';
 import PipelineStatus from '../components/PipelineStatus';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
-import type { Pipeline } from '../types';
 
+/**
+ * Health and the last few runs. Not a list of repositories.
+ *
+ * A repository is no longer something you own at the top level: it is
+ * something a project links to, alongside its data. Listing repositories here
+ * put the code back in front of the data and gave the dashboard a second,
+ * competing answer to "where does my work live" — the projects page being the
+ * first. The repository still names each pipeline below, because that is what
+ * a pipeline runs on.
+ */
 export default function Dashboard() {
-  const queryClient = useQueryClient();
-  const { data: repos, isLoading: reposLoading, error: reposError } = useRepos();
+  const { data: repos } = useRepos();
   const { data: pipelinesPage, isLoading: pipelinesLoading, error: pipelinesError } = usePipelines(1, 5);
   const { data: health } = useServiceHealth();
 
-  const deleteMutation = useMutation({
-    mutationFn: deleteRepo,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['repos'] }),
-  });
-
   const pipelines = pipelinesPage?.items ?? [];
-
-  function handleDelete(repoId: number) {
-    if (window.confirm('Are you sure you want to delete this repository?')) {
-      deleteMutation.mutate(repoId);
-    }
-  }
-
-  /** Find latest pipeline for a given repo id */
-  function latestPipelineForRepo(repoId: number): Pipeline | undefined {
-    return pipelines.find((p) => p.repo_id === repoId);
-  }
 
   return (
     <div className="space-y-8">
@@ -39,14 +28,14 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-bold text-slate-100">Dashboard</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Overview of repositories, pipelines, and service health.
+            Recent pipeline runs and service health.
           </p>
         </div>
         <Link
-          to="/repos/new"
+          to="/projects"
           className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500"
         >
-          + Add Repository
+          Projects
         </Link>
       </div>
 
@@ -62,48 +51,6 @@ export default function Dashboard() {
           <HealthDot label="Model Server" ok={health?.model_server ?? false} />
         </div>
       </div>
-
-      {/* Repositories */}
-      <section>
-        <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
-          Repositories
-        </h3>
-
-        {reposLoading && (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
-        )}
-
-        {reposError && (
-          <ErrorBox message={(reposError as Error).message} />
-        )}
-
-        {repos && repos.length === 0 && (
-          <div className="rounded-lg border border-dashed border-slate-700 py-12 text-center">
-            <p className="text-slate-400">No repositories registered yet.</p>
-            <Link
-              to="/repos/new"
-              className="mt-3 inline-block rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500"
-            >
-              + Add your first repository
-            </Link>
-          </div>
-        )}
-
-        {repos && repos.length > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {repos.map((repo) => (
-              <RepoCard
-                key={repo.id}
-                repo={repo}
-                latestPipeline={latestPipelineForRepo(repo.id)}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
-        )}
-      </section>
 
       {/* Recent pipelines */}
       <section>
@@ -123,7 +70,11 @@ export default function Dashboard() {
 
         {pipelines.length === 0 && !pipelinesLoading && !pipelinesError && (
           <p className="py-8 text-center text-sm text-slate-500">
-            No pipeline runs yet. Push to a registered repository to trigger a pipeline.
+            No pipeline runs yet. Give a{' '}
+            <Link to="/projects" className="text-brand-400 hover:text-brand-300">
+              project
+            </Link>{' '}
+            a repository and push to it, and the runs will appear here.
           </p>
         )}
 

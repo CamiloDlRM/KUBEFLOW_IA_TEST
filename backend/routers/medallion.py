@@ -433,9 +433,14 @@ async def cleaning_steps(
     a row is a duplicate of one further down. Deciding those from eight rows
     would produce a demonstration of something the real run never did.
 
-    The cost is one full read of the object per request. That is the same cost
-    the gold endpoints already pay, and the honest one for a claim about what
-    actually happened.
+    It runs *twice*. The first pass is a scout: it learns which rows each rule
+    actually touched, so the second can show those rather than whichever rows
+    happen to come first. On a real extraction that is the difference between
+    a view and a blank one — a rule that corrected one value in five thousand
+    rows reported "1 value" above eight rows where nothing had changed.
+
+    The cost is one full read of the object and two passes of the standard over
+    it. Both are the honest price of a claim about what actually happened.
     """
     run = _run_for(session, project_id, source_id, run_id, current_user)
 
@@ -447,11 +452,18 @@ async def cleaning_steps(
         rows = list(medallion.iter_rows(bronze))
 
     source = session.get(DataSource, run.source_id)
-    table = Table.from_rows(rows, columns)
+    keep_as_text = (
+        [source.normalize_code_column] if source and source.normalize_code_column else []
+    )
+
+    # `from_rows` copies the values out, so cleaning the scout table leaves
+    # `rows` untouched and the second table starts from the same data.
+    scout, _ = clean(Table.from_rows(rows, columns), keep_as_text=keep_as_text)
     report, snapshots = clean(
-        table,
-        keep_as_text=[source.normalize_code_column] if source and source.normalize_code_column else [],
+        Table.from_rows(rows, columns),
+        keep_as_text=keep_as_text,
         sample=limit,
+        rows=_rows_worth_showing(scout, limit),
     )
 
     return CleaningStepsResponse(
@@ -462,6 +474,38 @@ async def cleaning_steps(
         sample=limit,
         steps=_steps(report, snapshots),
     )
+
+
+def _rows_worth_showing(report: Any, limit: int) -> list[int]:
+    """Which rows the preview should carry, from a scouting pass of the standard.
+
+    Round-robin across the rules rather than taking each one's rows in turn:
+    the rule that changed four thousand values would otherwise fill the table
+    before the rule that changed one, and the rule that changed one is the
+    reason this exists. Whatever is left over goes to the first rows, so a view
+    where nothing much happened still looks like the table it came from.
+    """
+    lanes = [
+        outcome.touched_rows + outcome.removed_rows for outcome in report.outcomes
+    ]
+    chosen: list[int] = []
+
+    for position in range(limit):
+        for lane in lanes:
+            if len(chosen) >= limit:
+                break
+            if position < len(lane) and lane[position] not in chosen:
+                chosen.append(lane[position])
+        if len(chosen) >= limit:
+            break
+
+    for row in range(report.rows_in):
+        if len(chosen) >= limit:
+            break
+        if row not in chosen:
+            chosen.append(row)
+
+    return sorted(chosen)
 
 
 def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:

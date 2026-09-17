@@ -449,6 +449,54 @@ class TestDiff:
         assert response.status_code == 404
 
 
+@pytest.fixture()
+def needle(db_session, own_project, storage_patched, tmp_path):
+    """A large extraction where one row, far from the top, needs correcting.
+
+    This is the shape that made the view useless in production: the report said
+    "1 value" and the eight rows on screen were untouched, because the row that
+    changed was the two hundredth.
+    """
+    from core.cleaning import Table, clean
+    from core.medallion import BronzeWriter, write_typed
+
+    source = seed_source(db_session, own_project.id, name="Encounters")
+    raw = [
+        {"patient_id": f"p{index}", "encounter_text": "Well child visit"}
+        for index in range(300)
+    ]
+    raw[200]["encounter_text"] = "  Well  child visit "
+    columns = list(raw[0])
+
+    bronze = tmp_path / "bronze.parquet"
+    with BronzeWriter(bronze, columns) as writer:
+        for row in raw:
+            writer.write(row[name] for name in columns)
+
+    table = Table.from_rows(raw, columns)
+    report, _ = clean(table)
+    silver = tmp_path / "silver.parquet"
+    write_typed(table.columns, table.data, report.types, silver)
+
+    key = f"project-{own_project.id}/source-{source.id}/run-n.parquet"
+    put_object(storage_patched, "bronze", key, bronze)
+    put_object(storage_patched, "silver", key, silver)
+
+    run = IngestionRun(
+        source_id=source.id,
+        status="success",
+        rows_extracted=len(raw),
+        bronze_key=key,
+        silver_key=key,
+        quality_report=report.summary(),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    return run
+
+
 def _step(test_app, project, rule: str) -> dict:
     body = test_app.get(f"/projects/{project.id}/medallion/steps").json()
     return next(step for step in body["steps"] if step["rule"] == rule)
@@ -596,6 +644,32 @@ class TestCleaningSteps:
         assert body["rows_in"] == 4
         assert body["rows_out"] == 3
         assert body["sample"] == 8
+
+    def test_the_preview_shows_the_row_a_rule_touched_however_far_down_it_is(
+        self, test_app, own_project, needle
+    ):
+        """The bug this replaced: "1 value" above eight untouched rows.
+
+        Taking the first eight rows is the wrong sample for any rule that
+        corrects a handful of values in a large extraction, which is most of
+        what a cleaning standard does once the data is real.
+        """
+        step = _step(test_app, own_project, "trim_whitespace")
+        changed = [row for row in step["preview_rows"] if "changed" in row["cells"]]
+
+        assert step["cells_changed"] == 1
+        assert [row["row"] for row in changed] == [200]
+        column = _column(step, "encounter_text")
+        assert changed[0]["before"][column] == "  Well  child visit "
+        assert changed[0]["after"][column] == "Well child visit"
+
+    def test_the_rest_of_the_preview_is_still_the_first_rows(
+        self, test_app, own_project, needle
+    ):
+        """So a view where nothing much happened still looks like its table."""
+        step = _step(test_app, own_project, "trim_whitespace")
+
+        assert [row["row"] for row in step["preview_rows"]] == [0, 1, 2, 3, 4, 5, 6, 200]
 
     def test_a_project_with_nothing_through_the_layers_says_so(
         self, test_app, own_project, storage_patched

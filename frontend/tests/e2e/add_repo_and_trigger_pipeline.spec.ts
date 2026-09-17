@@ -107,12 +107,14 @@ test.describe('Add Repository and Trigger Pipeline', () => {
     await expect(page.getByText(/webhook/i)).toBeVisible();
   });
 
-  test('dashboard when repos exist should display repo cards', async ({ page }) => {
+  test('dashboard names the repository each recent pipeline ran on', async ({ page }) => {
+    // The dashboard no longer lists repositories — that moved to projects —
+    // but a pipeline still runs on one, and the row says which.
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
 
     await expect(dashboard.heading).toBeVisible();
-    // The mocked /repos returns 1 repo
+    await expect(dashboard.pipelineRows).toHaveCount(1, { timeout: 10_000 });
     await expect(page.getByText('testuser/ml-project')).toBeVisible({ timeout: 10_000 });
   });
 
@@ -143,12 +145,21 @@ test.describe('Add Repository and Trigger Pipeline', () => {
     await expect(addRepoPage.errorMessage).toBeVisible({ timeout: 10_000 });
   });
 
-  test('navigate from dashboard to add repository page', async ({ page }) => {
+  test('reach the add repository page from the sidebar', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
 
     await dashboard.clickAddRepository();
 
     await expect(page).toHaveURL(/repos\/new/);
+  });
+
+  test('dashboard sends you to projects, not to a repository', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+
+    await dashboard.projectsButton.first().click();
+
+    await expect(page).toHaveURL(/projects/);
   });
 });

@@ -99,9 +99,11 @@ export default function CleaningSteps({
               {data.rows_in.toLocaleString()} rows in, {data.rows_out.toLocaleString()} out.
               {/* Said plainly: the rules decide over the whole extraction, and
                   only the tables below are a sample. Otherwise a reader could
-                  reasonably think the type was inferred from eight rows. */}{' '}
-              Each rule was decided over the whole extraction; the tables below show the
-              first {data.sample}.
+                  reasonably think the type was inferred from eight rows. The
+                  numbers in the first column are where each row arrived, which
+                  is also why they are not 1 to 8. */}{' '}
+              Each rule was decided over the whole extraction. The {data.sample} rows below
+              are the ones the rules acted on, numbered by where they arrived.
             </p>
 
             <ol className="space-y-3">
@@ -192,6 +194,17 @@ function Step({ step, number, last }: { step: CleaningStep; number: number; last
       {open && (
         <div className="border-t border-slate-800 px-4 py-3">
           {step.note && <p className="mb-2 text-xs text-slate-500">{step.note}</p>}
+          {/* The preview is chosen to include the rows each rule acted on, but
+              a rule late in the standard can find every slot taken. Saying so
+              is better than a count above a table where nothing happened,
+              which reads as a bug and was one. */}
+          {step.cells_changed > 0 &&
+            !step.preview_rows.some((row) => row.cells.includes('changed')) && (
+              <p className="mb-2 text-xs text-amber-400/80">
+                The {step.cells_changed.toLocaleString()} values this rule changed are
+                outside the rows shown.
+              </p>
+            )}
           <StepTable step={step} />
         </div>
       )}

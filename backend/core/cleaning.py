@@ -66,6 +66,11 @@ _MAX_EXAMPLES: Final[int] = 3
 #: with the extraction.
 _MAX_REMOVED_TRACKED: Final[int] = 2_000
 
+#: How many touched row numbers a rule keeps. Only the step-by-step view reads
+#: them, and it shows a handful of rows per rule, so a few is plenty and the
+#: list cannot grow with the extraction.
+_MAX_TOUCHED_TRACKED: Final[int] = 16
+
 
 # ---------------------------------------------------------------------------
 # The table being cleaned
@@ -136,6 +141,19 @@ class RuleOutcome:
     #: pretending otherwise.
     removed_rows: list[int] = field(default_factory=list)
     removed_rows_truncated: bool = False
+    #: The first few rows this rule acted on, so a preview can show them
+    #: instead of whichever rows happen to come first. A rule that corrects one
+    #: value in twenty thousand rows is otherwise invisible: the count says one
+    #: value changed and the table shows eight rows where nothing did.
+    #:
+    #: Positions while a rule is running; ``clean`` rewrites them to each row's
+    #: place in the data as it arrived, which is what survives a deduplication.
+    touched_rows: list[int] = field(default_factory=list)
+
+    def touch(self, row: int) -> None:
+        """Note that this rule acted on a row."""
+        if len(self.touched_rows) < _MAX_TOUCHED_TRACKED:
+            self.touched_rows.append(row)
 
     def record(self, column: str, before: Any, after: Any) -> None:
         """Keep a distinct example of what this rule did.
@@ -308,6 +326,7 @@ def trim_whitespace(table: Table, report: CleaningReport) -> None:
             cleaned = _WHITESPACE.sub(" ", value).strip()
             if cleaned != value:
                 outcome.record(name, value, cleaned)
+                outcome.touch(index)
                 values[index] = cleaned
                 touched += 1
         if touched:
@@ -343,6 +362,7 @@ def resolve_sentinel_nulls(table: Table, report: CleaningReport) -> None:
         for index, value in enumerate(values):
             if isinstance(value, str) and value.strip().lower() in _SENTINEL_NULLS:
                 outcome.record(name, value, None)
+                outcome.touch(index)
                 values[index] = None
                 touched += 1
         if touched:
@@ -615,6 +635,7 @@ def fold_categories(table: Table, report: CleaningReport) -> None:
             winner = winners.get(_fold(value))
             if winner is not None and winner != value:
                 outcome.record(name, value, winner)
+                outcome.touch(index)
                 values[index] = winner
                 touched += 1
         if touched:
@@ -686,6 +707,7 @@ def standardise_sex(table: Table, report: CleaningReport) -> None:
             target = mapping.get(value.strip().lower())
             if target is not None and target != value:
                 outcome.record(name, value, target)
+                outcome.touch(index)
                 values[index] = target
                 touched += 1
         if touched:
@@ -733,11 +755,15 @@ def flag_implausible_measurements(table: Table, report: CleaningReport) -> None:
             continue
         unit, low, high = bounds
         offenders = 0
-        for value in table.data[name]:
+        for index, value in enumerate(table.data[name]):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 continue
             if value < low or value > high:
                 outcome.record(name, value, f"outside {low}–{high} {unit}")
+                # Nothing is changed here, so the row shows as ordinary
+                # context — but it is the row somebody has to look at, and it
+                # should be one of the rows on screen.
+                outcome.touch(index)
                 offenders += 1
         if offenders:
             outcome.flagged += offenders
@@ -798,23 +824,28 @@ def _snapshot(
     column_ids: list[int],
     rule: str,
     title: str,
-    sample: int,
+    wanted: set[int],
 ) -> Snapshot:
+    """The chosen rows, wherever they have ended up after earlier rules."""
+    picked = [index for index, row_id in enumerate(ids) if row_id in wanted]
     return Snapshot(
         rule=rule,
         title=title,
         columns=list(table.columns),
         rows=[
-            [table.data[name][index] for name in table.columns]
-            for index in range(min(sample, table.rows))
+            [table.data[name][index] for name in table.columns] for index in picked
         ],
-        row_ids=ids[:sample],
+        row_ids=[ids[index] for index in picked],
         column_ids=list(column_ids),
     )
 
 
 def clean(
-    table: Table, *, keep_as_text: Sequence[str] = (), sample: int = 0
+    table: Table,
+    *,
+    keep_as_text: Sequence[str] = (),
+    sample: int = 0,
+    rows: Sequence[int] | None = None,
 ) -> tuple[CleaningReport, list[Snapshot]]:
     """Apply the standard to ``table`` in place and report what changed.
 
@@ -823,10 +854,17 @@ def clean(
         keep_as_text: Columns that must not be type-cast — identifiers and any
             column a later step will write text into. Matched after the column
             names are standardised, so the caller may pass either spelling.
-        sample: When non-zero, capture the first ``sample`` rows before the
-            first rule and after each one. The counts in the report say how
-            much a rule changed; these say *what*, on the rows themselves,
-            which is the only form of it a reader can check.
+        sample: When non-zero, capture ``sample`` rows before the first rule
+            and after each one. The counts in the report say how much a rule
+            changed; these say *what*, on the rows themselves, which is the
+            only form of it a reader can check.
+        rows: Which rows to capture, by their position in the data as it
+            arrived. Defaults to the first ``sample``, which is the wrong
+            answer whenever a rule corrects a handful of values in a large
+            extraction: the count reports one value changed and the sample
+            shows eight rows where nothing did. Run the standard once to
+            collect ``touched_rows`` from every rule, choose from those, and
+            run it again passing them here.
 
     Returns:
         ``(report, snapshots)``. ``snapshots`` is empty unless ``sample`` was
@@ -840,9 +878,10 @@ def clean(
     # duplicate comparison, which reads every column.
     ids = list(range(table.rows))
     column_ids = list(range(len(table.columns)))
+    wanted = set(range(sample) if rows is None else rows)
     snapshots: list[Snapshot] = []
     if sample:
-        snapshots.append(_snapshot(table, ids, column_ids, "", "As it arrived", sample))
+        snapshots.append(_snapshot(table, ids, column_ids, "", "As it arrived", wanted))
 
     for rule in _PIPELINE:
         before = table.rows
@@ -852,8 +891,13 @@ def clean(
         else:
             rule(table, report)
 
+        # A rule counts rows where they were when it ran. Everything that reads
+        # them afterwards wants the place the row arrived in, which is the one
+        # identity that survives a deduplication.
+        outcome = report.outcomes[-1]
+        outcome.touched_rows = [ids[position] for position in outcome.touched_rows]
+
         if rule is deduplicate_rows and table.rows != before:
-            outcome = report.outcomes[-1]
             removed = set(outcome.removed_rows)
             ids = [row_id for index, row_id in enumerate(ids) if index not in removed]
 
@@ -865,9 +909,8 @@ def clean(
             column_ids = [column_ids[position[name]] for name in table.columns]
 
         if sample:
-            outcome = report.outcomes[-1]
             snapshots.append(
-                _snapshot(table, ids, column_ids, outcome.rule, outcome.title, sample)
+                _snapshot(table, ids, column_ids, outcome.rule, outcome.title, wanted)
             )
 
     report.rows_out = table.rows
