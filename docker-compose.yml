@@ -379,6 +379,95 @@ services:
       - mlops-network
     restart: unless-stopped
 
+  # ---------- Superset metadata database ----------
+  #
+  # Its own, not the platform's. This holds Superset's bookkeeping — charts,
+  # dashboards, its user table — and nothing of ours should ever join against
+  # it. Keeping them apart also means Superset's migrations and ours never
+  # meet.
+  superset-db:
+    image: postgres:16-alpine
+    container_name: mlops-superset-db
+    environment:
+      POSTGRES_USER: ${SUPERSET_DB_USER:-superset}
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      POSTGRES_DB: ${SUPERSET_DB_NAME:-superset}
+    expose:
+      - 5432
+    volumes:
+      - superset-db-data:/var/lib/postgresql/data
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${SUPERSET_DB_USER:-superset}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------- Superset (dashboards over the gold layer) ----------
+  superset:
+    build: ./superset
+    container_name: mlops-superset
+    command: [ "/app/bootstrap.sh", "web" ]
+    ports:
+      - "8088:8088"
+    environment: &superset-env
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-change-me-in-env}
+      - SUPERSET_DATABASE_URI=postgresql+psycopg2://${SUPERSET_DB_USER:-superset}:${SUPERSET_DB_PASSWORD:-superset}@superset-db:5432/${SUPERSET_DB_NAME:-superset}
+      - SUPERSET_CONFIG_PATH=/app/pythonpath/superset_config.py
+      - SUPERSET_ADMIN_USERNAME=${SUPERSET_ADMIN_USERNAME:-admin}
+      - SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
+      - SUPERSET_ADMIN_EMAIL=${SUPERSET_ADMIN_EMAIL:-admin@example.com}
+      - SUPERSET_MCP_DEV_USERNAME=${SUPERSET_MCP_DEV_USERNAME:-admin}
+      # Read by the DuckDB connection Superset uses to reach the gold bucket.
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset-home:/app/superset_home
+    depends_on:
+      superset-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - mlops-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8088/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  # ---------- Superset MCP server (what the agent talks to) ----------
+  #
+  # Same image, same config, same metadata database — a different command.
+  # Superset ships the MCP server inside its own CLI, so a separate image would
+  # only be a second copy of Superset to keep in step.
+  #
+  # Deliberately NOT published: on the compose network the agent reaches it at
+  # http://superset-mcp:5008/mcp, and it currently authenticates every call as
+  # one fixed user (see MCP_DEV_USERNAME in superset_config.py).
+  superset-mcp:
+    build: ./superset
+    container_name: mlops-superset-mcp
+    command: [ "/app/bootstrap.sh", "mcp" ]
+    expose:
+      - 5008
+    environment: *superset-env
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset-home:/app/superset_home
+    depends_on:
+      superset:
+        condition: service_healthy
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
@@ -409,5 +498,7 @@ volumes:
   grafana-data:     # Grafana internal DB (users auto-created by auth proxy)
   prometheus-data:  # Prometheus TSDB
   hospital-data:    # Simulated HIS — the ingestion's external source
+  superset-db-data: # Superset's own metadata (charts, dashboards, its users)
+  superset-home:    # Shared by the web and MCP containers: same Superset home
   # Uncomment together with the ollama service above:
   # ollama-data:
