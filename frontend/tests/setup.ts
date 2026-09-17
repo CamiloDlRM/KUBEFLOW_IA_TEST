@@ -14,3 +14,10 @@ afterEach(() => {
 
 // Close MSW server after all tests
 afterAll(() => server.close());
+
+// A test must not end with a request still in flight. Vitest deletes jsdom's
+// globals when the file's environment is torn down, and msw's XHR interceptor
+// reads `ProgressEvent` at the moment a response arrives — so a late response
+// throws a ReferenceError with no one left to catch it, and the run fails with
+// an unhandled rejection blamed on whichever file was running at the time.
+// Hold a response open with a promise you resolve, and await what it produces.

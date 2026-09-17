@@ -126,10 +126,20 @@ describe('AddRepository', () => {
   });
 
   it('disables submit button during submission', async () => {
-    // Use a handler that delays the response
+    // The response is held open until this test lets it go, rather than for a
+    // fixed 200ms. A timed handler leaves the request in flight when the file
+    // ends: vitest then deletes jsdom's globals, msw's XHR interceptor reaches
+    // for `ProgressEvent` to report the response that finally arrived, and the
+    // run fails with an unhandled rejection that names whichever file happened
+    // to be running. It only surfaced when the machine was loaded enough for
+    // the timer to lose the race, which is the worst way to find out.
+    let respond!: () => void;
+    const held = new Promise<void>((resolve) => {
+      respond = resolve;
+    });
     server.use(
       http.post('http://localhost:8000/repos', async () => {
-        await new Promise((r) => setTimeout(r, 200));
+        await held;
         return HttpResponse.json(
           { repo_id: 3, webhook_url: 'http://test.com/webhook', status: 'webhook_created' },
           { status: 201 },
@@ -149,15 +159,13 @@ describe('AddRepository', () => {
       'ghp_test1234567890',
     );
 
-    const submitBtn = screen.getByRole('button', { name: /Register Repository/i });
-    await user.click(submitBtn);
+    await user.click(screen.getByRole('button', { name: /Register Repository/i }));
 
-    // Button should be disabled while the mutation is pending
-    await waitFor(() => {
-      const pendingBtn = screen.queryByRole('button', { name: /Registering/i });
-      if (pendingBtn) {
-        expect(pendingBtn).toBeDisabled();
-      }
-    });
+    // Unconditionally: the old version asserted inside `if (pendingBtn)`, so it
+    // passed whether or not the button it was looking for ever appeared.
+    expect(await screen.findByRole('button', { name: /Registering/i })).toBeDisabled();
+
+    respond();
+    await screen.findByText(/Repository registered successfully/i);
   });
 });
