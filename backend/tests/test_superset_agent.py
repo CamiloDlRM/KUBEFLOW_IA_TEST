@@ -281,3 +281,44 @@ class TestSchemaTranslation:
 
     def test_something_that_is_not_a_schema_at_all_is_survivable(self):
         assert to_gemini_schema(None) == {"type": "string"}  # type: ignore[arg-type]
+
+
+class TestWhenSupersetIsNotThere:
+    def test_an_unreachable_server_is_refused_as_a_dashboard_error(self, settings):
+        """Not as whatever the transport raised: the endpoint maps this error
+        to a 422 with the message in it, and anything else becomes a 500."""
+        from core.mcp import MCPError
+
+        class Unreachable(FakeMCP):
+            def tools(self):
+                raise MCPError("Could not reach the MCP server at http://x. ")
+
+        def never(*args, **kwargs):  # pragma: no cover - must not be reached
+            raise AssertionError("the model should not have been called")
+
+        with pytest.raises(DashboardRequestError, match="Could not reach"):
+            run(never, Unreachable(), settings=settings)
+
+    def test_losing_the_server_mid_loop_keeps_what_was_already_done(self, settings):
+        """Those calls already happened in Superset. Discarding the record of
+        them would leave a dashboard nobody can account for."""
+        from core.mcp import MCPError
+
+        class Flaky(FakeMCP):
+            def call(self, name, arguments):
+                self.calls.append((name, arguments))
+                if len(self.calls) > 1:
+                    raise MCPError("connection lost")
+                return "ok"
+
+        turn = {
+            "parts": [
+                {"functionCall": {"name": "create_chart", "args": {"n": 1}}},
+                {"functionCall": {"name": "create_chart", "args": {"n": 2}}},
+            ]
+        }
+        result = run(replies(turn, text("unreachable")), Flaky(), settings=settings)
+
+        assert len(result.calls) == 1
+        assert "stopped answering" in result.summary
+        assert "connection lost" in result.summary

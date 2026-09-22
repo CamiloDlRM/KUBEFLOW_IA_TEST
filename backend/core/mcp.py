@@ -163,7 +163,21 @@ class MCPClient:
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
 
-        response = self._http.post(self.url, json=body, headers=headers)
+        import httpx
+
+        try:
+            response = self._http.post(self.url, json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            # A server that is not there raises from the transport, below the
+            # level anything else in this file knows about. Left unwrapped it
+            # reaches the caller as a raw httpx error and becomes a 500 with a
+            # stack trace, when the true answer — "that address is not
+            # answering" — is one a user can act on.
+            raise MCPError(
+                f"Could not reach the MCP server at {self.url}: {exc}. "
+                "It may not be running."
+            ) from exc
+
         if response.status_code >= 400:
             raise MCPError(
                 f"{method} failed: HTTP {response.status_code} {response.text[:300]}"

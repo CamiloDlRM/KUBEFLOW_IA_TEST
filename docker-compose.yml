@@ -436,11 +436,20 @@ services:
       - mlops-network
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8088/health" ]
+      # Python, not curl: the Superset image is built lean and curl is not
+      # something to assume. A healthcheck that can never pass is worse than
+      # none here, because superset-mcp waits on it — it would sit in "created"
+      # forever and the agent would meet a refused connection with nothing in
+      # the logs to explain it. Same shape the backend and model-server use.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8088/health')
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 90s
+      start_period: 120s
 
   # ---------- Superset MCP server (what the agent talks to) ----------
   #
