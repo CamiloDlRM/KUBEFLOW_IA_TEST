@@ -87,6 +87,7 @@ parameters:
   "connect_args": {
     "preload_extensions": ["httpfs"],
     "config": {
+      "extension_directory": "/app/duckdb_extensions",
       "s3_endpoint": "minio:9000",
       "s3_access_key_id": "minioadmin",
       "s3_secret_access_key": "minioadmin",
@@ -96,6 +97,12 @@ parameters:
   }
 }
 ```
+
+`extension_directory` is not optional. `httpfs` is baked into the image at that
+path rather than under `$HOME`, because `$HOME` is `/app/superset_home` and
+compose mounts a volume there — anything baked underneath it would be hidden
+the moment the container starts. A connection that does not name the directory
+looks in the empty default and tries to download the extension instead.
 
 Then run, against a project that has a gold build:
 
@@ -120,8 +127,17 @@ error, that is what it is, and it is a small wrapper rather than a redesign.
 
 **The driver versions are unpinned.** `duckdb` and `duckdb-engine` have never
 been resolved against this base image here. A pin invented without running it
-is a broken build rather than a reproducible one — pin them from `pip freeze`
-after the first successful bring-up.
+is a broken build rather than a reproducible one — pin them from the version
+the build prints, once it has printed one.
+
+**`pip install` is the wrong command in this image**, and it fails quietly.
+Superset 6 builds its environment with `uv venv /app/.venv`, which does not put
+pip inside the venv, so a plain `pip install` resolves up `PATH` to the *system*
+interpreter, installs into system site-packages, and exits 0 — while the venv
+that actually runs Superset never sees the package. The Dockerfile installs
+with `uv pip install --python /app/.venv/bin/python` and imports what it just
+installed in the same layer, so a wrong-environment install fails there rather
+than at runtime.
 
 **The MCP server authenticates as one fixed user.** `MCP_DEV_USERNAME` is the
 documented development mode: anything that can reach port 5008 gets that user's
