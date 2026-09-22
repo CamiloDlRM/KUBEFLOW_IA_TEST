@@ -914,6 +914,34 @@ class LayerDiffResponse(BaseModel):
     approximate: bool = False
 
 
+class KpiTurn(SQLModel, table=True):
+    """One exchange with the dashboard agent, kept so the next one can build on it.
+
+    A dashboard is not made in one prompt. The first asks for something, the
+    second moves a chart, the third says the split is wrong — and each of those
+    only means anything if the model knows what it already built. Storing the
+    exchange is what turns a series of one-shot requests into editing.
+
+    What is stored is the *exchange*, not the model's internal conversation:
+    the request in the user's words and the account it gave of what it did.
+    Replaying a full tool transcript into the next prompt would grow without
+    bound and mostly repeat what Superset can be asked directly.
+    """
+
+    __tablename__ = "kpi_turns"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
+    prompt: str = SQLField(default="")
+    summary: str = SQLField(default="")
+    #: Every tool the agent called, so a dashboard that came out wrong can be
+    #: read as the sequence that produced it.
+    calls: list[Any] = SQLField(default_factory=list, sa_column=Column(JSON))
+    turns: int = SQLField(default=0)
+    exhausted: bool = SQLField(default=False)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class DashboardRequest(BaseModel):
     """What the user wants a dashboard to show, in their own words."""
 
@@ -933,15 +961,33 @@ class DashboardToolCallResponse(BaseModel):
     result: str = ""
 
 
-class DashboardResponse(BaseModel):
-    """What the agent built, and how it got there."""
+class DashboardTurnResponse(BaseModel):
+    """One exchange: what was asked, and what the agent did about it."""
 
+    id: int
+    prompt: str = ""
     summary: str = ""
     calls: list[DashboardToolCallResponse] = Field(default_factory=list)
     turns: int = 0
     #: The loop was cut off rather than the model finishing. Whatever is in
     #: Superset is then half-built, and the summary may be mid-thought.
     exhausted: bool = False
+    created_at: datetime | None = None
+
+
+class DashboardResponse(BaseModel):
+    """The conversation so far, newest last.
+
+    The whole conversation comes back on every request rather than only the
+    new turn, because the conversation *is* the feature: a dashboard is built
+    by refining it, and what was asked three prompts ago is how anyone works
+    out why it looks the way it does.
+    """
+
+    turns: list[DashboardTurnResponse] = Field(default_factory=list)
+    #: Where to go and look at the result. Empty when Superset is not
+    #: configured for this installation.
+    superset_url: str = ""
 
 
 class CleaningColumnResponse(BaseModel):

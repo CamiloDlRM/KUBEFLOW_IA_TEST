@@ -507,3 +507,29 @@ export interface Insight {
   apply_branch: string;
   apply_commit_sha: string;
 }
+
+/** One tool the dashboard agent called, and what came back. */
+export interface DashboardToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: string;
+}
+
+/** One exchange with the dashboard agent. */
+export interface DashboardTurn {
+  id: number;
+  prompt: string;
+  summary: string;
+  calls: DashboardToolCall[];
+  /** How many times the model went round the tool loop. */
+  turns: number;
+  /** The loop was cut off rather than the model finishing. */
+  exhausted: boolean;
+  created_at: string | null;
+}
+
+export interface DashboardConversation {
+  turns: DashboardTurn[];
+  /** Where a person reaches Superset. Empty when it is not configured. */
+  superset_url: string;
+}

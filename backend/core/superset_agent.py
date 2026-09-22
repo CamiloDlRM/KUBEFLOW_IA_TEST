@@ -65,6 +65,10 @@ human to follow by hand.
 
 How to work:
 - Look before you build. List what already exists rather than assuming.
+- If you have built a dashboard for this project already, FIND IT AND CHANGE \
+IT. The user is refining the dashboard they have, not asking for another one. \
+Creating a second dashboard every time a chart needs moving is the single \
+worst thing you can do here.
 - Prefer a few charts that answer the question over many that decorate it.
 - If the request needs a column that is not in the schema, build the closest \
 dashboard the schema does support and say plainly, at the end, what you could \
@@ -228,6 +232,7 @@ def build_dashboard(
     *,
     schema: str,
     mcp_url: str,
+    history: list[tuple[str, str]] | None = None,
     settings: AppSettings | None = None,
     model: str = "gemini-2.5-pro",
     generate: Callable[..., dict[str, Any]] | None = None,
@@ -241,6 +246,14 @@ def build_dashboard(
             what exists rather than left to discover it, because discovery
             costs a tool call per guess and the platform already knows.
         mcp_url: Where Superset's MCP server is listening.
+        history: Earlier exchanges, oldest first, as ``(request, summary)``.
+            This is what makes "move that chart" mean anything: without it the
+            model meets each prompt as its first, and builds a second dashboard
+            rather than editing the one it built a minute ago.
+
+            The exchange is replayed, not the tool transcript. The transcript
+            grows without bound and mostly repeats what Superset can be asked
+            directly — and it can be, because the model has the tools.
         generate: Seam for tests. Defaults to calling Gemini.
         client: Seam for tests. Defaults to opening one against ``mcp_url``.
     """
@@ -263,7 +276,13 @@ def build_dashboard(
             )
         declarations = _declarations(tools)
 
-        contents: list[dict[str, Any]] = [
+        contents: list[dict[str, Any]] = []
+        for earlier, answer in history or []:
+            contents.append({"role": "user", "parts": [{"text": earlier}]})
+            contents.append({"role": "model", "parts": [{"text": answer}]})
+        # The schema goes on the current message rather than the first, so a
+        # gold table rebuilt between two prompts is described as it is now.
+        contents.append(
             {
                 "role": "user",
                 "parts": [
@@ -275,7 +294,7 @@ def build_dashboard(
                     }
                 ],
             }
-        ]
+        )
 
         run = DashboardRun(summary="")
         for turn in range(1, MAX_TURNS + 1):

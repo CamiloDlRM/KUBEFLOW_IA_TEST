@@ -41,6 +41,7 @@ from models.schemas import (
     DashboardRequest,
     DashboardResponse,
     DashboardToolCallResponse,
+    DashboardTurnResponse,
     DataSource,
     DiffColumnResponse,
     DiffRowResponse,
@@ -51,6 +52,7 @@ from models.schemas import (
     GoldSuggestResponse,
     GoldTable,
     IngestionRun,
+    KpiTurn,
     LayerDiffResponse,
     LayerPreviewResponse,
     LayerStreamResponse,
@@ -998,10 +1000,70 @@ async def suggest_gold(
     return GoldSuggestResponse(sql=suggestion.sql, explanation=suggestion.explanation)
 
 
+
+
+# ---------------------------------------------------------------------------
+# KPI maker — the dashboard agent, one prompt at a time
+# ---------------------------------------------------------------------------
+
+
+def _conversation(session: Session, project_id: int) -> list[KpiTurn]:
+    """Every exchange for this project, oldest first."""
+    return list(
+        session.exec(
+            select(KpiTurn)
+            .where(KpiTurn.project_id == project_id)
+            .order_by(KpiTurn.id)  # type: ignore[arg-type]
+        ).all()
+    )
+
+
+def _as_response(turns: list[KpiTurn], settings: Any) -> DashboardResponse:
+    return DashboardResponse(
+        turns=[
+            DashboardTurnResponse(
+                id=turn.id or 0,
+                prompt=turn.prompt,
+                summary=turn.summary,
+                calls=[
+                    DashboardToolCallResponse(**call)
+                    for call in (turn.calls or [])
+                    if isinstance(call, dict)
+                ],
+                turns=turn.turns,
+                exhausted=turn.exhausted,
+                created_at=turn.created_at,
+            )
+            for turn in turns
+        ],
+        superset_url=settings.superset_public_url if settings.superset_mcp_url else "",
+    )
+
+
+@router.get(
+    "/{project_id}/dashboard",
+    response_model=DashboardResponse,
+    summary="The conversation with the dashboard agent so far",
+)
+async def dashboard_conversation(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> DashboardResponse:
+    """Read it back without asking for anything new.
+
+    The conversation is the feature. A dashboard is built by refining it, and
+    what was asked three prompts ago is how anyone works out why it looks the
+    way it does.
+    """
+    get_visible_project_or_404(session, project_id, current_user)
+    return _as_response(_conversation(session, project_id), get_settings())
+
+
 @router.post(
     "/{project_id}/dashboard",
     response_model=DashboardResponse,
-    summary="Ask the agent to build a Superset dashboard over this project's gold table",
+    summary="Ask the agent to build or change this project's dashboard",
 )
 async def build_dashboard(
     project_id: int,
@@ -1009,14 +1071,18 @@ async def build_dashboard(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> DashboardResponse:
-    """Hand the request and the gold schema to the agent, and let it use Superset.
+    """Hand the request, the gold schema and the earlier exchanges to the agent.
 
-    The agent is told what gold holds rather than left to discover it: the
+    The earlier exchanges are what make this editing rather than a series of
+    one-shot requests: without them the model meets "move that chart to the
+    top" as its first instruction and builds a second dashboard.
+
+    The agent is told what gold holds rather than left to discover it — the
     platform already knows the schema, and discovery would cost a tool call per
     guess.
 
-    The dashboard is built over the *built* gold object — the versioned thing
-    the pipeline trains on — not over a re-run of the gold definition. Silver
+    The dashboard is built over the *built* gold object, the versioned thing
+    the pipeline trains on, not over a re-run of the gold definition. Silver
     accumulates underneath, so re-deriving the table at dashboard time would
     show numbers belonging to no build at all.
 
@@ -1049,6 +1115,8 @@ async def build_dashboard(
     columns = ", ".join(f"{name} {kind}" for name, kind in schema.items())
     described = f"{table.name}({columns})\n-- object: s3://gold/{table.object_key}"
 
+    earlier = _conversation(session, project_id)
+
     from core.superset_agent import DashboardRequestError, build_dashboard as run_agent
 
     try:
@@ -1056,6 +1124,7 @@ async def build_dashboard(
             body.prompt,
             schema=described,
             mcp_url=settings.superset_mcp_url,
+            history=[(turn.prompt, turn.summary) for turn in earlier],
             settings=settings,
         )
     except DashboardRequestError as exc:
@@ -1063,14 +1132,22 @@ async def build_dashboard(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
 
-    return DashboardResponse(
+    # Recorded even when the loop was cut off. Whatever it managed to do is in
+    # Superset either way, and a turn that vanished because it did not finish
+    # cleanly is a turn nobody can account for afterwards.
+    turn = KpiTurn(
+        project_id=project_id,
+        prompt=body.prompt,
         summary=run.summary,
         calls=[
-            DashboardToolCallResponse(
-                name=call.name, arguments=call.arguments, result=call.result
-            )
+            {"name": call.name, "arguments": call.arguments, "result": call.result}
             for call in run.calls
         ],
         turns=run.turns,
         exhausted=run.exhausted,
     )
+    session.add(turn)
+    session.commit()
+    session.refresh(turn)
+
+    return _as_response(earlier + [turn], settings)

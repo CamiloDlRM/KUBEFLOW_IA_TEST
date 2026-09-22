@@ -924,6 +924,46 @@ class TestSuggestion:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture()
+def built_gold(db_session, own_project, storage_patched, tmp_path):
+    """A project whose gold table has actually been built and landed."""
+    from models.schemas import GoldTable
+
+    key = f"project-{own_project.id}/gold/v0001.parquet"
+    put_object(storage_patched, "gold", key, silver_file(tmp_path, name="gold.parquet"))
+
+    table = GoldTable(
+        project_id=own_project.id,
+        name="gold",
+        object_key=key,
+        version=1,
+        rows=3,
+    )
+    db_session.add(table)
+    db_session.commit()
+    db_session.refresh(table)
+    return table
+
+
+class Recorder:
+    """Stands in for the agent, remembering what it was handed."""
+
+    def __init__(self, summary="Built it.", calls=(), exhausted=False):
+        from core.superset_agent import DashboardRun
+
+        self.run = DashboardRun(
+            summary=summary, calls=list(calls), turns=2, exhausted=exhausted
+        )
+        self.history = None
+        self.schema = None
+
+    def __call__(self, request, *, schema, mcp_url, history=None, settings=None, **kw):
+        self.history = history
+        self.schema = schema
+        self.request = request
+        return self.run
+
+
 class TestDashboardAgent:
     """The endpoint that hands gold's schema to the agent.
 
@@ -968,3 +1008,97 @@ class TestDashboardAgent:
             f"/projects/{own_project.id}/dashboard", json={"prompt": ""}
         )
         assert response.status_code == 422
+
+    def test_an_exchange_is_recorded_so_the_next_one_can_build_on_it(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        agent = Recorder(summary="Made a dashboard with two charts.")
+        self._agent(monkeypatch, agent)
+
+        body = test_app.post(
+            f"/projects/{own_project.id}/dashboard",
+            json={"prompt": "encounters by class"},
+        ).json()
+
+        assert [turn["prompt"] for turn in body["turns"]] == ["encounters by class"]
+        assert body["turns"][0]["summary"] == "Made a dashboard with two charts."
+
+    def test_the_second_prompt_carries_the_first_exchange(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        """Without it the model meets "move that chart" as its first
+        instruction and builds a second dashboard."""
+        agent = Recorder(summary="Done.")
+        self._agent(monkeypatch, agent)
+
+        test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "first ask"}
+        )
+        test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "now edit it"}
+        )
+
+        assert agent.history == [("first ask", "Done.")]
+        assert agent.request == "now edit it"
+
+    def test_the_conversation_can_be_read_back_without_asking_for_anything(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        self._agent(monkeypatch, Recorder())
+        test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "something"}
+        )
+
+        body = test_app.get(f"/projects/{own_project.id}/dashboard").json()
+
+        assert [turn["prompt"] for turn in body["turns"]] == ["something"]
+        assert body["superset_url"]
+
+    def test_what_the_agent_did_is_kept_not_just_what_it_said(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        from core.superset_agent import ToolCall
+
+        agent = Recorder(calls=[ToolCall("create_chart", {"title": "x"}, "chart 3")])
+        self._agent(monkeypatch, agent)
+
+        body = test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "chart it"}
+        ).json()
+
+        assert body["turns"][0]["calls"] == [
+            {"name": "create_chart", "arguments": {"title": "x"}, "result": "chart 3"}
+        ]
+
+    def test_a_run_that_was_cut_off_is_still_recorded(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        """Whatever it managed to do is in Superset either way, and a turn that
+        vanished is a turn nobody can account for afterwards."""
+        self._agent(monkeypatch, Recorder(exhausted=True))
+
+        body = test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "big ask"}
+        ).json()
+
+        assert body["turns"][0]["exhausted"] is True
+
+    def test_the_agent_is_told_the_gold_schema_and_where_the_object_is(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        agent = Recorder()
+        self._agent(monkeypatch, agent)
+        test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "anything"}
+        )
+
+        assert "patient_id" in agent.schema
+        assert built_gold.object_key in agent.schema
+
+    def test_another_tenant_cannot_read_the_conversation(
+        self, other_member_app, own_project, built_gold
+    ):
+        assert (
+            other_member_app.get(f"/projects/{own_project.id}/dashboard").status_code
+            == 404
+        )
