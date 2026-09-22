@@ -39,6 +39,24 @@ RUN uv pip install --no-cache --python /app/.venv/bin/python \
 import duckdb, duckdb_engine, psycopg2; \
 print('duckdb', duckdb.__version__, '| psycopg2', psycopg2.__version__)"
 
+# The MCP service itself, which the image does not ship either: it lives behind
+# an optional extra, and without it `superset mcp run` prints "fastmcp is not
+# installed, skipping MCP initialization" and exits.
+#
+# Asked for as the extra of the version already installed, not as a bare
+# `fastmcp`. The extra carries Superset's own constraint on which fastmcp its
+# MCP code was written against; a bare install takes the newest, which is how
+# you get a server that starts and then disagrees with its own host about a
+# schema. Naming the installed version means the resolver sees apache-superset
+# as already satisfied and adds only what the extra pulls in.
+RUN VERSION="$(/app/.venv/bin/python -c 'import importlib.metadata as m; print(m.version(\"apache-superset\"))')" \
+ && echo "superset ${VERSION}: adding the fastmcp extra" \
+ && uv pip install --no-cache --python /app/.venv/bin/python \
+      "apache-superset[fastmcp]==${VERSION}" \
+ && /app/.venv/bin/python -c "\
+import fastmcp, uvicorn; \
+print('fastmcp', fastmcp.__version__, '| uvicorn', uvicorn.__version__)"
+
 # Owned by the user that will write into it during the build and read from it
 # at runtime.
 RUN mkdir -p /app/duckdb_extensions && chown superset:superset /app/duckdb_extensions
