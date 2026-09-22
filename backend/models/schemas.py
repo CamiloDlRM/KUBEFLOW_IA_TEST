@@ -914,6 +914,36 @@ class LayerDiffResponse(BaseModel):
     approximate: bool = False
 
 
+class DashboardRequest(BaseModel):
+    """What the user wants a dashboard to show, in their own words."""
+
+    prompt: str = Field(min_length=1, max_length=4000)
+
+
+class DashboardToolCallResponse(BaseModel):
+    """One thing the agent did to Superset.
+
+    Returned rather than summarised, because a dashboard that came out wrong
+    should be readable as the sequence of calls that produced it — the model's
+    own account of itself is the least reliable record of what it did.
+    """
+
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: str = ""
+
+
+class DashboardResponse(BaseModel):
+    """What the agent built, and how it got there."""
+
+    summary: str = ""
+    calls: list[DashboardToolCallResponse] = Field(default_factory=list)
+    turns: int = 0
+    #: The loop was cut off rather than the model finishing. Whatever is in
+    #: Superset is then half-built, and the summary may be mid-thought.
+    exhausted: bool = False
+
+
 class CleaningColumnResponse(BaseModel):
     """One column, named on both sides of a single rule.
 

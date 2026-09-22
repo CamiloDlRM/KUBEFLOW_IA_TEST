@@ -104,6 +104,13 @@ class AppSettings(BaseSettings):
         default="http://host.docker.internal:11434",
         description="Base URL of the Ollama server (provider=ollama).",
     )
+    superset_mcp_url: str = Field(
+        default="http://superset-mcp:5008/mcp",
+        description=(
+            "Superset's MCP server, which is what the dashboard agent drives. "
+            "Empty turns the feature off rather than failing per request."
+        ),
+    )
 
     # --- Storage ---
     models_base_path: str = Field(

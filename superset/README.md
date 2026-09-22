@@ -128,14 +128,39 @@ documented development mode: anything that can reach port 5008 gets that user's
 permissions, with no token. That is why the port is not published. Before it is
 reachable from anywhere else it has to become the JWT mode.
 
+## The agent
+
+`POST /projects/{id}/dashboard` with `{"prompt": "..."}` hands the request and
+gold's schema to Gemini, gives it Superset's tools, and lets it build.
+
+Three pieces, all in the backend:
+
+- `core/mcp.py` — an MCP client. JSON-RPC over HTTP, the handshake, `tools/list`
+  and `tools/call`, and nothing else.
+- `core/superset_agent.py` — the loop. MCP tool schemas are translated into
+  Gemini function declarations, the model is told what gold holds rather than
+  left to discover it, and it runs until the model stops asking for tools or
+  hits `MAX_TURNS`.
+- The endpoint, which finds the project's built gold object, reads its schema
+  from the Parquet, and returns both what the model said and every tool call it
+  made — so a dashboard that came out wrong can be read as the sequence that
+  produced it, rather than inferred from the model's own account of itself.
+
+It runs synchronously and can take minutes. That is the wrong shape for an HTTP
+request and it should move onto the Celery queue the way the pipeline analysis
+did; that is a change to how it is called, not to what it does.
+
 ## What is not here
 
 - The DuckDB view per project, and refreshing it when `rebuild_gold` writes a
-  new build.
-- The agent. The platform's advisor (`core/ai_advisor.py`) calls Gemini over
-  plain REST and has no MCP client and no tool-calling loop; giving it one — MCP
-  tool schemas translated into Gemini function declarations, and a loop that
-  runs until the model stops calling tools — is its own piece of work.
-- Anything verified. Docker was not running when this was written, so none of
-  the above has been started once. Treat the bring-up steps as the first test,
-  not as a description of something that worked.
+  new build. Today the model is told the object's path and has to point Superset
+  at it.
+- Any UI. The endpoint exists; nothing in the app calls it yet.
+- The queue. See above.
+- **Any evidence that the model and Superset can actually talk.** Docker was not
+  running when this was written, so no container here has been started once and
+  the agent has never met a real MCP server. What is tested is everything
+  between: the client against a fake server built on `httpx.MockTransport`
+  (14 tests), and the loop with both ends faked (17). Those pin the protocol and
+  the loop, not the integration. Treat the bring-up steps above as the first
+  real test.

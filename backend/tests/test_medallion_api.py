@@ -917,3 +917,54 @@ class TestSuggestion:
             f"/projects/{own_project.id}/medallion/gold/suggest", json={"question": "anything"}
         )
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Asking the agent for a dashboard
+# ---------------------------------------------------------------------------
+
+
+class TestDashboardAgent:
+    """The endpoint that hands gold's schema to the agent.
+
+    What cannot be covered here is the part that matters in production —
+    whether Superset's real MCP server accepts what the model asks it for.
+    What can be covered is that the endpoint is scoped to the tenant, refuses
+    before calling anything when there is nothing to chart, and describes the
+    *built* object rather than the definition that produced it.
+    """
+
+    def _agent(self, monkeypatch, recorder):
+        import core.superset_agent as agent
+
+        monkeypatch.setattr(agent, "build_dashboard", recorder)
+
+    def test_a_project_with_no_gold_is_refused_before_the_agent_is_called(
+        self, test_app, own_project, storage_patched, monkeypatch
+    ):
+        def never(*args, **kwargs):  # pragma: no cover - must not be reached
+            raise AssertionError("the agent should not have been called")
+
+        self._agent(monkeypatch, never)
+        response = test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "anything"}
+        )
+
+        assert response.status_code == 422
+        assert "gold table" in response.json()["detail"]
+
+    def test_another_tenant_cannot_ask_for_a_dashboard(
+        self, other_member_app, own_project, storage_patched
+    ):
+        response = other_member_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "anything"}
+        )
+        assert response.status_code == 404
+
+    def test_an_empty_prompt_is_refused_by_the_schema(
+        self, test_app, own_project, storage_patched
+    ):
+        response = test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": ""}
+        )
+        assert response.status_code == 422
