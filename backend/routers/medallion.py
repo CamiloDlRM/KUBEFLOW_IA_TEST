@@ -29,6 +29,7 @@ from sqlmodel import Session, select
 from core import gold as gold_module
 from core import medallion
 from core.cleaning import Table, clean
+from core.config import get_settings
 from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
 from db import get_session
@@ -37,6 +38,9 @@ from models.schemas import (
     CleaningRowResponse,
     CleaningStepResponse,
     CleaningStepsResponse,
+    DashboardRequest,
+    DashboardResponse,
+    DashboardToolCallResponse,
     DataSource,
     DiffColumnResponse,
     DiffRowResponse,
@@ -992,3 +996,81 @@ async def suggest_gold(
         return GoldSuggestResponse(error=str(exc))
 
     return GoldSuggestResponse(sql=suggestion.sql, explanation=suggestion.explanation)
+
+
+@router.post(
+    "/{project_id}/dashboard",
+    response_model=DashboardResponse,
+    summary="Ask the agent to build a Superset dashboard over this project's gold table",
+)
+async def build_dashboard(
+    project_id: int,
+    body: DashboardRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> DashboardResponse:
+    """Hand the request and the gold schema to the agent, and let it use Superset.
+
+    The agent is told what gold holds rather than left to discover it: the
+    platform already knows the schema, and discovery would cost a tool call per
+    guess.
+
+    The dashboard is built over the *built* gold object — the versioned thing
+    the pipeline trains on — not over a re-run of the gold definition. Silver
+    accumulates underneath, so re-deriving the table at dashboard time would
+    show numbers belonging to no build at all.
+
+    This runs synchronously and can take minutes: a dozen turns of a model plus
+    the tool calls each one asks for. That is the wrong shape for an HTTP
+    request and it should move onto the queue the way the pipeline analysis
+    did, which is a change to how it is called rather than to what it does.
+    """
+    get_visible_project_or_404(session, project_id, current_user)
+
+    settings = get_settings()
+    if not settings.superset_mcp_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Superset is not configured for this installation.",
+        )
+
+    table = _gold_of(session, project_id)
+    if table is None or not table.object_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This project has not built a gold table yet.",
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local = Path(tmpdir) / "gold.parquet"
+        medallion.download_parquet("gold", table.object_key, local)
+        schema = medallion.read_schema(local)
+
+    columns = ", ".join(f"{name} {kind}" for name, kind in schema.items())
+    described = f"{table.name}({columns})\n-- object: s3://gold/{table.object_key}"
+
+    from core.superset_agent import DashboardRequestError, build_dashboard as run_agent
+
+    try:
+        run = run_agent(
+            body.prompt,
+            schema=described,
+            mcp_url=settings.superset_mcp_url,
+            settings=settings,
+        )
+    except DashboardRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
+
+    return DashboardResponse(
+        summary=run.summary,
+        calls=[
+            DashboardToolCallResponse(
+                name=call.name, arguments=call.arguments, result=call.result
+            )
+            for call in run.calls
+        ],
+        turns=run.turns,
+        exhausted=run.exhausted,
+    )
