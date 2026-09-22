@@ -12,18 +12,29 @@ FROM apache/superset:6.1.0
 
 USER root
 
+# Installed through uv, naming the interpreter, and proved in the same layer.
+#
+# `pip install` here is a trap. The image builds its environment with
+# `uv venv /app/.venv`, and `uv venv` does not put pip inside it — so `pip`
+# resolves up PATH to the system interpreter, installs into system
+# site-packages, and exits 0. The venv that actually runs Superset never sees
+# the package. The build then fails several steps later, or worse, succeeds and
+# the driver is simply missing at runtime.
+#
 # Unpinned on purpose, for now: these have never been resolved against this
 # base image here, and a pin invented without running it is a broken build
-# rather than a reproducible one. Pin them from `pip freeze` after the first
-# successful bring-up.
-RUN pip install --no-cache-dir duckdb duckdb-engine
+# rather than a reproducible one. Pin them from the versions this prints.
+RUN uv pip install --no-cache --python /app/.venv/bin/python duckdb duckdb-engine \
+ && /app/.venv/bin/python -c "import duckdb, duckdb_engine; print('duckdb', duckdb.__version__)"
+
+# Owned by the user that will write into it during the build and read from it
+# at runtime.
+RUN mkdir -p /app/duckdb_extensions && chown superset:superset /app/duckdb_extensions
 
 COPY bootstrap.sh /app/bootstrap.sh
+COPY install_extensions.py /app/install_extensions.py
 RUN chmod +x /app/bootstrap.sh
 
 USER superset
 
-# Bake the httpfs extension in, as the user that will load it: DuckDB installs
-# extensions under $HOME, and the first query would otherwise have to reach the
-# internet from inside the container to read a bucket on the next host over.
-RUN python -c "import duckdb; duckdb.connect().execute('INSTALL httpfs')"
+RUN python /app/install_extensions.py
