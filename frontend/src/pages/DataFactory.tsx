@@ -10,6 +10,7 @@ import UploadPanel from '../components/UploadPanel';
 import SourcePreviews from '../components/SourcePreviews';
 import LayerStage from '../components/LayerStage';
 import CleaningSteps from '../components/CleaningSteps';
+import KpiMaker from '../components/KpiMaker';
 import GoldDefinition from '../components/GoldDefinition';
 
 /**
@@ -23,7 +24,15 @@ import GoldDefinition from '../components/GoldDefinition';
  * It opens on the furthest stage reached, because that is where the work is —
  * not on stage one, which a returning user has finished with.
  */
-const STAGE_IDS = ['connect', 'preview', 'extract', 'bronze', 'silver', 'gold'] as const;
+const STAGE_IDS = [
+  'connect',
+  'preview',
+  'extract',
+  'bronze',
+  'silver',
+  'gold',
+  'kpi',
+] as const;
 type StageId = (typeof STAGE_IDS)[number];
 
 export default function DataFactory() {
@@ -53,7 +62,12 @@ export default function DataFactory() {
   // background poll landed.
   useEffect(() => {
     if (selected === null && medallion) {
-      const reached = stages.filter((stage) => stage.reached);
+      // The KPI maker is excluded from "furthest reached" even though it is
+      // last on the map. It becomes reachable the instant gold exists, so
+      // landing there would mean nobody ever opens on their data again — and
+      // it is the one stage that is about what you ask of the data rather than
+      // about the data arriving. It is chosen, not defaulted into.
+      const reached = stages.filter((stage) => stage.reached && stage.id !== 'kpi');
       setSelected((reached[reached.length - 1]?.id as StageId) ?? 'connect');
     }
   }, [medallion, selected, stages]);
@@ -79,8 +93,8 @@ export default function DataFactory() {
         </Link>
         <h2 className="mt-2 text-2xl font-bold text-slate-100">Data Factory</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
-          Where the data comes in, gets cleaned, and becomes the table this project trains
-          on. Pick any stage you have reached.
+          Where the data comes in, gets cleaned, becomes the table this project trains on,
+          and finally answers something. Pick any stage you have reached.
         </p>
       </div>
 
@@ -133,6 +147,8 @@ export default function DataFactory() {
             <GoldDefinition projectId={id} summary={medallion.gold} />
           </>
         )}
+
+        {current === 'kpi' && <KpiMaker projectId={id} />}
       </div>
     </div>
   );
@@ -198,6 +214,15 @@ function buildStages(sourceCount: number, medallion: Medallion | undefined): Sta
       reached: (gold?.version ?? 0) > 0,
       blocked: 'Build silver first',
       badge: gold?.version ? `v${gold.version}` : undefined,
+    },
+    {
+      // Past the layers rather than one of them: nothing is written here. The
+      // data has arrived and this is what gets asked of it.
+      id: 'kpi',
+      label: 'KPI maker',
+      caption: 'Ask for a dashboard over gold',
+      reached: (gold?.version ?? 0) > 0,
+      blocked: 'Build gold first',
     },
   ];
 }

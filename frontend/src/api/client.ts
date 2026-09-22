@@ -36,6 +36,7 @@ import type {
   LayerSummary,
   Project,
   CleaningSteps,
+  DashboardConversation,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -564,6 +565,34 @@ export async function suggestGold(
     `/projects/${projectId}/medallion/gold/suggest`,
     { question },
     { timeout: MODEL_TIMEOUT },
+  );
+  return data;
+}
+
+/**
+ * The dashboard agent runs a model in a loop and calls Superset on every turn,
+ * so it is slow in a way an ordinary request is not: minutes, not seconds.
+ * Until it moves onto the queue, the client has to be willing to wait.
+ */
+const AGENT_TIMEOUT = 600_000;
+
+export async function getDashboardConversation(
+  projectId: number,
+): Promise<DashboardConversation> {
+  const { data } = await apiClient.get<DashboardConversation>(
+    `/projects/${projectId}/dashboard`,
+  );
+  return data;
+}
+
+export async function askForDashboard(
+  projectId: number,
+  prompt: string,
+): Promise<DashboardConversation> {
+  const { data } = await apiClient.post<DashboardConversation>(
+    `/projects/${projectId}/dashboard`,
+    { prompt },
+    { timeout: AGENT_TIMEOUT },
   );
   return data;
 }

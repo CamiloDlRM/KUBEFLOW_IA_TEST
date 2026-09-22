@@ -111,6 +111,14 @@ class AppSettings(BaseSettings):
             "Empty turns the feature off rather than failing per request."
         ),
     )
+    superset_public_url: str = Field(
+        default="http://localhost:8088",
+        description=(
+            "Where a person reaches Superset. Sent to the browser so the UI "
+            "can link to the dashboard the agent built — not the MCP URL, "
+            "which is internal to the compose network."
+        ),
+    )
 
     # --- Storage ---
     models_base_path: str = Field(

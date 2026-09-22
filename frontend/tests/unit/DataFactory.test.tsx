@@ -12,6 +12,7 @@ const getMedallion = vi.fn();
 const previewLayer = vi.fn();
 const previewSource = vi.fn();
 const getCleaningSteps = vi.fn();
+const getDashboardConversation = vi.fn();
 const getGoldRelations = vi.fn();
 const getIngestionRuns = vi.fn();
 
@@ -22,6 +23,8 @@ vi.mock('../../src/api/client', () => ({
   previewLayer: (...a: unknown[]) => previewLayer(...a),
   previewSource: (...a: unknown[]) => previewSource(...a),
   getCleaningSteps: (...a: unknown[]) => getCleaningSteps(...a),
+  getDashboardConversation: (...a: unknown[]) => getDashboardConversation(...a),
+  askForDashboard: vi.fn(),
   getGoldRelations: (...a: unknown[]) => getGoldRelations(...a),
   getIngestionRuns: (...a: unknown[]) => getIngestionRuns(...a),
   createSource: vi.fn(),
@@ -107,13 +110,14 @@ describe('DataFactory', () => {
     previewLayer.mockRejectedValue(new Error('nothing yet'));
     previewSource.mockResolvedValue({ columns: [], rows: [], profile: {}, truncated: false });
     getCleaningSteps.mockRejectedValue(new Error('nothing yet'));
+    getDashboardConversation.mockResolvedValue({ turns: [], superset_url: '' });
     getGoldRelations.mockResolvedValue({ relations: {}, default_sql: '' });
     getIngestionRuns.mockResolvedValue([]);
   });
 
-  it('shows all six stages', async () => {
+  it('shows every stage', async () => {
     renderFactory();
-    for (const label of ['Connect', 'Preview', 'Extract', 'Bronze', 'Silver', 'Gold']) {
+    for (const label of ['Connect', 'Preview', 'Extract', 'Bronze', 'Silver', 'Gold', 'KPI maker']) {
       expect(await step(label)).toBeInTheDocument();
     }
   });
@@ -147,6 +151,39 @@ describe('DataFactory', () => {
 
     const gold = await step('Gold');
     await waitFor(() => expect(gold).toHaveAttribute('aria-current', 'step'));
+  });
+
+  it('does not land on the KPI maker, even though it is last on the map', async () => {
+    // It becomes reachable the instant gold exists, so landing there would
+    // mean nobody ever opens on their data again. It is chosen, not defaulted
+    // into.
+    getSources.mockResolvedValue([SOURCE]);
+    getMedallion.mockResolvedValue(
+      medallion({
+        bronze: layer({ objects: 1, rows: 100 }),
+        silver: layer({ layer: 'silver', bucket: 'silver', objects: 1, rows: 98 }),
+        gold: layer({ layer: 'gold', bucket: 'gold', version: 2, rows: 98, objects: 1 }),
+      }),
+    );
+    renderFactory();
+
+    const kpi = await step('KPI maker');
+    await waitFor(() => expect(kpi).toBeEnabled());
+    expect(kpi).not.toHaveAttribute('aria-current', 'step');
+  });
+
+  it('opens the KPI maker when it is picked', async () => {
+    getSources.mockResolvedValue([SOURCE]);
+    getMedallion.mockResolvedValue(
+      medallion({ gold: layer({ layer: 'gold', bucket: 'gold', version: 1, objects: 1 }) }),
+    );
+    renderFactory();
+
+    const kpi = await step('KPI maker');
+    await waitFor(() => expect(kpi).toBeEnabled());
+    await userEvent.click(kpi);
+
+    expect(await screen.findByRole('heading', { name: 'KPI maker' })).toBeInTheDocument();
   });
 
   it('lets a reached stage be revisited, which a wizard would not', async () => {
