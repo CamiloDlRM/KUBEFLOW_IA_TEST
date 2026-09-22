@@ -125,6 +125,13 @@ is a wrapper that creates the app and pushes its context before starting the
 server. `bootstrap.sh` runs the documented command first; if you see that
 error, that is what it is, and it is a small wrapper rather than a redesign.
 
+**The image ships no database drivers at all.** They were dropped in 4.1.0 to
+keep it lean, so every one is the operator's to add — including `psycopg2`,
+which Superset needs for *its own* metadata database. Without it the container
+does not reach the point of serving anything: `superset db upgrade` cannot open
+the connection and the startup dies on `ModuleNotFoundError: No module named
+'psycopg2'`. The Dockerfile installs `psycopg2-binary` alongside DuckDB.
+
 **The driver versions are unpinned.** `duckdb` and `duckdb-engine` have never
 been resolved against this base image here. A pin invented without running it
 is a broken build rather than a reproducible one — pin them from the version

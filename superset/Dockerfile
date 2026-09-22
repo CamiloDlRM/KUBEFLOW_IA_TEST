@@ -12,6 +12,15 @@ FROM apache/superset:6.1.0
 
 USER root
 
+# Two drivers, because since 4.1.0 the image ships none: they were dropped to
+# keep it lean and every one is now the operator's to add.
+#
+#   psycopg2-binary  Superset's own metadata database. Without it the container
+#                    does not start at all — `superset db upgrade` cannot open
+#                    the connection. The `-binary` build ships wheels, so this
+#                    does not need a compiler in the image.
+#   duckdb           how it reads the gold layer, which is the point of all this.
+#
 # Installed through uv, naming the interpreter, and proved in the same layer.
 #
 # `pip install` here is a trap. The image builds its environment with
@@ -24,8 +33,11 @@ USER root
 # Unpinned on purpose, for now: these have never been resolved against this
 # base image here, and a pin invented without running it is a broken build
 # rather than a reproducible one. Pin them from the versions this prints.
-RUN uv pip install --no-cache --python /app/.venv/bin/python duckdb duckdb-engine \
- && /app/.venv/bin/python -c "import duckdb, duckdb_engine; print('duckdb', duckdb.__version__)"
+RUN uv pip install --no-cache --python /app/.venv/bin/python \
+      psycopg2-binary duckdb duckdb-engine \
+ && /app/.venv/bin/python -c "\
+import duckdb, duckdb_engine, psycopg2; \
+print('duckdb', duckdb.__version__, '| psycopg2', psycopg2.__version__)"
 
 # Owned by the user that will write into it during the build and read from it
 # at runtime.
