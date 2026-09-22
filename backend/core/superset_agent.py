@@ -35,7 +35,7 @@ from typing import Any, Callable
 import structlog
 
 from core.config import AppSettings, get_settings
-from core.mcp import MCPClient, MCPTool
+from core.mcp import MCPClient, MCPError, MCPTool
 
 logger = structlog.get_logger(__name__)
 
@@ -266,9 +266,17 @@ def build_dashboard(
     connection = client or MCPClient(mcp_url)
 
     try:
-        if opened:
-            connection.__enter__()
-        tools = connection.tools()
+        try:
+            if opened:
+                connection.__enter__()
+            tools = connection.tools()
+        except MCPError as exc:
+            # Superset being unreachable is an operational fact, not a crash.
+            # Raised as the error this module already has, it reaches the user
+            # as "could not reach Superset" instead of as a 500 with a stack
+            # trace in it.
+            raise DashboardRequestError(str(exc)) from exc
+
         if not tools:
             raise DashboardRequestError(
                 "Superset's MCP server offered no tools, so there is nothing "
@@ -315,7 +323,17 @@ def build_dashboard(
             for wanted in requested:
                 name = wanted.get("name", "")
                 arguments = wanted.get("args") or {}
-                result = connection.call(name, arguments)
+                try:
+                    result = connection.call(name, arguments)
+                except MCPError as exc:
+                    # Losing the server mid-loop ends the run, but everything
+                    # it did up to here is already in Superset and already in
+                    # `run.calls`, so it is reported rather than discarded.
+                    run.summary = (
+                        f"Superset stopped answering after {len(run.calls)} "
+                        f"calls: {exc}"
+                    )
+                    return run
                 run.calls.append(ToolCall(name=name, arguments=arguments, result=result))
                 answers.append(
                     {

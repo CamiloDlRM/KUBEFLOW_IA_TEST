@@ -47,11 +47,24 @@ case "$ROLE" in
 
   mcp)
     wait_for_db
-    # The documented command. If this container restart-loops on "No
-    # application found. Either work inside a view function or push an
-    # application context", that is the known Docker failure mode of the MCP
-    # service: the fix is a wrapper that creates the Flask app and pushes its
-    # context before starting the server. See superset/README.md.
+
+    # Said before trying, because the failure otherwise is a container that
+    # exits instantly and a caller that meets a refused connection with no
+    # explanation anywhere.
+    if ! superset --help 2>/dev/null | grep -q '\bmcp\b'; then
+      echo "superset/mcp: this image has no 'superset mcp' command." >&2
+      echo "superset/mcp: the MCP service needs Superset 5.0+ and" >&2
+      echo "superset/mcp: ENABLE_MCP_SERVICE = True in superset_config.py." >&2
+      superset --help 2>/dev/null | sed 's/^/superset\/mcp:   /' >&2
+      exit 78
+    fi
+
+    echo "superset/mcp: serving on 0.0.0.0:5008"
+    # If this restart-loops on "No application found. Either work inside a view
+    # function or push an application context", that is the known Docker
+    # failure mode of the MCP service: it starts outside Flask's normal
+    # lifecycle. The fix is a wrapper that creates the app and pushes its
+    # context first. See superset/README.md.
     exec superset mcp run --host 0.0.0.0 --port 5008
     ;;
 

@@ -249,3 +249,33 @@ def test_a_closed_client_says_so_rather_than_failing_obscurely():
     client = MCPClient("http://superset-mcp:5008/mcp")
     with pytest.raises(MCPError, match="not open"):
         client.tools()
+
+
+class TestTheServerNotBeingThere:
+    """A refused connection is an operational fact, not a crash.
+
+    Unwrapped it reaches the caller as a raw httpx error and becomes a 500 with
+    a stack trace, when the true answer — "that address is not answering" — is
+    one a user can act on. This is what production did.
+    """
+
+    def _refused(self, request):
+        raise httpx.ConnectError("[Errno 111] Connection refused")
+
+    def test_a_refused_connection_names_the_address_and_says_it_may_be_down(self):
+        client = server(self._refused)
+
+        with pytest.raises(MCPError) as caught:
+            client.connect()
+
+        message = str(caught.value)
+        assert "http://superset-mcp:5008/mcp" in message
+        assert "may not be running" in message
+
+    def test_a_timeout_is_reported_the_same_way(self):
+        def slow(request):
+            raise httpx.ReadTimeout("took too long")
+
+        client = server(slow)
+        with pytest.raises(MCPError, match="Could not reach"):
+            client.tools()
