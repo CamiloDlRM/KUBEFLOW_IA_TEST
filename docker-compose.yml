@@ -127,7 +127,76 @@ services:
   worker:
     build: ./backend
     container_name: mlops-worker
-    command: celery -A tasks.celery_tasks worker --loglevel=info -Q pipelines,celery --concurrency=2
+    command: celery -A tasks.celery_tasks worker --loglevel=info -Q pipelines --concurrency=2
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
+      - PYTHONPATH=/app
+      # The worker downloads datasets from MinIO and logs MLflow artifacts to S3.
+      - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
+    volumes:
+      - mlops-models:/app/model_artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      # The worker is the one that actually calls the AI advisor provider.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ---------- Celery Worker (Data Factory) ----------
+  worker-data-factory:
+    build: ./backend
+    container_name: mlops-worker-data-factory
+    command: celery -A tasks.celery_tasks worker --loglevel=info -Q data_factory --concurrency=1
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops
+      - PYTHONPATH=/app
+      # The worker downloads datasets from MinIO and logs MLflow artifacts to S3.
+      - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
+    volumes:
+      - mlops-models:/app/model_artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      # The worker is the one that actually calls the AI advisor provider.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  worker-advisor:
+    build: ./backend
+    container_name: mlops-worker-advisor
+    command: celery -A tasks.celery_tasks worker --loglevel=info -Q advisor --concurrency=1
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://mlops:mlops@postgres:5432/mlops

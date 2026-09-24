@@ -32,3 +32,12 @@ scrape_configs:
       - targets: ["worker:9100"]
         labels:
           service: worker
+          worker_type: pipeline
+      - targets: ["worker-data-factory:9100"]
+        labels:
+          service: worker
+          worker_type: data_factory
+      - targets: ["worker-advisor:9100"]
+        labels:
+          service: worker
+          worker_type: advisor
