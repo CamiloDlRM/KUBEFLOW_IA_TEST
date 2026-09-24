@@ -58,3 +58,7 @@ BACKEND_DONE.md
 FRONTEND_DONE.md
 TESTS_DONE.md
 CLAUDE.md
+
+/*.opencode
+/graphify-out
+AGENTS.md

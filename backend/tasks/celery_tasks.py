@@ -58,6 +58,11 @@ celery_app.conf.update(
     result_expires=86400,  # 24h TTL
     task_routes={
         "tasks.celery_tasks.run_pipeline": {"queue": "pipelines"},
+        "tasks.celery_tasks.run_ingestion": {"queue": "data_factory"},
+        "tasks.celery_tasks.ingest_upload": {"queue": "data_factory"},
+        "tasks.celery_tasks.rebuild_gold": {"queue": "data_factory"},
+        "tasks.celery_tasks.analyze_pipeline": {"queue": "advisor"},
+        "tasks.celery_tasks.apply_insight": {"queue": "advisor"},
     },
 )
 
