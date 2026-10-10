@@ -8,6 +8,8 @@ const config: Config = {
       fontFamily: {
         body: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         display: ['Space Grotesk', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        body2: ['Outfit', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        logo: ['Birthstone Bounce', 'ui-sans-serif', 'system-ui', 'sans-serif']
       },
       colors: {
         brand: {
