@@ -62,3 +62,8 @@ CLAUDE.md
 /*.opencode
 /graphify-out
 AGENTS.md
+
+/.agents
+/DOCUMENTACION
+skills-lock.json
+

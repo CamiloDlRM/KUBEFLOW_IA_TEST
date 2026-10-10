@@ -1,4 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import githubLogo from '../assets/github_icon.webp'
+import signInIcon from '../assets/opendoor_icon.svg'
+import ShapeWaves from '@/components/ShapeWaves';
 
 const FEATURES = [
   {
@@ -34,8 +38,19 @@ const FEATURES = [
 const PIPELINE_STEPS = ['git push', 'validate', 'train', 'register', 'deploy', 'AI feedback'];
 
 export default function Landing() {
+  const [isScrolled, setIsScrolled] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 24);
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
+    <div className="relative min-h-screen overflow-x-clip bg-slate-950 text-slate-100">
       {/* Background decoration */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -top-40 left-1/4 h-96 w-96 rounded-full bg-indigo-600/20 blur-3xl" />
@@ -52,23 +67,32 @@ export default function Landing() {
       </div>
 
       {/* Nav */}
-      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30">
+      <header className={`sticky top-2 z-20 mx-auto w-[calc(100%-1rem)] rounded-2xl flex items-center justify-between transition-all duration-300 ease-out ${isScrolled ? 'max-w-4xl  bg-slate-900/90 px-4 py-3 shadow-lg backdrop-blur-sm':'max-w-6xl px-6 py-6'}`}>
+        <div className={`gap-2 inline-flex rounded-lg items-center py-2 text-sm font-medium text-slate-200 transition-[padding] duration-300 hover:border-indigo-500 hover:text-white ${isScrolled ? 'px-2': 'px-4'}`}>
+          <div className={`flex items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30 transition-all duration-300 ${isScrolled ? 'h-8 w-8': 'h-9 w-8'}`}>
             <BoltIcon />
           </div>
-          <span className="text-lg font-bold tracking-tight">MLOps Platform</span>
+          <span className={`text-lg font-bold inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out ${!isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>Maia</span>
         </div>
-        <Link
-          to="/login"
-          className="rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-2 text-sm font-medium text-slate-200 backdrop-blur transition hover:border-indigo-500 hover:text-white"
-        >
-          Sign in
-        </Link>
+
+        <div className='flex items-center gap-3'>
+          <a href='https://github.com/CamiloDlRM/KUBEFLOW_IA_TEST' target='_blank' rel='noreferrer' aria-label='Ver repositorio en GitHub' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm font-medium text-slate-200 hover:border-slate-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2': 'gap-2 px-3'} `}>
+            <img src={githubLogo} className='object-contain h-5 w-5' />
+            <span aria-hidden='true' className={`inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>GitHub</span>
+          </a>
+          <Link to="/login" className={`inline-flex rounded-lg items-center border border-slate-700 bg-slate-900/60 py-2 text-sm font-medium text-slate-200 transition-[padding] duration-300 hover:border-indigo-500 hover:text-white ${isScrolled ? 'px-2': 'px-4'}`}>
+            <img src={signInIcon} className='object-contain h-5 w-5'/>
+            <span className={`inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>Sign In</span>
+          </Link>
+        </div>
+
+
       </header>
 
+
       {/* Hero */}
-      <main className="relative z-10 mx-auto max-w-6xl px-6">
+      <main className="font-body relative z-10 mx-auto max-w-6xl px-6">
+
         <section className="flex flex-col items-center pt-16 pb-20 text-center sm:pt-24">
           <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-4 py-1.5 text-xs font-medium text-indigo-300">
             <SparklesIcon className="h-3.5 w-3.5" />
@@ -92,14 +116,6 @@ export default function Landing() {
             >
               Get started &rarr;
             </Link>
-            <a
-              href="https://github.com"
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-xl border border-slate-700 bg-slate-900/60 px-8 py-3.5 text-sm font-semibold text-slate-300 backdrop-blur transition hover:border-slate-500"
-            >
-              View docs
-            </a>
           </div>
 
           {/* Pipeline flow strip */}
