@@ -27,7 +27,7 @@ services:
   # This replaces the shared local volume that used to hold MLflow artifacts,
   # which is not portable to Kubernetes.
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: mlops-minio
     command: server /data --console-address ":9001"
     ports:
@@ -51,7 +51,7 @@ services:
   # ---------- MinIO bucket bootstrap (runs once, then exits) ----------
   # Idempotent: `mc mb --ignore-existing` is a no-op when the bucket exists.
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: mlops-minio-init
     depends_on:
       minio:
