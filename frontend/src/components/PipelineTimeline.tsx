@@ -44,7 +44,7 @@ function Segment({ triggerPoint }: { triggerPoint: number }) {
     <div
       ref={ref}
       aria-hidden
-      className="absolute -bottom-5 left-1/2 top-5 w-0.5 -translate-x-1/2 bg-white/15"
+      className="absolute -bottom-[3.75rem] left-1/2 top-5 w-0.5 -translate-x-1/2 bg-white/15 md:-bottom-[5.25rem]"
     >
       <motion.div
         style={{ scaleY: scrollYProgress }}
@@ -125,7 +125,7 @@ function TimelineItem({
           onLeft ? "md:col-start-1" : "md:col-start-3"
         }`}
       >
-        <article className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur-sm">
+        <article className={`font-body2 rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur-sm transition-transform duration-300 ease-out hover:scale-[1.03] ${onLeft ? "md:text-right" : "md:text-left"}`}>
           <h3 className="text-lg font-semibold tracking-tight text-slate-100">
             {step.title}
           </h3>
@@ -140,7 +140,7 @@ function TimelineItem({
 
 export function PipelineTimeline({
   steps,
-  triggerPoint = 0.5,
+  triggerPoint = 0.65,
   className = "",
 }: PipelineTimelineProps) {
   return (
