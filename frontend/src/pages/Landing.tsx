@@ -1,167 +1,212 @@
 import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
+import githubLogo from '../assets/github_icon.webp'
+import signInIcon from '../assets/opendoor_icon.svg'
+import MicroSlats from '@/components/MicroSlats';
+import { ScrollVelocity } from '@/components/ScrollVelocity';
+import { useMediaQuery } from 'react-responsive';
+import righarrow_icon from '../assets/rightarrow_icon.svg';
+import { PipelineTimeline, type PipelineStep } from '@/components/PipelineTimeline';
+import { Database, GitBranch, Cpu, Rocket, LineChart, ShieldCheck, Sparkles, ChevronDown } from "lucide-react";
 
-const FEATURES = [
+
+const steps: PipelineStep[] = [
   {
-    title: 'Push-to-Deploy Pipelines',
+    title: "Git extraction",
     description:
-      'Push a training notebook to GitHub and watch it get validated, executed, registered in MLflow, and deployed automatically.',
-    icon: RocketIcon,
-    accent: 'from-indigo-500 to-violet-500',
+      "Push a training notebook to GitHub. Maia's webhook extracts it from the repo and kicks off the pipeline.",
+    icon: <GitBranch />,
   },
   {
-    title: 'AI Training Advisor',
+    title: "Ingest",
     description:
-      'After every run, Claude analyzes your notebook code, metrics, and history — and tells you exactly which features and code changes will improve your next model.',
-    icon: SparklesIcon,
-    accent: 'from-fuchsia-500 to-pink-500',
+      "Connect MySQL, Postgres, CSV or Excel sources. Data flows repeatable through bronze, silver and gold layers.",
+    icon: <Database />,
   },
   {
-    title: 'Real-time Observability',
+    title: "Train",
     description:
-      'Live log streaming over WebSockets, phase-by-phase timelines, and metric charts across runs — no terminal required.',
-    icon: PulseIcon,
-    accent: 'from-emerald-500 to-teal-500',
+      "Push a notebook to GitHub. Maia validates it and executes it with papermill in an isolated container — live logs included.",
+    icon: <Cpu />,
   },
   {
-    title: 'Instant Model Serving',
+    title: "Track",
     description:
-      'Models that pass the accuracy threshold are served behind a REST endpoint immediately, with one-click rollback to previous versions.',
-    icon: ServerIcon,
-    accent: 'from-amber-500 to-orange-500',
+      "Every run logs params, metrics and artifacts to MLflow, so nothing is lost between experiments.",
+    icon: <LineChart />,
+  },
+  {
+    title: "Quality gate",
+    description:
+      "Models below the accuracy threshold are never deployed. The gate decides, not you.",
+    icon: <ShieldCheck />,
+  },
+  {
+    title: "Deploy",
+    description:
+      "Approved models are served behind a REST endpoint — with one-click rollback to any previous version.",
+    icon: <Rocket />,
+  },
+  {
+    title: "Improve",
+    description:
+      "After every run, the AI advisor reads your code and metrics and tells you what to change next.",
+    icon: <Sparkles />,
   },
 ];
 
-const PIPELINE_STEPS = ['git push', 'validate', 'train', 'register', 'deploy', 'AI feedback'];
+const HEADER_SCROLL_DOWN_THRESHOLD = 320;
+const HEADER_SCROLL_UP_THRESHOLD = 280;
 
 export default function Landing() {
+  const [isScrolled, setIsScrolled] = useState(false);
+  const isMobile = useMediaQuery({ maxWidth: 768 })
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled((currentlyScrolled) =>
+        currentlyScrolled
+          ? window.scrollY > HEADER_SCROLL_UP_THRESHOLD
+          : window.scrollY >= HEADER_SCROLL_DOWN_THRESHOLD
+      );
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
+    <div className="min-h-screen overflow-x-clip text-slate-100">
       {/* Background decoration */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-40 left-1/4 h-96 w-96 rounded-full bg-indigo-600/20 blur-3xl" />
-        <div className="absolute top-1/3 -right-20 h-96 w-96 rounded-full bg-fuchsia-600/10 blur-3xl" />
-        <div className="absolute bottom-0 left-0 h-72 w-72 rounded-full bg-emerald-600/10 blur-3xl" />
-        <div
-          className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage:
-              'linear-gradient(to right, #94a3b8 1px, transparent 1px), linear-gradient(to bottom, #94a3b8 1px, transparent 1px)',
-            backgroundSize: '48px 48px',
-          }}
+
+      <div className='fixed inset-0 pointer-events-none'>
+        <MicroSlats
+          preset="swell"
+          color="#0f172a"
+          glintColor="#818cf8"
+          backgroundColor="#020617"
+          slatWidth={10}
+          slatHeight={25}
+          gap={3}
+          roundness={0.75}
+          interactive={!isMobile}
+          cursorStrength={1}
+          cursorSize={40}
+          swirl={0}
+          trail={1.4}
+          lean={0}
+          intro
+          scale={1.5}
+          speed={0.6}
+          direction={250}
+          chop={0.55}
+          stretch={0}
+          glint={0.7}
+          contrast={1.25}
+          perspective={0.55}
+          fog={0.55}
+          introDuration={1.5}
+          paused={false}
         />
       </div>
 
       {/* Nav */}
-      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30">
+      <header className={`sticky top-2 z-20 mx-auto w-[calc(100%-1rem)] rounded-2xl flex items-center justify-between transition-all duration-300 ease-out ${isScrolled ? 'max-w-4xl  bg-slate-900/90 px-4 py-3 shadow-lg backdrop-blur-sm' : 'max-w-6xl px-6 py-6'}`}>
+        <div className={`gap-2 inline-flex rounded-lg items-center py-2 text-sm font-medium text-slate-200 transition-[padding] duration-300 hover:border-indigo-500 hover:text-white ${isScrolled ? 'px-2' : 'px-4'}`}>
+          <div className={`flex items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30 transition-all duration-300 ${isScrolled ? 'h-8 w-8' : 'h-9 w-8'}`}>
             <BoltIcon />
           </div>
-          <span className="text-lg font-bold tracking-tight">MLOps Platform</span>
+          <span className={`text-2xl font-bold font-display inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out max-[640px]:text-xl ${!isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>Maia</span>
         </div>
-        <Link
-          to="/login"
-          className="rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-2 text-sm font-medium text-slate-200 backdrop-blur transition hover:border-indigo-500 hover:text-white"
-        >
-          Sign in
-        </Link>
+
+        <div className='flex items-center gap-3'>
+          <a href='https://github.com/CamiloDlRM/KUBEFLOW_IA_TEST' target='_blank' rel='noreferrer' aria-label='Ver repositorio en GitHub' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 hover:border-slate-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2' : 'gap-2 px-3'} `}>
+            <img src={githubLogo} className='object-contain h-5 w-5' />
+            <span aria-hidden='true' className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out  ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>GitHub</span>
+          </a>
+          <Link to="/login" className={`inline-flex rounded-lg items-center border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 transition-[padding] duration-300 hover:border-indigo-500 hover:text-white ${isScrolled ? 'gap-0 px-2' : 'gap-1 px-4'}`}>
+            <img src={signInIcon} className='object-contain h-5 w-5' />
+            <span className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>Sign In</span>
+          </Link>
+        </div>
+
+
       </header>
 
+
       {/* Hero */}
-      <main className="relative z-10 mx-auto max-w-6xl px-6">
-        <section className="flex flex-col items-center pt-16 pb-20 text-center sm:pt-24">
-          <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-4 py-1.5 text-xs font-medium text-indigo-300">
-            <SparklesIcon className="h-3.5 w-3.5" />
-            Now with an AI advisor powered by Claude
-          </span>
-          <h1 className="max-w-3xl text-4xl font-extrabold leading-tight tracking-tight sm:text-6xl">
-            From notebook to{' '}
-            <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
-              deployed model
-            </span>{' '}
-            in one push
+      <main className="font-body relative z-10 mx-auto max-w-6xl px-6">
+
+        <section className="flex min-h-[100svh] -translate-y-20 flex-col items-center justify-center px-6 text-center">
+          <h1 className="max-w-2xl mt-0 text-7xl font-extrabold leading-tight tracking-tight max-[640px]:text-5xl">
+            Welcome to {' '}
+            <span className="font-display bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
+              Maia
+            </span>
+            !
           </h1>
-          <p className="mt-6 max-w-2xl text-lg text-slate-400">
-            The MLOps platform that trains, evaluates, and deploys your models automatically —
-            then tells you how to make them better.
+          <h2 className="max-w-2xl text-5xl font-semibold leading-tight tracking-tight max-[640px]:text-3xl"> From code to deployment</h2>
+          <p className="font-body2 mt-8 max-w-2xl text-lg text-slate-300 max-[640px]:text-sm">
+            The platform that automatically extracts, trains, evaluates, and deploys your models, and then tells you how to improve them.
           </p>
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/login"
-              className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-3.5 text-sm font-semibold text-white shadow-xl shadow-indigo-600/30 transition hover:scale-[1.02] hover:shadow-indigo-500/40"
+              className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-3.5 text-sm max-[640px]:text-xs font-semibold text-white shadow-xl shadow-indigo-600/30 transition-all duration-300 ease-in hover:scale-[1.02] hover:shadow-indigo-500/40"
             >
-              Get started &rarr;
+              Get started
+              <img className='h-4 w-4' src={righarrow_icon} />
             </Link>
-            <a
-              href="https://github.com"
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-xl border border-slate-700 bg-slate-900/60 px-8 py-3.5 text-sm font-semibold text-slate-300 backdrop-blur transition hover:border-slate-500"
-            >
-              View docs
-            </a>
           </div>
-
-          {/* Pipeline flow strip */}
-          <div className="mt-16 flex w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/50 px-6 py-5 backdrop-blur sm:gap-0">
-            {PIPELINE_STEPS.map((step, i) => (
-              <div key={step} className="flex items-center">
-                <span
-                  className={`rounded-lg px-3 py-1.5 font-mono text-xs sm:text-sm ${
-                    i === 0
-                      ? 'bg-slate-800 text-emerald-300'
-                      : i === PIPELINE_STEPS.length - 1
-                        ? 'bg-fuchsia-500/15 text-fuchsia-300 ring-1 ring-fuchsia-500/30'
-                        : 'bg-slate-800/70 text-slate-300'
-                  }`}
-                >
-                  {step}
-                </span>
-                {i < PIPELINE_STEPS.length - 1 && (
-                  <span className="mx-2 hidden text-slate-600 sm:inline">&rarr;</span>
-                )}
-              </div>
-            ))}
+          <div className="flex flex-col items-center gap-1 text-slate-400 translate-y-40">
+            <span className="font-body text-xs font-semibold uppercase tracking-[0.3em]">
+              Swipe down
+            </span>
+            <div className="flex animate-bounce flex-col items-center -space-y-3 text-indigo-400">
+              <ChevronDown className="h-5 w-5" />
+              <ChevronDown className="h-5 w-5" />
+            </div>
           </div>
         </section>
 
-        {/* Features */}
-        <section className="pb-24">
-          <div className="grid gap-6 sm:grid-cols-2">
-            {FEATURES.map((f) => (
-              <div
-                key={f.title}
-                className="group relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition hover:border-slate-600"
-              >
-                <div
-                  className={`mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${f.accent} shadow-lg`}
-                >
-                  <f.icon className="h-5 w-5 text-white" />
-                </div>
-                <h3 className="text-lg font-semibold text-slate-100">{f.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">{f.description}</p>
-              </div>
-            ))}
-          </div>
-        </section>
+
+
+        <motion.section
+          className="mb-36 flex flex-col items-center justify-center gap-11"
+          initial={{ opacity: 0, y: 32 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: false, amount: 0.2 }}
+          transition={{ duration: 0.7, ease: 'easeOut' }}
+        >
+          <h1 className="text-5xl font-bold max-[640px]:text-3xl">How we work?</h1>
+          <PipelineTimeline steps={steps} />
+        </motion.section>
+
 
         {/* AI advisor spotlight */}
-        <section className="pb-24">
-          <div className="overflow-hidden rounded-3xl border border-fuchsia-500/20 bg-gradient-to-br from-slate-900 via-slate-900 to-fuchsia-950/40 p-8 sm:p-12">
-            <div className="grid items-center gap-10 lg:grid-cols-2">
-              <div>
-                <span className="text-xs font-semibold uppercase tracking-widest text-fuchsia-400">
+        <motion.section
+          className="pb-24"
+          initial={{ opacity: 0, y: 32 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: false, amount: 0.5 }}
+          transition={{ duration: 0.7, ease: 'easeOut' }}
+        >
+          <div className="overflow-hidden rounded-3xl mb-13 border border-fuchsia-500/20 bg-gradient-to-br from-slate-900 via-slate-900 to-fuchsia-950/40 p-5 shadow-xl shadow-fuchsia-950/10 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-fuchsia-400/40 hover:shadow-2xl hover:shadow-fuchsia-500/15 sm:p-8 lg:p-12">
+            <div className="grid min-w-0 grid-cols-1 items-center gap-8 lg:grid-cols-2 lg:gap-10">
+              <div className="min-w-0">
+                <span className="font-display text-xs font-semibold uppercase tracking-widest text-fuchsia-400 sm:text-sm">
                   AI Training Advisor
                 </span>
-                <h2 className="mt-3 text-3xl font-bold leading-snug">
+                <h2 className="font-body mt-3 max-w-3xl text-2xl font-bold leading-snug sm:text-3xl">
                   Every run reviewed by an expert — automatically
                 </h2>
-                <p className="mt-4 text-slate-400">
+                <p className="font-body2 mt-4 max-w-3xl text-sm leading-relaxed text-slate-400 sm:text-base">
                   The advisor reads your actual notebook code, compares this run&apos;s metrics
                   against your history, and returns a prioritized action plan: features to
                   engineer, hyperparameters to tune, and code snippets ready to paste.
                 </p>
-                <ul className="mt-6 space-y-2 text-sm text-slate-300">
+                <ul className="font-body2 mt-6 space-y-2 text-sm text-slate-300">
                   {[
                     'Diagnosis: overfitting, leakage, weak features',
                     'Recommendations with code targeting your variables',
@@ -174,39 +219,39 @@ export default function Landing() {
                   ))}
                 </ul>
               </div>
-              <div className="rounded-xl border border-slate-700 bg-slate-950/80 p-5 font-mono text-xs leading-relaxed text-slate-300 shadow-2xl">
-                <p className="text-fuchsia-400"># Mejoras recomendadas</p>
+              <div className="min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 p-4 font-display text-xs leading-relaxed text-slate-300 shadow-2xl sm:p-5">
+                <p className="text-fuchsia-400"># Upgrade Suggestions</p>
                 <p className="mt-2 text-slate-400">
-                  1. La accuracy bajó de <span className="text-emerald-400">0.94</span> a{' '}
-                  <span className="text-red-400">0.87</span> — el nuevo split no está
-                  estratificado:
+                  1. The accuracy grow down from <span className="text-emerald-400">0.94</span> to{' '}
+                  <span className="text-red-400">0.87</span> — the new split is not stratified:
                 </p>
-                <pre className="mt-2 rounded bg-slate-900 p-3 text-[11px] text-indigo-300">
-{`X_train, X_test = train_test_split(
-    X, y, stratify=y, random_state=42
-)`}
+                <pre className="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-[11px] text-indigo-300"> {`X_train, X_test = train_test_split(X, y, stratify=y, random_state=42)`}
                 </pre>
                 <p className="mt-2 text-slate-400">
-                  2. Añade la feature <span className="text-amber-300">petal_ratio</span> —
-                  correlaciona con la clase minoritaria...
+                  2. Add the feature <span className="text-amber-300">petal_ratio</span> —
+                  co-occurring with the minority class...
                 </p>
               </div>
             </div>
           </div>
-        </section>
+        </motion.section>
 
-        {/* Footer CTA */}
-        <section className="pb-20 text-center">
-          <h2 className="text-2xl font-bold">Ready to ship better models, faster?</h2>
+        <section className="flex flex-col gap-5 font-body pb-10 text-center">
+          <h2 className="text-3xl max-[640px]:text-xl font-bold">Ready to create better models?</h2>
           <Link
-            to="/login"
-            className="mt-6 inline-block rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-3.5 text-sm font-semibold text-white shadow-xl shadow-indigo-600/30 transition hover:scale-[1.02]"
-          >
+            to="/login" className="inline-flex w-fit self-center items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-3.5 text-sm max-[640px]:text-xs font-semibold text-white shadow-xl shadow-indigo-600/30 transition-all duration-300 ease-in hover:scale-[1.02] hover:shadow-indigo-500/40">
             Sign in to your dashboard
           </Link>
-          <p className="mt-10 text-xs text-slate-600">
-            MLOps Automation Platform &middot; FastAPI &middot; Celery &middot; MLflow &middot; Claude
-          </p>
+          <div className="relative mt-8 left-1/2 w-11/12 -translate-x-1/2">
+            <ScrollVelocity
+              texts={['Ingest  •  Train  •  Version  •  Deploy  •  Improve  •  Repeat  •']}
+              velocity={40}
+              className="custom-scroll-text"
+              numCopies={100}
+              damping={50}
+              stiffness={400}
+            />
+          </div>
         </section>
       </main>
     </div>
@@ -219,39 +264,6 @@ function BoltIcon() {
   return (
     <svg className="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 24 24">
       <path d="M13 2L4.09 12.11a.6.6 0 00.45 1h5.05l-1.54 7.94a.3.3 0 00.53.25L19.91 11.9a.6.6 0 00-.45-1h-5.05l1.54-7.94a.3.3 0 00-.53-.25z" />
-    </svg>
-  );
-}
-
-function RocketIcon({ className = 'h-5 w-5' }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.63 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84" />
-    </svg>
-  );
-}
-
-function SparklesIcon({ className = 'h-5 w-5' }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.29 6.86L21 12l-5.71 2.14L13 21l-2.29-6.86L5 12l5.71-2.14L13 3z" />
-    </svg>
-  );
-}
-
-function PulseIcon({ className = 'h-5 w-5' }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l3-9 4 18 3-9h4" />
-    </svg>
-  );
-}
-
-function ServerIcon({ className = 'h-5 w-5' }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 21v-6a1 1 0 011-1h4a1 1 0 011 1v6" />
     </svg>
   );
 }
