@@ -13,7 +13,7 @@ const navItems = [
 ];
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
-  return `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-body transition ${
+  return `flex items-center gap-2 rounded-lg px-3 py-2 text-base font-body2 transition ${
     isActive
       ? 'bg-brand-600/20 text-brand-400'
       : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
@@ -34,8 +34,8 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className="hidden w-56 shrink-0 flex-col border-r border-slate-800 bg-slate-900 p-4 md:flex">
         <div className="mb-8">
-          <h1 className="font-display text-xl font-bold text-slate-100">Maia</h1>
-          <p className="font-body2 text-sm text-slate-500">Automation Dashboard</p>
+          <h1 className="font-display text-center text-2xl font-bold bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Maia</h1>
+          <p className="font-body2 text-center text-base text-slate-500">Automation Dashboard</p>
         </div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => (
@@ -52,8 +52,8 @@ export default function Layout() {
           )}
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-800">
-          <p className="mb-2 truncate px-3 text-xs text-slate-500">
-            {currentUser?.username}
+          <p className="font-body2 mb-2 truncate px-3 text-sm leading-tight max-w-xs text-slate-500">
+            Hello, {currentUser?.username}!
             {isAdmin && (
               <span className="ml-1 rounded-full bg-brand-600/20 px-1.5 py-0.5 text-brand-400">
                 admin
@@ -62,7 +62,7 @@ export default function Layout() {
           </p>
           <button
             onClick={handleLogout}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+            className="flex w-full font-body2 items-center gap-2 rounded-lg px-3 py-2 text-base font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
           >
             <LogoutIcon />
             Sign out
@@ -72,7 +72,7 @@ export default function Layout() {
 
       {/* Mobile top nav */}
       <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-900/95 px-4 py-3 backdrop-blur md:hidden">
-        <h1 className="text-sm font-bold text-slate-100">MLOps Platform</h1>
+        <h1 className="text-lg font-bold font-display bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Maia</h1>
         <nav className="flex gap-2">
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={navLinkClass} end={item.to === '/'}>
