@@ -127,7 +127,10 @@ class Repository(SQLModel, table=True):
         description="Masked token stored for display only (last 4 chars).",
     )
     branch: str = SQLField(default="main")
-    notebook_path: str = SQLField(description="Path to the notebook file within the repository.")
+    # Selected when the repository is associated with a project. An
+    # unassociated repository is intentionally allowed to have no notebook.
+    notebook_path: str = SQLField(default="")
+    github_token_encrypted: str = SQLField(default="")
     webhook_id: int | None = SQLField(default=None)
     webhook_url: str | None = SQLField(default=None)
     created_at: datetime = SQLField(default_factory=_utcnow)
@@ -477,8 +480,6 @@ class RepoCreateRequest(BaseModel):
 
     github_url: str = Field(..., examples=["https://github.com/user/repo"])
     github_token: str = Field(default="", description="Optional override token.")
-    branch: str = Field(default="main")
-    notebook_path: str = Field(..., description="Path to the notebook file within the repository (e.g. 'train.ipynb' or 'notebooks/train.ipynb').")
 
 
 class PredictRequest(BaseModel):

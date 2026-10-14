@@ -204,6 +204,34 @@ async def list_branches(
     return branches
 
 
+async def list_notebooks(
+    repo_url: str,
+    token: str,
+    branch: str,
+) -> list[str]:
+    """List notebook paths present in ``branch`` using GitHub's tree API."""
+    owner, repo = parse_repo_url(repo_url)
+    async with httpx.AsyncClient(timeout=60) as client:
+        ref = await client.get(
+            f"{_GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}",
+            headers=_headers(token),
+        )
+        ref.raise_for_status()
+        tree_sha = ref.json()["object"]["sha"]
+        tree = await client.get(
+            f"{_GITHUB_API}/repos/{owner}/{repo}/git/trees/{tree_sha}",
+            headers=_headers(token),
+            params={"recursive": "1"},
+        )
+        tree.raise_for_status()
+        return sorted(
+            item["path"]
+            for item in tree.json().get("tree", [])
+            if item.get("type") == "blob"
+            and item.get("path", "").lower().endswith(".ipynb")
+        )
+
+
 # ---------------------------------------------------------------------------
 # Sync helpers (used from Celery workers)
 # ---------------------------------------------------------------------------
