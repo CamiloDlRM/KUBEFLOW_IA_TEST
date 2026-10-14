@@ -100,6 +100,15 @@ async def github_webhook(
 
     repo = repos[0]
 
+    # Registering a repository only enables exploration. Until a project has
+    # selected a notebook there is no training target for a push event.
+    if not repo.notebook_path:
+        logger.info("webhook.repo_not_configured", repo_id=repo.id)
+        raise HTTPException(
+            status_code=status.HTTP_200_OK,
+            detail="Repository registered; select a notebook in a project first.",
+        )
+
     # Check branch
     if repo.branch != branch:
         logger.info(

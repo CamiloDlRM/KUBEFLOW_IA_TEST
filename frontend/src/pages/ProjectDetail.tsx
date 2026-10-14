@@ -1,15 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getProject,
   getRepos,
+  getRepoBranches,
+  getRepoNotebooks,
   linkRepository,
   unlinkRepository,
 } from '../api/client';
 import type { Project } from '../types';
 import Spinner from '../components/Spinner';
 import { repoNameFromUrl } from '../utils/format';
+import { ChevronDown } from 'lucide-react';
 
 /**
  * One project: its data factory, and the code it trains with.
@@ -107,7 +110,8 @@ function RepositorySection({ project }: { project: Project }) {
   };
 
   const link = useMutation({
-    mutationFn: (repoId: number) => linkRepository(project.id, repoId),
+    mutationFn: ({ repoId, branch, notebookPath }: { repoId: number; branch: string; notebookPath: string }) =>
+      linkRepository(project.id, repoId, branch, notebookPath),
     onSuccess: () => {
       setPicking(false);
       invalidate();
@@ -168,7 +172,7 @@ function RepositorySection({ project }: { project: Project }) {
         ) : picking ? (
           <RepoPicker
             repos={repos}
-            onPick={(repoId) => link.mutate(repoId)}
+            onPick={(repoId, branch, notebookPath) => link.mutate({ repoId, branch, notebookPath })}
             busy={link.isPending}
             error={link.isError ? (link.error as Error).message : null}
           />
@@ -194,10 +198,38 @@ function RepoPicker({
   error,
 }: {
   repos: { id: number; github_url: string; branch: string }[] | undefined;
-  onPick: (repoId: number) => void;
+  onPick: (repoId: number, branch: string, notebookPath: string) => void;
   busy: boolean;
   error: string | null;
 }) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [branch, setBranch] = useState('main');
+  const [notebookPath, setNotebookPath] = useState('');
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [notebookMenuOpen, setNotebookMenuOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const branches = useQuery({
+    queryKey: ['repo-branches', selectedId],
+    queryFn: () => getRepoBranches(selectedId as number),
+    enabled: selectedId !== null,
+  });
+  const notebooks = useQuery({
+    queryKey: ['repo-notebooks', selectedId, branch],
+    queryFn: () => getRepoNotebooks(selectedId as number, branch),
+    enabled: selectedId !== null && Boolean(branch),
+  });
+
+  useEffect(() => {
+    function closeMenus(event: MouseEvent) {
+      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
+        setBranchMenuOpen(false);
+        setNotebookMenuOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', closeMenus);
+    return () => document.removeEventListener('mousedown', closeMenus);
+  }, []);
   if (!repos) {
     return <Spinner />;
   }
@@ -219,7 +251,11 @@ function RepoPicker({
         {repos.map((repo) => (
           <li key={repo.id}>
             <button
-              onClick={() => onPick(repo.id)}
+              onClick={() => {
+                setSelectedId(repo.id);
+                setBranch(repo.branch || 'main');
+                setNotebookPath('');
+              }}
               disabled={busy}
               className="flex w-full items-center justify-between gap-3 rounded border border-slate-700 px-3 py-2 text-left transition hover:border-brand-500/60 hover:bg-slate-800/60 disabled:opacity-40"
             >
@@ -231,12 +267,116 @@ function RepoPicker({
                   {repo.branch}
                 </span>
               </span>
-              <span className="shrink-0 text-xs text-brand-400">Link</span>
+              <span className="shrink-0 text-xs text-brand-400">
+                {selectedId === repo.id ? 'Selected' : 'Explore'}
+              </span>
             </button>
+            {selectedId === repo.id && (
+              <div ref={pickerRef} className="space-y-2 rounded border border-slate-800 p-3">
+                <BranchMenu
+                  value={branch}
+                  options={(branches.data ?? [{ name: branch }]).map((item) => item.name)}
+                  open={branchMenuOpen}
+                  onToggle={() => {
+                    setBranchMenuOpen((open) => !open);
+                    setNotebookMenuOpen(false);
+                  }}
+                  onSelect={(value) => {
+                    setBranch(value);
+                    setNotebookPath('');
+                    setBranchMenuOpen(false);
+                  }}
+                  disabled={branches.isLoading || branches.isError}
+                />
+                <BranchMenu
+                  value={notebookPath}
+                  placeholder="Select a notebook"
+                  options={notebooks.data ?? []}
+                  open={notebookMenuOpen}
+                  onToggle={() => {
+                    setNotebookMenuOpen((open) => !open);
+                    setBranchMenuOpen(false);
+                  }}
+                  onSelect={(value) => {
+                    setNotebookPath(value);
+                    setNotebookMenuOpen(false);
+                  }}
+                  disabled={notebooks.isLoading || notebooks.data?.length === 0}
+                />
+                <button
+                  type="button"
+                  onClick={() => onPick(repo.id, branch, notebookPath)}
+                  disabled={!notebookPath || busy}
+                  className="rounded bg-brand-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                >
+                  {busy ? 'Linking…' : 'Link selected notebook'}
+                </button>
+              </div>
+            )}
           </li>
         ))}
       </ul>
       {error && <p className="mt-2 text-xs text-red-300">{error}</p>}
     </>
+  );
+}
+
+function BranchMenu({
+  value,
+  placeholder = 'Select a branch',
+  options,
+  open,
+  onToggle,
+  onSelect,
+  disabled,
+}: {
+  value: string;
+  placeholder?: string;
+  options: string[];
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (value: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-lg border border-brand-500/20 bg-brand-600/20 py-2 pl-3 pr-3 text-left text-sm font-medium text-brand-400 transition hover:bg-brand-600/30 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className="truncate">{value || placeholder}</span>
+        <ChevronDown
+          size={16}
+          aria-hidden="true"
+          className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute left-0 right-0 z-20 mt-0.5 max-h-52 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950 p-1.5 shadow-xl"
+        >
+          {options.map((option) => (
+            <li key={option} role="option" aria-selected={option === value}>
+              <button
+                type="button"
+                onClick={() => onSelect(option)}
+                className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                  option === value
+                    ? 'bg-brand-600/25 text-brand-300'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+                }`}
+              >
+                {option}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

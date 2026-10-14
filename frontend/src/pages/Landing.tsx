@@ -159,7 +159,7 @@ export default function Landing() {
               <img className='h-4 w-4' src={righarrow_icon} />
             </Link>
           </div>
-          <div className="flex flex-col items-center gap-1 text-slate-400 translate-y-40">
+          <div className="flex flex-col items-center gap-1 text-slate-400 translate-y-20">
             <span className="font-body text-xs font-semibold uppercase tracking-[0.3em]">
               Swipe down
             </span>

@@ -4,11 +4,11 @@ import { useAuth } from '../context/AuthContext';
 const navItems = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon },
   // Directly under the dashboard: a project is the thing most work starts from
-  // now, and burying it under "Add Repo" would put the code back in front of
+  // now, and burying it under "My Repos" would put the code back in front of
   // the data.
   { to: '/projects', label: 'Projects', icon: ProjectsIcon },
   { to: '/models', label: 'Models', icon: ModelsIcon },
-  { to: '/repos/new', label: 'Add Repo', icon: PlusIcon },
+  { to: '/repos/new', label: 'My Repos', icon: RepositoriesIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -131,10 +131,11 @@ function ModelsIcon() {
   );
 }
 
-function PlusIcon() {
+function RepositoriesIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5h6m-8 3h10m-12 3h14m-12 3h10m-8 3h6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.5h14a1 1 0 011 1v15a1 1 0 01-1 1H5a1 1 0 01-1-1v-15a1 1 0 011-1z" />
     </svg>
   );
 }

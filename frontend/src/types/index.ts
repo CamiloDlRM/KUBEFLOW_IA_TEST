@@ -17,8 +17,12 @@ export interface Repository {
 export interface CreateRepoPayload {
   github_url: string;
   github_token: string;
-  branch: string;
-  notebook_path: string;
+}
+
+export interface RepoCreatedResponse {
+  repo_id: number;
+  webhook_url: string;
+  status: string;
 }
 
 export type PipelineStatus = 'queued' | 'running' | 'success' | 'failed';
