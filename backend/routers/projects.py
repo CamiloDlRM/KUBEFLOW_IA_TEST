@@ -154,6 +154,8 @@ async def link_repository(
     repo_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
+    branch: str = "main",
+    notebook_path: str = "",
 ) -> ProjectResponse:
     """Attach a repository the caller already owns.
 
@@ -168,6 +170,11 @@ async def link_repository(
     project = get_visible_project_or_404(session, project_id, current_user)
     repo = get_visible_repo_or_404(session, repo_id, current_user)
     assert_repo_access(repo, current_user)
+    if not notebook_path.strip() and not repo.notebook_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Select a notebook before linking the repository to a project.",
+        )
 
     if repo.project_id not in (None, project.id):
         logger.info(
@@ -178,6 +185,9 @@ async def link_repository(
         )
 
     repo.project_id = project.id
+    repo.branch = branch.strip() or repo.branch or "main"
+    if notebook_path.strip():
+        repo.notebook_path = notebook_path.strip().strip("/")
     # Keep the two owners equal: the project decides, and every existing route
     # reads the repository's column.
     repo.owner_id = project.owner_id

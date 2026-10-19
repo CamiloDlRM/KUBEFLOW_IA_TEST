@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.github_credentials import encrypt_token, repo_token
 from core.ownership import filter_repos_by_owner, get_visible_repo_or_404
 from core.security import get_current_user
 from db import get_session
@@ -50,14 +51,24 @@ async def create_repo(
     the repository, and therefore the only non-admin user able to see it (and
     everything derived from it: pipelines, datasets, deployments, insights).
     """
-    from core.github import create_webhook
+    from core.github import create_webhook, parse_repo_url
 
-    # Validate notebook_path is not empty/whitespace-only
-    clean_notebook_path = body.notebook_path.strip().strip("/")
-    if not clean_notebook_path:
+    try:
+        owner, name = parse_repo_url(body.github_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    canonical_url = f"https://github.com/{owner}/{name}"
+    duplicate = session.exec(
+        select(Repository).where(
+            Repository.owner_id == current_user.id,
+            Repository.github_url.in_([canonical_url, f"{canonical_url}.git"]),
+            Repository.is_active == True,  # noqa: E712
+        )
+    ).first()
+    if duplicate:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="notebook_path must not be empty.",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This repository is already registered for your account.",
         )
 
     token = body.github_token or settings.github_token
@@ -87,10 +98,11 @@ async def create_repo(
 
     repo = Repository(
         owner_id=current_user.id,
-        github_url=body.github_url,
+        github_url=canonical_url,
         github_token_masked=masked_token,
-        branch=body.branch,
-        notebook_path=body.notebook_path,
+        branch="main",
+        notebook_path="",
+        github_token_encrypted=encrypt_token(token, settings),
         webhook_id=hook_data.get("id"),
         webhook_url=webhook_url,
         is_active=True,
@@ -153,7 +165,7 @@ async def delete_repo(
         try:
             from core.github import delete_webhook
 
-            token = settings.github_token
+            token = repo_token(repo, settings)
             await delete_webhook(repo.github_url, token, repo.webhook_id)
         except Exception as exc:
             logger.warning(
@@ -188,7 +200,7 @@ async def list_repo_branches(
 
     repo = get_visible_repo_or_404(session, repo_id, current_user)
     try:
-        branches = await list_branches(repo.github_url, settings.github_token)
+        branches = await list_branches(repo.github_url, repo_token(repo, settings))
     except Exception as exc:
         logger.error("repo.list_branches_failed", repo_id=repo_id, error=str(exc))
         raise HTTPException(
@@ -196,6 +208,28 @@ async def list_repo_branches(
             detail=f"Failed to list branches from GitHub: {exc}",
         )
     return [BranchInfo(**b) for b in branches]
+
+
+@router.get("/{repo_id}/notebooks", response_model=list[str])
+async def list_repo_notebooks(
+    repo_id: int,
+    branch: str,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[str]:
+    """Explore notebook files currently present in a repository branch."""
+    from core.github import list_notebooks
+
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    try:
+        return await list_notebooks(repo.github_url, repo_token(repo, settings), branch)
+    except Exception as exc:
+        logger.error("repo.list_notebooks_failed", repo_id=repo_id, branch=branch, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to list notebooks from GitHub: {exc}",
+        ) from exc
 
 
 @router.post(
@@ -227,7 +261,7 @@ async def trigger_pipeline(
     from core.github import list_branches
 
     try:
-        branches = await list_branches(repo.github_url, settings.github_token)
+        branches = await list_branches(repo.github_url, repo_token(repo, settings))
     except Exception as exc:
         logger.error("repo.trigger_branch_lookup_failed", repo_id=repo_id, error=str(exc))
         raise HTTPException(

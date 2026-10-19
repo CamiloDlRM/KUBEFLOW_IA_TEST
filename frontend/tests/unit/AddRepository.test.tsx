@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import AddRepository from '../../src/pages/AddRepository';
@@ -20,105 +20,117 @@ function renderWithProviders() {
   );
 }
 
+/**
+ * The page opens on the repositories you already have, with the form folded
+ * away. Registering one is the rarer thing you came here to do, so every test
+ * that fills the form has to open it first.
+ */
+async function openForm() {
+  await userEvent.click(await screen.findByRole('button', { name: /expand repository form/i }));
+}
+
+async function fillForm(url = 'https://github.com/testuser/newrepo') {
+  await userEvent.type(screen.getByLabelText(/GitHub Repository URL/i), url);
+  await userEvent.type(
+    screen.getByLabelText(/GitHub Personal Access Token/i),
+    'ghp_test1234567890',
+  );
+}
+
 describe('AddRepository', () => {
-  it('renders form fields correctly', () => {
+  it('keeps the form folded until it is asked for', async () => {
     renderWithProviders();
+
+    const toggle = await screen.findByRole('button', { name: /expand repository form/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByLabelText(/GitHub Repository URL/i)).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(screen.getByRole('button', { name: /collapse repository form/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('asks for a repository and a token, and nothing else', async () => {
+    // A repository no longer carries a notebook: it is registered once, and a
+    // project chooses a notebook inside it when it links. Asking for a path
+    // here would be asking for the old concept back.
+    renderWithProviders();
+    await openForm();
 
     expect(screen.getByLabelText(/GitHub Repository URL/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/GitHub Personal Access Token/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Branch/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Notebook Path/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Notebook Path/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Register Repository/i })).toBeInTheDocument();
   });
 
   it('validates github url format and shows error for invalid URLs', async () => {
     renderWithProviders();
-    const user = userEvent.setup();
+    await openForm();
 
-    const urlInput = screen.getByLabelText(/GitHub Repository URL/i);
-    const tokenInput = screen.getByLabelText(/GitHub Personal Access Token/i);
-    const submitBtn = screen.getByRole('button', { name: /Register Repository/i });
-
-    // Use a valid URL format that fails the GitHub-specific regex
-    await user.type(urlInput, 'https://gitlab.com/user/repo');
-    await user.type(tokenInput, 'ghp_test1234567890');
-    await user.click(submitBtn);
+    // A valid URL that fails the GitHub-specific check.
+    await fillForm('https://gitlab.com/user/repo');
+    await userEvent.click(screen.getByRole('button', { name: /Register Repository/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/valid GitHub repository URL/i)).toBeInTheDocument();
     });
   });
 
-  it('shows token field as password type by default', () => {
+  it('shows token field as password type by default', async () => {
     renderWithProviders();
+    await openForm();
 
-    const tokenInput = screen.getByLabelText(/GitHub Personal Access Token/i);
-    expect(tokenInput).toHaveAttribute('type', 'password');
+    expect(screen.getByLabelText(/GitHub Personal Access Token/i)).toHaveAttribute(
+      'type',
+      'password',
+    );
   });
 
   it('toggles token visibility on show/hide click', async () => {
     renderWithProviders();
-    const user = userEvent.setup();
+    await openForm();
 
     const tokenInput = screen.getByLabelText(/GitHub Personal Access Token/i);
-    const toggleBtn = screen.getByRole('button', { name: /Show/i });
-
     expect(tokenInput).toHaveAttribute('type', 'password');
 
-    await user.click(toggleBtn);
+    await userEvent.click(screen.getByRole('button', { name: /Show/i }));
     expect(tokenInput).toHaveAttribute('type', 'text');
 
-    // Button text should now say Hide
-    expect(screen.getByRole('button', { name: /Hide/i })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /Hide/i }));
+    await userEvent.click(screen.getByRole('button', { name: /Hide/i }));
     expect(tokenInput).toHaveAttribute('type', 'password');
   });
 
-  it('submits form and shows success with webhook url on success', async () => {
+  it('registers the repository and points at its branches and notebooks', async () => {
     renderWithProviders();
-    const user = userEvent.setup();
+    await openForm();
 
-    await user.type(
-      screen.getByLabelText(/GitHub Repository URL/i),
-      'https://github.com/testuser/newrepo',
-    );
-    await user.type(
-      screen.getByLabelText(/GitHub Personal Access Token/i),
-      'ghp_test1234567890',
-    );
-    await user.click(screen.getByRole('button', { name: /Register Repository/i }));
+    await fillForm();
+    await userEvent.click(screen.getByRole('button', { name: /Register Repository/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/Repository registered successfully/i)).toBeInTheDocument();
-    });
-
-    // Webhook URL should be displayed
-    expect(screen.getByText('Webhook URL:')).toBeInTheDocument();
+    // The whole sentence: "branches and notebooks" on its own also matches the
+    // page's own intro copy and the cards below it.
+    expect(
+      await screen.findByText(/Repository registered\. Explore its branches and notebooks/i),
+    ).toBeInTheDocument();
   });
 
   it('shows error message when API returns error', async () => {
     server.use(
-      http.post('http://localhost:8000/repos', () => {
-        return HttpResponse.json(
+      http.post('http://localhost:8000/repos', () =>
+        HttpResponse.json(
           { detail: 'Failed to create GitHub webhook: rate limit exceeded' },
           { status: 502 },
-        );
-      }),
+        ),
+      ),
     );
 
     renderWithProviders();
-    const user = userEvent.setup();
+    await openForm();
 
-    await user.type(
-      screen.getByLabelText(/GitHub Repository URL/i),
-      'https://github.com/testuser/errorrepo',
-    );
-    await user.type(
-      screen.getByLabelText(/GitHub Personal Access Token/i),
-      'ghp_test1234567890',
-    );
-    await user.click(screen.getByRole('button', { name: /Register Repository/i }));
+    await fillForm('https://github.com/testuser/errorrepo');
+    await userEvent.click(screen.getByRole('button', { name: /Register Repository/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/rate limit exceeded/i)).toBeInTheDocument();
@@ -131,8 +143,7 @@ describe('AddRepository', () => {
     // ends: vitest then deletes jsdom's globals, msw's XHR interceptor reaches
     // for `ProgressEvent` to report the response that finally arrived, and the
     // run fails with an unhandled rejection that names whichever file happened
-    // to be running. It only surfaced when the machine was loaded enough for
-    // the timer to lose the race, which is the worst way to find out.
+    // to be running.
     let respond!: () => void;
     const held = new Promise<void>((resolve) => {
       respond = resolve;
@@ -148,24 +159,16 @@ describe('AddRepository', () => {
     );
 
     renderWithProviders();
-    const user = userEvent.setup();
+    await openForm();
 
-    await user.type(
-      screen.getByLabelText(/GitHub Repository URL/i),
-      'https://github.com/testuser/slowrepo',
-    );
-    await user.type(
-      screen.getByLabelText(/GitHub Personal Access Token/i),
-      'ghp_test1234567890',
-    );
-
-    await user.click(screen.getByRole('button', { name: /Register Repository/i }));
+    await fillForm('https://github.com/testuser/slowrepo');
+    await userEvent.click(screen.getByRole('button', { name: /Register Repository/i }));
 
     // Unconditionally: the old version asserted inside `if (pendingBtn)`, so it
     // passed whether or not the button it was looking for ever appeared.
     expect(await screen.findByRole('button', { name: /Registering/i })).toBeDisabled();
 
     respond();
-    await screen.findByText(/Repository registered successfully/i);
+    await screen.findByText(/Repository registered/i);
   });
 });

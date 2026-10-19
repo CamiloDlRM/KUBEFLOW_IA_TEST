@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   Repository,
   CreateRepoPayload,
+  RepoCreatedResponse,
   Pipeline,
   PaginatedPipelines,
   PipelineLogsResponse,
@@ -67,7 +68,8 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (axios.isAxiosError(error) && error.response) {
-      if (error.response.status === 401) {
+      const isLoginRequest = error.config?.url === '/auth/login';
+      if (error.response.status === 401 && !isLoginRequest) {
         localStorage.removeItem(TOKEN_KEY);
         window.location.href = '/login';
       }
@@ -138,8 +140,8 @@ export async function getRepos(): Promise<Repository[]> {
   return data;
 }
 
-export async function createRepo(payload: CreateRepoPayload): Promise<Repository> {
-  const { data } = await apiClient.post<Repository>('/repos', payload);
+export async function createRepo(payload: CreateRepoPayload): Promise<RepoCreatedResponse> {
+  const { data } = await apiClient.post<RepoCreatedResponse>('/repos', payload);
   return data;
 }
 
@@ -149,6 +151,13 @@ export async function deleteRepo(repoId: number): Promise<void> {
 
 export async function getRepoBranches(repoId: number): Promise<BranchInfo[]> {
   const { data } = await apiClient.get<BranchInfo[]>(`/repos/${repoId}/branches`);
+  return data;
+}
+
+export async function getRepoNotebooks(repoId: number, branch: string): Promise<string[]> {
+  const { data } = await apiClient.get<string[]>(`/repos/${repoId}/notebooks`, {
+    params: { branch },
+  });
   return data;
 }
 
@@ -200,11 +209,13 @@ export async function updateProject(
 export async function linkRepository(
   projectId: number,
   repoId: number,
+  branch: string,
+  notebookPath: string,
 ): Promise<Project> {
   const { data } = await apiClient.put<Project>(
     `/projects/${projectId}/repository`,
     null,
-    { params: { repo_id: repoId } },
+    { params: { repo_id: repoId, branch, notebook_path: notebookPath } },
   );
   return data;
 }
