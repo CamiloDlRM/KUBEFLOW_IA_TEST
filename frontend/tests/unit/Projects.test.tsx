@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -11,6 +11,8 @@ const getProjects = vi.fn();
 const getProject = vi.fn();
 const createProject = vi.fn();
 const getRepos = vi.fn();
+const getRepoBranches = vi.fn();
+const getRepoNotebooks = vi.fn();
 const linkRepository = vi.fn();
 const unlinkRepository = vi.fn();
 
@@ -19,9 +21,31 @@ vi.mock('../../src/api/client', () => ({
   getProject: (...args: unknown[]) => getProject(...args),
   createProject: (...args: unknown[]) => createProject(...args),
   getRepos: (...args: unknown[]) => getRepos(...args),
+  getRepoBranches: (...args: unknown[]) => getRepoBranches(...args),
+  getRepoNotebooks: (...args: unknown[]) => getRepoNotebooks(...args),
   linkRepository: (...args: unknown[]) => linkRepository(...args),
   unlinkRepository: (...args: unknown[]) => unlinkRepository(...args),
 }));
+
+/**
+ * Linking is no longer one click. A repository is registered once and carries
+ * no notebook, so a project picks the branch and the notebook it wants at the
+ * moment it links — which is four steps, and the button stays disabled until
+ * there is a notebook to link.
+ */
+async function linkFirstNotebook() {
+  await userEvent.click(await screen.findByRole('button', { name: /link a repository/i }));
+  await userEvent.click(await screen.findByRole('button', { name: /first/i }));
+
+  const notebooks = await screen.findByRole('button', { name: /select a notebook/i });
+  await waitFor(() => expect(notebooks).toBeEnabled());
+  await userEvent.click(notebooks);
+  await userEvent.click(
+    within(screen.getByRole('listbox')).getByRole('button', { name: /train\.ipynb/ }),
+  );
+
+  await userEvent.click(screen.getByRole('button', { name: /link selected notebook/i }));
+}
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -127,6 +151,8 @@ describe('ProjectDetail', () => {
     getRepos.mockResolvedValue([
       { id: 1, github_url: 'https://github.com/a/first.git', branch: 'main' },
     ]);
+    getRepoBranches.mockResolvedValue([{ name: 'main', commit_sha: 'abc1234' }]);
+    getRepoNotebooks.mockResolvedValue(['notebooks/train.ipynb']);
     linkRepository.mockResolvedValue(project());
     unlinkRepository.mockResolvedValue(project());
   });
@@ -137,12 +163,24 @@ describe('ProjectDetail', () => {
     expect(link).toHaveAttribute('href', '/projects/4/data');
   });
 
-  it('offers to link a repository when there is none', async () => {
+  it('links a repository with the branch and notebook that were chosen', async () => {
+    renderDetail();
+    await linkFirstNotebook();
+
+    await waitFor(() =>
+      expect(linkRepository).toHaveBeenCalledWith(4, 1, 'main', 'notebooks/train.ipynb'),
+    );
+  });
+
+  it('will not link until a notebook has been chosen', async () => {
+    // The repository alone is not enough any more, and the button says so by
+    // staying inert rather than failing on the server.
     renderDetail();
     await userEvent.click(await screen.findByRole('button', { name: /link a repository/i }));
     await userEvent.click(await screen.findByRole('button', { name: /first/i }));
 
-    await waitFor(() => expect(linkRepository).toHaveBeenCalledWith(4, 1));
+    expect(await screen.findByRole('button', { name: /link selected notebook/i })).toBeDisabled();
+    expect(linkRepository).not.toHaveBeenCalled();
   });
 
   it('says the data factory works without a repository', async () => {
@@ -180,8 +218,7 @@ describe('ProjectDetail', () => {
   it('reports a failed link rather than doing nothing', async () => {
     linkRepository.mockRejectedValue(new Error('Repository 1 not found.'));
     renderDetail();
-    await userEvent.click(await screen.findByRole('button', { name: /link a repository/i }));
-    await userEvent.click(await screen.findByRole('button', { name: /first/i }));
+    await linkFirstNotebook();
 
     expect(await screen.findByText(/not found/)).toBeInTheDocument();
   });
