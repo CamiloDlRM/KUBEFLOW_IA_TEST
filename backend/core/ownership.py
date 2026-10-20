@@ -172,6 +172,19 @@ def get_visible_repo_or_404(
     return assert_repo_access(repo, user)
 
 
+def repo_project(session: Session, repo: Repository) -> Project | None:
+    """Return the *active* project ``repo`` belongs to, or ``None``.
+
+    A pipeline trains on its project's data, so a repository outside a project
+    (or inside an archived one) has nothing to run: the webhook ignores its
+    pushes and the manual trigger refuses it.
+    """
+    if repo.project_id is None:
+        return None
+    project = session.get(Project, repo.project_id)
+    return project if project is not None and project.is_active else None
+
+
 def get_visible_project_or_404(
     session: Session,
     project_id: int,

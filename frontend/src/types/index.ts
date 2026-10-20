@@ -12,6 +12,10 @@ export interface Repository {
   webhook_url: string | null;
   created_at: string;
   is_active: boolean;
+  /** Active project; null means "No project": pushes are ignored, runs refused. */
+  project_id: number | null;
+  project_name: string | null;
+  webhook_enabled: boolean;
 }
 
 export interface CreateRepoPayload {
@@ -308,6 +312,8 @@ export interface Project {
   repository: ProjectRepository | null;
   sources: number;
   gold_rows: number;
+  /** The gold build a pipeline is handed; `null` until the gold layer is built. */
+  active_dataset: { id: number; name: string; size_bytes: number } | null;
 }
 
 export type Layer = 'bronze' | 'silver' | 'gold';

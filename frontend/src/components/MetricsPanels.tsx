@@ -51,8 +51,22 @@ const DASHBOARD_TABS: DashboardTab[] = [
  * The query string is assembled by hand instead of with `URLSearchParams`
  * because `kiosk` is a valueless flag (`?kiosk`, not `?kiosk=`).
  */
-export function buildGrafanaEmbedUrl(uid: string): string {
-  const query = ['kiosk', 'theme=dark', 'refresh=30s', 'from=now-30d', 'to=now'].join('&');
+export function buildGrafanaEmbedUrl(
+  uid: string,
+  vars: Record<string, string> = {},
+  from = 'now-30d',
+): string {
+  const query = [
+    'kiosk',
+    'theme=dark',
+    'refresh=30s',
+    `from=${from}`,
+    'to=now',
+    // Dashboard template variables (e.g. `var-model=iris` for mlops-model).
+    ...Object.entries(vars).map(
+      ([name, value]) => `var-${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
+    ),
+  ].join('&');
   return `${GRAFANA_BASE}/d/${uid}/?${query}`;
 }
 
@@ -154,6 +168,79 @@ export default function MetricsPanels() {
   );
 
   const [activeUid, setActiveUid] = useState<string>(DASHBOARD_TABS[0].uid);
+
+  const activeTab = tabs.find((tab) => tab.uid === activeUid) ?? tabs[0];
+  /** Canonical, human-shareable dashboard URL (also used by "Open in Grafana"). */
+  const embedUrl = buildGrafanaEmbedUrl(activeTab.uid);
+
+  // If an admin-only tab is selected and the user loses admin, fall back.
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.uid === activeUid)) {
+      setActiveUid(tabs[0].uid);
+    }
+  }, [tabs, activeUid]);
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+            Model metrics
+          </h3>
+          <p className="mt-1 max-w-2xl text-sm text-slate-400">
+            Training runs, accuracy over time and inference traffic, rendered straight
+            from Grafana. Refreshes itself every 30 seconds.
+          </p>
+        </div>
+        <OpenInGrafanaLink url={embedUrl} />
+      </div>
+
+      {/* Dashboard switcher (only meaningful when more than one is available) */}
+      {tabs.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+          {tabs.map((tab) => (
+            <button
+              key={tab.uid}
+              onClick={() => setActiveUid(tab.uid)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                tab.uid === activeTab.uid
+                  ? 'bg-brand-600/20 text-brand-400'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+          <span className="ml-1 hidden text-xs text-slate-500 sm:inline">
+            {activeTab.blurb}
+          </span>
+        </div>
+      )}
+
+      {/* Remount per dashboard so status and retry state start fresh. */}
+      <GrafanaFrame
+        key={activeTab.uid}
+        uid={activeTab.uid}
+        title={`Grafana dashboard: ${activeTab.label}`}
+      />
+    </section>
+  );
+}
+
+interface GrafanaFrameProps {
+  uid: string;
+  title: string;
+  /** Dashboard template variables, sent as `var-<name>=<value>`. */
+  vars?: Record<string, string>;
+  /** Start of the time range, Grafana syntax (`now-24h`). */
+  from?: string;
+}
+
+/**
+ * One embedded Grafana dashboard: primes the proxy session, mounts the iframe
+ * and falls back to a retry screen when Grafana does not answer in time.
+ */
+export function GrafanaFrame({ uid, title, vars, from }: GrafanaFrameProps) {
   const [status, setStatus] = useState<EmbedStatus>('loading');
   // Bumped on "Retry" to force a full remount of the iframe. Any value > 0
   // also means "the direct URL already failed once", so the ticket bootstrap
@@ -165,20 +252,11 @@ export default function MetricsPanels() {
   });
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const activeTab = tabs.find((tab) => tab.uid === activeUid) ?? tabs[0];
-  /** Canonical, human-shareable dashboard URL (also used by "Open in Grafana"). */
-  const embedUrl = buildGrafanaEmbedUrl(activeTab.uid);
+  const embedUrl = buildGrafanaEmbedUrl(uid, vars, from);
+  // shortcut: the ticket bootstrap drops `var-*`, so a retried per-model embed
+  // shows an empty model; extend /grafana/embed to forward vars if that bites.
   const frameSrc =
-    attempt > 0 && session.ticket
-      ? buildGrafanaBootstrapUrl(activeTab.uid, session.ticket)
-      : embedUrl;
-
-  // If an admin-only tab is selected and the user loses admin, fall back.
-  useEffect(() => {
-    if (!tabs.some((tab) => tab.uid === activeUid)) {
-      setActiveUid(tabs[0].uid);
-    }
-  }, [tabs, activeUid]);
+    attempt > 0 && session.ticket ? buildGrafanaBootstrapUrl(uid, session.ticket) : embedUrl;
 
   /** Opens (or refreshes) the proxy session before the iframe is mounted. */
   const openSession = useCallback(async () => {
@@ -199,12 +277,7 @@ export default function MetricsPanels() {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [session.ready, status, activeUid, attempt]);
-
-  const handleSelect = useCallback((uid: string) => {
-    setActiveUid(uid);
-    setStatus('loading');
-  }, []);
+  }, [session.ready, status, attempt]);
 
   const handleRetry = useCallback(() => {
     setStatus('loading');
@@ -214,79 +287,47 @@ export default function MetricsPanels() {
   }, [openSession]);
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-            Model metrics
-          </h3>
-          <p className="mt-1 max-w-2xl text-sm text-slate-400">
-            Training runs, accuracy over time and inference traffic, rendered straight
-            from Grafana. Refreshes itself every 30 seconds.
-          </p>
-        </div>
-        <a
-          href={embedUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-slate-500 transition hover:text-brand-400"
-        >
-          Open in Grafana
-          <ExternalLinkIcon />
-        </a>
-      </div>
-
-      {/* Dashboard switcher (only meaningful when more than one is available) */}
-      {tabs.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
-          {tabs.map((tab) => (
-            <button
-              key={tab.uid}
-              onClick={() => handleSelect(tab.uid)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                tab.uid === activeTab.uid
-                  ? 'bg-brand-600/20 text-brand-400'
-                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-          <span className="ml-1 hidden text-xs text-slate-500 sm:inline">
-            {activeTab.blurb}
-          </span>
-        </div>
+    <div className="relative min-h-[420px] overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+      {status === 'error' ? (
+        <GrafanaUnavailable url={embedUrl} onRetry={handleRetry} />
+      ) : (
+        <>
+          {session.ready && (
+            <iframe
+              key={attempt}
+              title={title}
+              src={frameSrc}
+              onLoad={() => setStatus('ready')}
+              onError={() => setStatus('error')}
+              // A share of the viewport rather than "the rest of the page":
+              // this no longer starts near the top, so subtracting a fixed
+              // header height would leave it hanging off the bottom.
+              className="h-[70vh] min-h-[420px] w-full border-0"
+            />
+          )}
+          {status === 'loading' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900">
+              <Spinner size="lg" />
+              <p className="text-sm text-slate-400">Loading dashboard...</p>
+            </div>
+          )}
+        </>
       )}
+    </div>
+  );
+}
 
-      {/* Embed */}
-      <div className="relative min-h-[420px] overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
-        {status === 'error' ? (
-          <GrafanaUnavailable url={embedUrl} onRetry={handleRetry} />
-        ) : (
-          <>
-            {session.ready && (
-              <iframe
-                key={`${activeTab.uid}-${attempt}`}
-                title={`Grafana dashboard: ${activeTab.label}`}
-                src={frameSrc}
-                onLoad={() => setStatus('ready')}
-                onError={() => setStatus('error')}
-                // A share of the viewport rather than "the rest of the page":
-                // this no longer starts near the top, so subtracting a fixed
-                // header height would leave it hanging off the bottom.
-                className="h-[70vh] min-h-[420px] w-full border-0"
-              />
-            )}
-            {status === 'loading' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900">
-                <Spinner size="lg" />
-                <p className="text-sm text-slate-400">Loading dashboard...</p>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </section>
+export function OpenInGrafanaLink({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-slate-500 transition hover:text-brand-400"
+    >
+      Open in Grafana
+      <ExternalLinkIcon />
+    </a>
   );
 }
 

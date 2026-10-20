@@ -4,6 +4,7 @@ Proxies requests to the model-server and manages deployment records.
 """
 from __future__ import annotations
 
+import time
 from typing import Annotated, Any
 
 import httpx
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
+from core.metrics import record_model_prediction, record_model_reload, record_model_rollback
 from core.ownership import assert_model_access, restrict_by_pipeline
 from core.security import get_current_user
 from db import get_session
@@ -155,6 +157,50 @@ async def predict(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> PredictResponse:
+    """Proxy a prediction request to the model-server and record its metrics.
+
+    Metrics are labelled from the caller's active ``ModelDeployment`` row, so a
+    name with no row (unknown, or loaded out of band) is proxied unrecorded and
+    an arbitrary URL can never create a new series.
+    """
+    deployment = session.exec(
+        restrict_by_pipeline(
+            select(ModelDeployment).where(
+                ModelDeployment.model_name == model_name,
+                ModelDeployment.is_active == True,  # noqa: E712
+            ),
+            ModelDeployment.pipeline_id,
+            session,
+            current_user,
+        )
+    ).first()
+    started = time.perf_counter()
+    try:
+        result = await _proxy_predict(model_name, body, settings, session, current_user)
+    except Exception:  # HTTPException and uncaught httpx errors (timeouts) alike
+        if deployment:
+            record_model_prediction(
+                model_name, deployment.version, "error", time.perf_counter() - started
+            )
+        raise
+    if deployment:
+        record_model_prediction(
+            model_name,
+            deployment.version,
+            "success",
+            time.perf_counter() - started,
+            rows=len(body.data),
+        )
+    return result
+
+
+async def _proxy_predict(
+    model_name: str,
+    body: PredictRequest,
+    settings: AppSettings,
+    session: Session,
+    current_user: User,
+) -> PredictResponse:
     """Proxy a prediction request to the model-server.
 
     The model-server keeps models in memory, so a container restart loses
@@ -236,6 +282,7 @@ async def predict(
         await _load_into_model_server(
             model_name, mlflow_run_id, deployment.version, settings
         )
+        record_model_reload(model_name)
         return await _predict_once()
     except httpx.HTTPStatusError as exc:
         logger.error(
@@ -337,6 +384,7 @@ async def rollback_model(
     deployment.is_active = True
     session.add(deployment)
     session.commit()
+    record_model_rollback(model_name, body.version)
 
     logger.info("model.rollback", model_name=model_name, version=body.version)
     return MessageResponse(message=f"Rolled back {model_name} to version {body.version}.")

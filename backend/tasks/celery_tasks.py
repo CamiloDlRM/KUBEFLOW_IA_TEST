@@ -435,6 +435,27 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
 # Main pipeline task
 # ---------------------------------------------------------------------------
 
+
+def next_model_version(session: Any, model_name: str) -> str:
+    """Return the next version of ``model_name``: highest numeric version + 1.
+
+    The notebook's ``VERSION`` is ignored so a re-run can never reuse a version
+    (which would merge two deployments' metrics and make rollback ambiguous).
+    Non-numeric legacy versions are skipped.
+
+    shortcut: two concurrent runs of the same model can compute the same
+    number; lock the model's rows if that ever happens in practice.
+    """
+    from sqlmodel import select
+
+    from models.schemas import ModelDeployment
+
+    versions = session.exec(
+        select(ModelDeployment.version).where(ModelDeployment.model_name == model_name)
+    ).all()
+    numbers = [int(v) for v in versions if str(v).isdigit()]
+    return str(max(numbers, default=0) + 1)
+
 @celery_app.task(
     bind=True,
     name="tasks.celery_tasks.run_pipeline",
@@ -471,7 +492,11 @@ def run_pipeline(
 
     from sqlmodel import Session, select
     from models.schemas import Dataset, Pipeline, Repository, ModelDeployment
-    from core.notebook_parser import validate_required_tags, extract_config
+    from core.notebook_parser import (
+        extract_config,
+        uses_project_dataset,
+        validate_required_tags,
+    )
     from db import engine
 
     log = logger.bind(pipeline_id=pipeline_id, repo_id=repo_id, commit_sha=commit_sha)
@@ -523,6 +548,7 @@ def run_pipeline(
                 raise ValueError(f"Repository {repo_id} not found.")
             pipeline_row = session.get(Pipeline, pipeline_id)
             run_branch = (pipeline_row.branch if pipeline_row else "") or repo.branch
+            requested_model_name = pipeline_row.requested_model_name if pipeline_row else None
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
@@ -576,9 +602,21 @@ def run_pipeline(
         log.info("pipeline.phase.validate.start")
         validate_required_tags(notebook)
         config = extract_config(notebook)
-        model_name = config["model_name"]
-        model_version = config["version"]
-        _phase("validate", "success", f"Notebook validated. Model: {model_name} v{model_version}")
+        # "Run pipeline" names the model; a webhook run keeps the notebook's.
+        model_name = requested_model_name or config["model_name"]
+        uses_data = uses_project_dataset(notebook)
+        with Session(engine) as session:
+            model_version = next_model_version(session, model_name)
+        _phase(
+            "validate",
+            "success",
+            f"Notebook validated. Model: {model_name} v{model_version}. "
+            + (
+                "It reads the project's gold data (DATASET_PATH)."
+                if uses_data
+                else "It brings its own data; nothing will be downloaded from MinIO."
+            ),
+        )
         log.info("pipeline.phase.validate.done", model_name=model_name)
 
         if _shutting_down:
@@ -599,38 +637,41 @@ def run_pipeline(
             with open(input_path, "w") as f:
                 json.dump(notebook, f)
 
-            # Phase 3a: Mount the repository's active dataset (if any).
+            # Phase 3a: Mount the project's active dataset, only for a notebook
+            # that declares DATASET_PATH (see notebook_parser.uses_project_dataset).
             # The dataset is downloaded from MinIO into this same temporary
             # directory and its local path is injected as DATASET_PATH, so the
             # notebook never handles S3 credentials.
             dataset_path: str | None = None
             _phase("dataset", "running", "Looking up the project's active dataset...")
 
-            with Session(engine) as session:
-                # The dataset belongs to the repository's *project*: the code
-                # and the data are separate things that a project brings
-                # together, so the notebook is handed whatever its project
-                # currently publishes.
-                repo_row = session.get(Repository, repo_id)
-                active_dataset = session.exec(
-                    select(Dataset)
-                    .where(
-                        Dataset.project_id == (repo_row.project_id if repo_row else -1),
-                        Dataset.is_active == True,  # noqa: E712
+            dataset_info: dict[str, Any] | None = None
+            if uses_data:
+                with Session(engine) as session:
+                    # The dataset belongs to the repository's *project*: the code
+                    # and the data are separate things that a project brings
+                    # together, so the notebook is handed whatever its project
+                    # currently publishes.
+                    repo_row = session.get(Repository, repo_id)
+                    active_dataset = session.exec(
+                        select(Dataset)
+                        .where(
+                            Dataset.project_id == (repo_row.project_id if repo_row else -1),
+                            Dataset.is_active == True,  # noqa: E712
+                        )
+                        .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
+                    ).first()
+                    dataset_info = (
+                        {
+                            "id": active_dataset.id,
+                            "name": active_dataset.name,
+                            "bucket": active_dataset.bucket,
+                            "object_key": active_dataset.object_key,
+                            "size_bytes": active_dataset.size_bytes,
+                        }
+                        if active_dataset
+                        else None
                     )
-                    .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
-                ).first()
-                dataset_info: dict[str, Any] | None = (
-                    {
-                        "id": active_dataset.id,
-                        "name": active_dataset.name,
-                        "bucket": active_dataset.bucket,
-                        "object_key": active_dataset.object_key,
-                        "size_bytes": active_dataset.size_bytes,
-                    }
-                    if active_dataset
-                    else None
-                )
 
             if dataset_info:
                 from core.storage import download_to_path, sanitize_filename
@@ -670,14 +711,22 @@ def run_pipeline(
                     dataset_id=dataset_info["id"],
                     dataset_path=dataset_path,
                 )
+            elif uses_data:
+                message = (
+                    "This notebook reads DATASET_PATH but the project has no gold "
+                    "data yet. Build the gold layer in the Data Factory and run again."
+                )
+                _phase("dataset", "failed", message)
+                log.error("pipeline.phase.dataset.missing", repo_id=repo_id)
+                raise ValueError(message)
             else:
                 _phase(
                     "dataset",
                     "success",
-                    "No active dataset for this repository; "
-                    "DATASET_PATH was not injected.",
+                    "The notebook brings its own data; nothing downloaded from MinIO "
+                    "and DATASET_PATH was not injected.",
                 )
-                log.info("pipeline.phase.dataset.none", repo_id=repo_id)
+                log.info("pipeline.phase.dataset.skipped", repo_id=repo_id)
 
             # Start the MLflow run BEFORE papermill so the notebook logs
             # metrics into this same run (avoids the 0.0 accuracy bug).

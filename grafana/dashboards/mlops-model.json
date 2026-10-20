@@ -1,0 +1,925 @@
+{
+  "id": null,
+  "uid": "mlops-model",
+  "title": "Model",
+  "description": "Per-model view: usage, health, training quality and version history. SQL is scoped through ${__user.login}; the ${model} variable is set by the app and PromQL panels are only served for models the user owns (backend/core/grafana_queries.py).",
+  "tags": [
+    "mlops",
+    "ml",
+    "model"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "model",
+        "label": "Model",
+        "hide": 2,
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Active version",
+      "description": "Version currently served for this model.",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mlops-postgres"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "mlops-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT 'v' || md.version AS \"version\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND md.is_active\nORDER BY md.deployed_at DESC\nLIMIT 1;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Requests (24h)",
+      "description": "Prediction requests proxied in the last 24 hours.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 4,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(mlops_model_predictions_total{model_name=\"${model}\"}[24h]))",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Error rate (24h)",
+      "description": "Share of prediction requests that failed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 9,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(mlops_model_predictions_total{model_name=\"${model}\",status=\"error\"}[24h])) / sum(increase(mlops_model_predictions_total{model_name=\"${model}\"}[24h]))",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Latency p95 (1h)",
+      "description": "95th percentile prediction latency at the backend.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 14,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mlops_model_prediction_duration_seconds_bucket{model_name=\"${model}\"}[1h])))",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Reloads / rollbacks (7d)",
+      "description": "Automatic reloads from MLflow after the model-server lost the model, and rollbacks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 19,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(mlops_model_reloads_total{model_name=\"${model}\"}[7d]))",
+          "legendFormat": "Reloads",
+          "range": false,
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(mlops_model_rollbacks_total{model_name=\"${model}\"}[7d]))",
+          "legendFormat": "Rollbacks",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Requests per minute (by version)",
+      "description": "Prediction throughput, split by deployed version.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqpm",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "pointSize": 6,
+            "showPoints": "auto",
+            "fillOpacity": 8,
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "gradientMode": "opacity"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (version) (rate(mlops_model_predictions_total{model_name=\"${model}\"}[5m])) * 60",
+          "legendFormat": "v{{version}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Rows predicted per second (by version)",
+      "description": "Feature rows sent for prediction (a request may carry many rows).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "pointSize": 6,
+            "showPoints": "auto",
+            "fillOpacity": 8,
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "gradientMode": "opacity"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (version) (rate(mlops_model_predicted_rows_total{model_name=\"${model}\"}[5m]))",
+          "legendFormat": "v{{version}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Error rate (by version)",
+      "description": "Failed requests as a share of all requests, per version.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "pointSize": 6,
+            "showPoints": "auto",
+            "fillOpacity": 8,
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "gradientMode": "opacity"
+          },
+          "mappings": [],
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (version) (rate(mlops_model_predictions_total{model_name=\"${model}\",status=\"error\"}[5m])) / sum by (version) (rate(mlops_model_predictions_total{model_name=\"${model}\"}[5m]))",
+          "legendFormat": "v{{version}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Prediction latency",
+      "description": "Latency percentiles measured at the backend proxy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mlops-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "pointSize": 6,
+            "showPoints": "auto",
+            "fillOpacity": 8,
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "gradientMode": "opacity"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(mlops_model_prediction_duration_seconds_bucket{model_name=\"${model}\"}[5m])))",
+          "legendFormat": "p50",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mlops_model_prediction_duration_seconds_bucket{model_name=\"${model}\"}[5m])))",
+          "legendFormat": "p95",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mlops-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(mlops_model_prediction_duration_seconds_bucket{model_name=\"${model}\"}[5m])))",
+          "legendFormat": "p99",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Accuracy by version",
+      "description": "Accuracy of every deployed version. The dashed line is the auto-deploy threshold (0.70).",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mlops-postgres"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "pointSize": 6,
+            "showPoints": "always",
+            "fillOpacity": 8,
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "gradientMode": "opacity",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [],
+          "decimals": 3,
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.7
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "mlops-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "SELECT\n  md.deployed_at AS \"time\",\n  md.accuracy AS \"accuracy\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND $__timeFilter(md.deployed_at)\nORDER BY 1;"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Training metrics (active version)",
+      "description": "Metrics the training notebook logged for the pipeline that produced the active version.",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mlops-postgres"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "mlops-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT m.key AS \"metric\", m.value AS \"value\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL jsonb_each_text(p.metrics::jsonb) m\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND md.is_active\nORDER BY 1;"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Version history",
+      "description": "Every deployed version with the pipeline (commit, branch, duration) that produced it.",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mlops-postgres"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "accuracy"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pipeline duration"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "active": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "inactive": {
+                        "color": "text",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        },
+        "sortBy": [
+          {
+            "displayName": "deployed",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "mlops-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  md.accuracy AS \"accuracy\",\n  COALESCE(NULLIF(p.branch, ''), r.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
+        }
+      ]
+    }
+  ]
+}

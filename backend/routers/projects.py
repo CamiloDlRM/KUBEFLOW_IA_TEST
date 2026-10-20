@@ -11,12 +11,16 @@ code.
 """
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from core.config import AppSettings, get_settings
+from core.github_credentials import repo_token
+from core.notebook_parser import MODEL_NAME_PATTERN
 from core.ownership import (
     assert_repo_access,
     filter_projects_by_owner,
@@ -27,19 +31,32 @@ from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     DataSource,
+    Dataset,
     GoldTable,
     MessageResponse,
     Project,
     ProjectCreateRequest,
+    ProjectDatasetResponse,
+    ProjectRunRequest,
     ProjectRepositoryResponse,
     ProjectResponse,
     ProjectUpdateRequest,
     Repository,
     User,
+    WebhookAccepted,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+def _active_dataset(session: Session, project_id: int | None) -> Dataset | None:
+    """The dataset a pipeline of this project is handed (same lookup as the worker)."""
+    return session.exec(
+        select(Dataset)
+        .where(Dataset.project_id == project_id, Dataset.is_active == True)  # noqa: E712
+        .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
+    ).first()
 
 
 def _render(session: Session, project: Project) -> ProjectResponse:
@@ -75,8 +92,34 @@ def _render(session: Session, project: Project) -> ProjectResponse:
         ),
         sources=sources,
         gold_rows=gold.rows if gold else 0,
+        active_dataset=(
+            ProjectDatasetResponse.model_validate(dataset)
+            if (dataset := _active_dataset(session, project.id))
+            else None
+        ),
     )
 
+
+
+async def _sync_webhook(repo: Repository, active: bool, settings: AppSettings) -> None:
+    """Mirror "is this repository in a project?" onto its GitHub webhook.
+
+    Best-effort: the webhook handler already ignores pushes from repositories
+    outside a project, so a GitHub failure only leaves the flag stale and must
+    not undo the link/unlink the user asked for.
+    """
+    if not repo.webhook_id:
+        return
+    from core.github import set_webhook_active
+
+    try:
+        await set_webhook_active(
+            repo.github_url, repo_token(repo, settings), repo.webhook_id, active
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort by design
+        logger.warning(
+            "project.webhook_sync_failed", repo_id=repo.id, active=active, error=str(exc)
+        )
 
 @router.get("", response_model=list[ProjectResponse], summary="List projects")
 async def list_projects(
@@ -154,6 +197,7 @@ async def link_repository(
     repo_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
     branch: str = "main",
     notebook_path: str = "",
 ) -> ProjectResponse:
@@ -195,7 +239,58 @@ async def link_repository(
     session.commit()
 
     logger.info("project.repository_linked", project_id=project.id, repo_id=repo.id)
+    await _sync_webhook(repo, True, settings)
     return _render(session, project)
+
+
+@router.post(
+    "/{project_id}/run",
+    response_model=WebhookAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Run the project's notebook on its gold data",
+)
+async def run_project(
+    project_id: int,
+    body: ProjectRunRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> WebhookAccepted:
+    """Launch a pipeline of the linked notebook, producing ``model_name``.
+
+    The same conditions the "Run pipeline" button shows are enforced here: a
+    linked notebook and a built gold layer. The run uses the linked branch; the
+    version is assigned by the worker.
+    """
+    from routers.repos import launch_pipeline
+
+    project = get_visible_project_or_404(session, project_id, current_user)
+    model_name = body.model_name.strip()
+    if not re.fullmatch(MODEL_NAME_PATTERN, model_name):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Model name may only use letters, digits, '_', '.' or '-' (max 200).",
+        )
+    repo = session.exec(
+        select(Repository).where(
+            Repository.project_id == project.id,
+            Repository.is_active == True,  # noqa: E712
+        )
+    ).first()
+    if repo is None or not repo.notebook_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Link a repository and select a notebook before running a pipeline.",
+        )
+    if _active_dataset(session, project.id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Build the gold layer in the Data Factory before running a pipeline.",
+        )
+
+    return await launch_pipeline(
+        repo, repo.branch, settings, session, requested_model_name=model_name
+    )
 
 
 @router.delete(
@@ -207,6 +302,7 @@ async def unlink_repository(
     project_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> ProjectResponse:
     """Detach the code. The data factory is untouched — it was never the repo's."""
     project = get_visible_project_or_404(session, project_id, current_user)
@@ -224,6 +320,7 @@ async def unlink_repository(
     session.commit()
 
     logger.info("project.repository_unlinked", project_id=project.id, repo_id=repo.id)
+    await _sync_webhook(repo, False, settings)
     return _render(session, project)
 
 
@@ -234,6 +331,7 @@ async def delete_project(
     project_id: int,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> MessageResponse:
     """Archive rather than delete.
 
@@ -248,4 +346,7 @@ async def delete_project(
     session.commit()
 
     logger.info("project.archived", project_id=project_id)
+    repo = session.exec(select(Repository).where(Repository.project_id == project.id)).first()
+    if repo is not None:
+        await _sync_webhook(repo, False, settings)
     return MessageResponse(message=f"Project {project_id} archived.")

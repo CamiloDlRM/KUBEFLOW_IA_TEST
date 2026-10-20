@@ -15,6 +15,7 @@ import structlog
 
 from core.config import AppSettings, get_settings
 from core.github import verify_webhook_signature
+from core.ownership import repo_project
 from core.pipeline import get_pipeline_runner
 from db import get_session
 from models.schemas import Pipeline, Repository, WebhookAccepted
@@ -98,7 +99,16 @@ async def github_webhook(
             detail="No registered repository matches this webhook.",
         )
 
-    repo = repos[0]
+    # A pipeline trains on its project's data: outside a project there is
+    # nothing to run, whatever GitHub's own webhook flag says. Several accounts
+    # may register the same URL, so take the one that sits in a project.
+    repo = next((r for r in repos if repo_project(session, r) is not None), None)
+    if repo is None:
+        logger.info("webhook.repo_without_project", repo_url=repo_url)
+        raise HTTPException(
+            status_code=status.HTTP_200_OK,
+            detail="Push ignored: repository is not in a project.",
+        )
 
     # Registering a repository only enables exploration. Until a project has
     # selected a notebook there is no training target for a push event.

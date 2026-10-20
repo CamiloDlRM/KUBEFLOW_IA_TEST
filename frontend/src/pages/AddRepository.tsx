@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, getRepoBranches, getRepoNotebooks, getRepos } from '../api/client';
 import type { Repository } from '../types';
@@ -164,6 +164,7 @@ export default function AddRepository() {
           <h3 className="text-lg font-semibold text-slate-100">Your repositories</h3>
           <p className="mt-1 text-sm text-slate-400">
             Each repository is registered once per account. Explore its current branches and notebooks here.
+            Link a repository to a project to run pipelines.
           </p>
         </div>
         {repos.isLoading && <Spinner />}
@@ -187,6 +188,9 @@ export default function AddRepository() {
   );
 }
 
+const TAG_CLASS =
+  'inline-flex rounded-full border border-brand-500/30 bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-400 transition hover:border-brand-400/60 hover:bg-brand-600/30 hover:text-brand-300';
+
 function RepositoryCard({ repo }: { repo: Repository }) {
   const [branch, setBranch] = useState(repo.branch || 'main');
 
@@ -197,18 +201,42 @@ function RepositoryCard({ repo }: { repo: Repository }) {
           <h4 className="truncate text-base font-semibold text-slate-100">
             {repoName(repo.github_url)}
           </h4>
-          <a
-            href={repo.github_url}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-flex rounded-full border border-brand-500/30 bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-400 transition hover:border-brand-400/60 hover:bg-brand-600/30 hover:text-brand-300"
-          >
-            Link
-          </a>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <a
+              href={repo.github_url}
+              target="_blank"
+              rel="noreferrer"
+              className={TAG_CLASS}
+            >
+              Link
+            </a>
+            {repo.project_id !== null ? (
+              <Link
+                to={`/projects/${repo.project_id}`}
+                title="Open project"
+                className={`${TAG_CLASS} max-w-[12rem] truncate`}
+              >
+                {repo.project_name}
+              </Link>
+            ) : (
+              <span
+                title="Link this repository to a project to run pipelines"
+                className="inline-flex rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-400"
+              >
+                No project
+              </span>
+            )}
+          </div>
         </div>
-        <span className="shrink-0 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300">
-          webhook active
-        </span>
+        {repo.webhook_enabled ? (
+          <span className="shrink-0 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300">
+            webhook active
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-full bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
+            webhook inactive
+          </span>
+        )}
       </div>
       <RepositoryExplorer
         repoId={repo.id}

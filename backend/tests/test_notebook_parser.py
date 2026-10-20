@@ -9,6 +9,7 @@ import pytest
 from core.notebook_parser import (
     REQUIRED_TAGS,
     extract_config,
+    uses_project_dataset,
     get_cells_by_tag,
     validate_required_tags,
 )
@@ -125,6 +126,36 @@ class TestExtractConfig:
             extract_config(notebook)
 
 
+    @pytest.mark.parametrize(
+        "name", ["modelo clínico", "a/b", "x y", "a" * 201, "iris;drop"]
+    )
+    def test_extract_config_when_model_name_is_unsafe_should_raise_value_error(self, name):
+        notebook = {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "metadata": {"tags": ["mlops:config"]},
+                    "source": f'MODEL_NAME = "{name}"\nVERSION = "1"',
+                }
+            ]
+        }
+        with pytest.raises(ValueError, match="Invalid MODEL_NAME"):
+            extract_config(notebook)
+
+    @pytest.mark.parametrize("name", ["iris", "iris-classifier_v2.1", "A1"])
+    def test_extract_config_when_model_name_is_safe_should_accept_it(self, name):
+        notebook = {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "metadata": {"tags": ["mlops:config"]},
+                    "source": f'MODEL_NAME = "{name}"\nVERSION = "1"',
+                }
+            ]
+        }
+        assert extract_config(notebook)["model_name"] == name
+
+
 class TestGetCellsByTag:
     """get_cells_by_tag()"""
 
@@ -187,3 +218,41 @@ class TestGetCellsByTag:
         result = get_cells_by_tag(notebook, "mlops:config")
         assert len(result) == 1
         assert result[0]["source"] == ["y"]
+
+
+class TestUsesProjectDataset:
+    """uses_project_dataset(): does the notebook read the project's gold data?"""
+
+    @staticmethod
+    def _nb(parameters_source, tags=("parameters",)):
+        return {
+            "cells": [
+                {"cell_type": "code", "metadata": {"tags": list(tags)}, "source": parameters_source}
+            ]
+        }
+
+    def test_declared_dataset_path_means_project_data(self):
+        assert uses_project_dataset(self._nb('MODEL_OUTPUT_PATH = ""\nDATASET_PATH = ""\n'))
+
+    def test_list_source_is_supported(self):
+        assert uses_project_dataset(self._nb(["MODEL_OUTPUT_PATH = ''\n", "DATASET_PATH = ''\n"]))
+
+    def test_no_declaration_means_own_data(self):
+        assert not uses_project_dataset(self._nb('MODEL_OUTPUT_PATH = "./model.joblib"\n'))
+
+    def test_a_mention_outside_the_parameters_cell_does_not_count(self):
+        assert not uses_project_dataset(self._nb('df = read(DATASET_PATH)\n', tags=("mlops:data",)))
+
+    def test_a_comment_or_usage_is_not_a_declaration(self):
+        assert not uses_project_dataset(self._nb("# DATASET_PATH is not used here\nX = DATASET_PATH\n"))
+
+    def test_the_shipped_examples_are_classified(self):
+        import json
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2] / "notebooks"
+        if not root.is_dir():
+            pytest.skip("example notebooks not available")
+        load = lambda name: json.loads((root / name).read_text(encoding="utf-8"))  # noqa: E731
+        assert uses_project_dataset(load("example_dataset_notebook.ipynb"))
+        assert not uses_project_dataset(load("example_notebook.ipynb"))

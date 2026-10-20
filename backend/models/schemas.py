@@ -151,6 +151,9 @@ class Pipeline(SQLModel, table=True):
     finished_at: datetime | None = SQLField(default=None)
     phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
     metrics: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: Model name chosen in "Run pipeline". ``None`` for webhook runs, which
+    #: use the notebook's ``MODEL_NAME``.
+    requested_model_name: str | None = SQLField(default=None)
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -455,6 +458,26 @@ class ProjectRepositoryResponse(BaseModel):
     notebook_path: str
 
 
+class ProjectDatasetResponse(BaseModel):
+    """The active dataset of a project, as shown before a run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    size_bytes: int
+
+
+class ProjectRunRequest(BaseModel):
+    """Payload of "Run pipeline" on a project."""
+
+    model_config = ConfigDict(strict=True, protected_namespaces=())
+
+    model_name: str = Field(
+        ..., description="Name of the model this run produces (letters, digits, _ . -)."
+    )
+
+
 class ProjectResponse(BaseModel):
     """A project and what it currently holds."""
 
@@ -471,6 +494,9 @@ class ProjectResponse(BaseModel):
     sources: int = 0
     #: Rows currently in the project's gold table, or 0 before its first build.
     gold_rows: int = 0
+    #: The dataset a pipeline of this project is handed (``None`` until the
+    #: gold layer has been built). "Run pipeline" requires it.
+    active_dataset: ProjectDatasetResponse | None = None
 
 
 class RepoCreateRequest(BaseModel):
@@ -530,6 +556,11 @@ class RepoResponse(BaseModel):
     webhook_url: str | None
     created_at: datetime
     is_active: bool
+    #: The repository's active project; ``None`` means "No project", in which
+    #: case pushes are ignored and the manual trigger is refused.
+    project_id: int | None = None
+    project_name: str | None = None
+    webhook_enabled: bool = False
 
 
 class RepoCreatedResponse(BaseModel):

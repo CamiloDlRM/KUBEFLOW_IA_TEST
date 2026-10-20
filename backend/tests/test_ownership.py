@@ -24,6 +24,7 @@ from tests.conftest import (
     seed_pipeline,
     seed_project,
     seed_repo,
+    seed_repo_in_project,
 )
 
 
@@ -589,7 +590,7 @@ class TestWebhookStillUnauthenticated:
         from tests.conftest import make_webhook_signature
 
         # Owned by the *other* member: the webhook must not care.
-        seed_repo(
+        seed_repo_in_project(
             db_session,
             owner_id=OTHER_USER_ID,
             github_url="https://github.com/testuser/testrepo",

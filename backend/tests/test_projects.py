@@ -8,6 +8,8 @@ under this project's roof.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from models.schemas import Project, Repository
@@ -16,6 +18,13 @@ from tests.conftest import DEFAULT_USER_ID, seed_repo
 
 def create(client, name: str = "Hospital readmissions", **body):
     return client.post("/projects", json={"name": name, **body})
+
+
+@pytest.fixture(autouse=True)
+def github_hooks():
+    """Never reach GitHub: linking toggles the repository's webhook there."""
+    with patch("core.github.set_webhook_active", new=AsyncMock()) as mock:
+        yield mock
 
 
 @pytest.fixture()
@@ -195,3 +204,148 @@ class TestLinkingARepository:
 
         assert test_app.get(f"/projects/{own_project.id}").json()["repository"] is None
         assert test_app.get(f"/projects/{second.id}").json()["repository"]["id"] == repo.id
+
+
+class TestWebhookFollowsTheProject:
+    """Only a repository inside a project may run; its GitHub hook says so too."""
+
+    def test_linking_enables_the_webhook(self, test_app, db_session, own_project, github_hooks):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
+
+        github_hooks.assert_awaited_once()
+        assert github_hooks.await_args.args[2:] == (repo.webhook_id, True)
+
+    def test_unlinking_disables_the_webhook(self, test_app, db_session, own_project, github_hooks):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
+        test_app.delete(f"/projects/{own_project.id}/repository")
+
+        assert github_hooks.await_args.args[2:] == (repo.webhook_id, False)
+
+    def test_archiving_disables_the_webhook(self, test_app, db_session, own_project, github_hooks):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
+        test_app.delete(f"/projects/{own_project.id}")
+
+        assert github_hooks.await_args.args[2:] == (repo.webhook_id, False)
+
+    def test_a_github_failure_does_not_undo_the_link(
+        self, test_app, db_session, own_project, github_hooks
+    ):
+        github_hooks.side_effect = RuntimeError("GitHub is down")
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+
+        response = test_app.put(
+            f"/projects/{own_project.id}/repository", params={"repo_id": repo.id}
+        )
+
+        assert response.status_code == 200
+        db_session.expire_all()
+        assert db_session.get(Repository, repo.id).project_id == own_project.id
+
+    def test_repository_list_reports_the_project(self, test_app, db_session, own_project):
+        seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
+        seed_repo(
+            db_session, owner_id=DEFAULT_USER_ID, github_url="https://github.com/testuser/other"
+        )
+
+        by_url = {r["github_url"]: r for r in test_app.get("/repos").json()}
+
+        linked = by_url["https://github.com/testuser/testrepo"]
+        assert (linked["project_id"], linked["project_name"], linked["webhook_enabled"]) == (
+            own_project.id, "Mine", True,
+        )
+        loose = by_url["https://github.com/testuser/other"]
+        assert (loose["project_id"], loose["project_name"], loose["webhook_enabled"]) == (
+            None, None, False,
+        )
+
+    def test_an_archived_project_counts_as_no_project(self, test_app, db_session, own_project):
+        seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
+        own_project.is_active = False
+        db_session.add(own_project)
+        db_session.commit()
+
+        (repo,) = test_app.get("/repos").json()
+        assert repo["project_name"] is None and repo["webhook_enabled"] is False
+
+
+class TestRunPipeline:
+    """POST /projects/{id}/run — the "Run pipeline" button."""
+
+    @pytest.fixture()
+    def runner(self):
+        from unittest.mock import MagicMock
+
+        runner = MagicMock()
+        runner.run = AsyncMock()
+        with (
+            patch("core.pipeline.get_pipeline_runner", return_value=runner),
+            patch(
+                "core.github.list_branches",
+                new=AsyncMock(return_value=[{"name": "main", "commit_sha": "abc123"}]),
+            ),
+        ):
+            yield runner
+
+    @staticmethod
+    def _ready(db_session, project):
+        from tests.conftest import seed_dataset
+
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=project.id)
+        seed_dataset(db_session, project.id, is_active=True)
+        return repo
+
+    def test_runs_with_the_requested_model_name(self, test_app, db_session, own_project, runner):
+        from models.schemas import Pipeline
+
+        self._ready(db_session, own_project)
+
+        resp = test_app.post(f"/projects/{own_project.id}/run", json={"model_name": "readmit-v2"})
+
+        assert resp.status_code == 202, resp.text
+        pipeline = db_session.get(Pipeline, resp.json()["pipeline_id"])
+        assert pipeline.requested_model_name == "readmit-v2"
+        assert pipeline.branch == "main" and pipeline.commit_sha == "abc123"
+        runner.run.assert_awaited_once()
+
+    def test_without_a_linked_notebook_it_is_refused(self, test_app, db_session, own_project, runner):
+        from tests.conftest import seed_dataset
+
+        seed_dataset(db_session, own_project.id, is_active=True)
+
+        resp = test_app.post(f"/projects/{own_project.id}/run", json={"model_name": "m"})
+
+        assert resp.status_code == 409
+        runner.run.assert_not_awaited()
+
+    def test_without_gold_data_it_is_refused(self, test_app, db_session, own_project, runner):
+        seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
+
+        resp = test_app.post(f"/projects/{own_project.id}/run", json={"model_name": "m"})
+
+        assert resp.status_code == 409
+        assert "gold" in resp.json()["detail"]
+        runner.run.assert_not_awaited()
+
+    @pytest.mark.parametrize("name", ["", "has space", "a/b", "x'y", "a" * 201])
+    def test_an_unsafe_model_name_is_refused(self, test_app, db_session, own_project, runner, name):
+        self._ready(db_session, own_project)
+
+        resp = test_app.post(f"/projects/{own_project.id}/run", json={"model_name": name})
+
+        assert resp.status_code == 422
+        runner.run.assert_not_awaited()
+
+    def test_another_tenants_project_is_not_found(self, test_app, other_project, runner):
+        resp = test_app.post(f"/projects/{other_project.id}/run", json={"model_name": "m"})
+        assert resp.status_code == 404
+
+    def test_project_reports_its_active_dataset(self, test_app, db_session, own_project):
+        from tests.conftest import seed_dataset
+
+        assert test_app.get(f"/projects/{own_project.id}").json()["active_dataset"] is None
+        dataset = seed_dataset(db_session, own_project.id, is_active=True)
+
+        body = test_app.get(f"/projects/{own_project.id}").json()["active_dataset"]
+        assert body == {"id": dataset.id, "name": dataset.name, "size_bytes": dataset.size_bytes}

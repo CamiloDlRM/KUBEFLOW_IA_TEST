@@ -405,6 +405,17 @@ def seed_repo(session: Session, **kwargs) -> "Repository":
     return repo
 
 
+def seed_repo_in_project(session: Session, **kwargs) -> "Repository":
+    """Like :func:`seed_repo`, inside an active project of the same owner.
+
+    Only a repository in a project can run pipelines (webhook or manual
+    trigger), so every test that expects a run seeds through here.
+    """
+    owner_id = kwargs.get("owner_id", DEFAULT_USER_ID)
+    project = seed_project(session, owner_id=owner_id)
+    return seed_repo(session, project_id=project.id, **kwargs)
+
+
 def seed_pipeline(session: Session, repo_id: int, **kwargs) -> "Pipeline":
     """Insert a Pipeline record into the session and return it."""
     from models.schemas import Pipeline

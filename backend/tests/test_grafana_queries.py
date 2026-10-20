@@ -274,3 +274,92 @@ class TestFailClosed:
         )
         reset_cache()
         authorize_query(_payload("SELECT 1"), ADMIN)
+
+
+# ---------------------------------------------------------------------------
+# Per-model dashboard (``mlops-model``): ${model} slot and PromQL ownership
+# ---------------------------------------------------------------------------
+
+
+def _model_targets(key: str) -> list[str]:
+    document = json.loads((DASHBOARDS_DIR / "mlops-model.json").read_text(encoding="utf-8"))
+    return [t[key] for p in document["panels"] for t in p["targets"] if key in t]
+
+
+def _render(template: str, model: str, username: str = "testuser") -> str:
+    """What Grafana sends once it has interpolated both variables."""
+    return template.replace("${__user.login}", username).replace("${model}", model)
+
+
+def _prom_payload(*exprs: str) -> bytes:
+    return json.dumps({"queries": [{"refId": "A", "expr": e} for e in exprs]}).encode()
+
+
+def _owner_of(*models: str):
+    return lambda name: name in models
+
+
+class TestModelDashboard:
+    def test_every_sql_panel_is_user_and_model_scoped(self):
+        for raw in _model_targets("rawSql"):
+            assert "${__user.login}" in raw and "${model}" in raw, raw
+
+    def test_every_promql_panel_is_model_scoped(self):
+        for expr in _model_targets("expr"):
+            assert 'model_name="${model}"' in expr, expr
+
+    def test_every_sql_panel_is_allowed_for_any_safe_model_name(self):
+        for raw in _model_targets("rawSql"):
+            authorize_query(_payload(_render(raw, "iris-classifier_v2.1")), MEMBER)
+
+    def test_every_promql_panel_is_allowed_for_an_owned_model(self):
+        for expr in _model_targets("expr"):
+            authorize_query(
+                _prom_payload(_render(expr, "iris")), MEMBER, owns_model=_owner_of("iris")
+            )
+
+    def test_promql_for_a_model_of_someone_else_is_refused(self):
+        expr = _model_targets("expr")[0]
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(
+                _prom_payload(_render(expr, "theirs")), MEMBER, owns_model=_owner_of("iris")
+            )
+
+    def test_promql_without_an_ownership_check_is_refused(self):
+        expr = _model_targets("expr")[0]
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(_prom_payload(_render(expr, "iris")), MEMBER)
+
+    def test_ad_hoc_promql_is_refused_even_for_an_owned_model(self):
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(
+                _prom_payload('mlops_model_predictions_total{model_name="iris"} or up'),
+                MEMBER,
+                owns_model=_owner_of("iris"),
+            )
+
+    @pytest.mark.parametrize(
+        "model",
+        ["x' OR '1'='1", "x'--", 'x"} or up{a="', "x y", "", "a" * 201],
+    )
+    def test_unsafe_model_values_are_refused(self, model):
+        raw = _model_targets("rawSql")[0]
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(_payload(_render(raw, model)), MEMBER)
+        expr = _model_targets("expr")[0]
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(
+                _prom_payload(_render(expr, model)), MEMBER, owns_model=lambda _: True
+            )
+
+    def test_repeated_model_slot_must_hold_one_value(self):
+        from core.grafana_queries import _model_pattern
+
+        pattern = _model_pattern("a = '${model}' AND b = '${model}'")
+        assert pattern.fullmatch("a = 'x' AND b = 'x'")
+        assert not pattern.fullmatch("a = 'x' AND b = 'y'")
+
+    def test_another_users_name_with_a_model_is_refused(self):
+        raw = _model_targets("rawSql")[0]
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(_payload(_render(raw, "iris", "otheruser")), MEMBER)

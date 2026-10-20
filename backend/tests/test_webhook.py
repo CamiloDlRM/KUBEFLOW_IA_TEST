@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 
-from tests.conftest import make_webhook_signature, seed_repo
+from models.schemas import Project
+from tests.conftest import make_webhook_signature, seed_repo, seed_repo_in_project
 
 
 class TestGithubWebhook:
@@ -20,7 +21,7 @@ class TestGithubWebhook:
         sample_webhook_payload,
         mock_pipeline_runner,
     ):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
         body = json.dumps(sample_webhook_payload).encode()
         sig = make_webhook_signature(body)
 
@@ -66,7 +67,7 @@ class TestGithubWebhook:
         db_session,
         sample_webhook_payload,
     ):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
 
         # Modify payload to have no notebook changes
         sample_webhook_payload["commits"][0]["added"] = ["README.md"]
@@ -92,7 +93,7 @@ class TestGithubWebhook:
         db_session,
         sample_webhook_payload,
     ):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
 
         # Push to a different branch than the monitored one
         sample_webhook_payload["ref"] = "refs/heads/develop"
@@ -121,7 +122,7 @@ class TestGithubWebhook:
     ):
         from models.schemas import Pipeline
 
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
         body = json.dumps(sample_webhook_payload).encode()
         sig = make_webhook_signature(body)
 
@@ -205,3 +206,44 @@ class TestGithubWebhook:
 
         assert resp.status_code == 404
         assert "No registered repository" in resp.json()["detail"]
+
+
+class TestProjectRequirement:
+    """A push only runs a pipeline for a repository inside an active project."""
+
+    def _push(self, test_app, payload):
+        body = json.dumps(payload).encode()
+        return test_app.post(
+            "/webhook/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": make_webhook_signature(body),
+                "X-GitHub-Event": "push",
+            },
+        )
+
+    def test_push_to_a_repository_without_project_is_ignored(
+        self, test_app, db_session, sample_webhook_payload, mock_pipeline_runner
+    ):
+        seed_repo(db_session)
+
+        resp = self._push(test_app, sample_webhook_payload)
+
+        assert resp.status_code == 200
+        assert "not in a project" in resp.json()["detail"]
+        mock_pipeline_runner.run.assert_not_awaited()
+
+    def test_push_to_a_repository_in_an_archived_project_is_ignored(
+        self, test_app, db_session, sample_webhook_payload, mock_pipeline_runner
+    ):
+        repo = seed_repo_in_project(db_session)
+        project = db_session.get(Project, repo.project_id)
+        project.is_active = False
+        db_session.add(project)
+        db_session.commit()
+
+        resp = self._push(test_app, sample_webhook_payload)
+
+        assert resp.status_code == 200
+        mock_pipeline_runner.run.assert_not_awaited()

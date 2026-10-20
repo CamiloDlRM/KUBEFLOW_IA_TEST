@@ -12,13 +12,14 @@ import structlog
 
 from core.config import AppSettings, get_settings
 from core.github_credentials import encrypt_token, repo_token
-from core.ownership import filter_repos_by_owner, get_visible_repo_or_404
+from core.ownership import filter_repos_by_owner, get_visible_repo_or_404, repo_project
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     BranchInfo,
     MessageResponse,
     Pipeline,
+    Project,
     RepoCreateRequest,
     RepoCreatedResponse,
     RepoResponse,
@@ -86,6 +87,9 @@ async def create_repo(
             token=token,
             webhook_url=webhook_url,
             secret=settings.github_webhook_secret,
+            # A new repository has no project yet, so nothing may run on push.
+            # Linking it to a project enables the hook (routers/projects.py).
+            active=False,
         )
     except Exception as exc:
         logger.error("repo.webhook_creation_failed", error=str(exc))
@@ -133,10 +137,33 @@ async def list_repos(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[RepoResponse]:
-    """Return the repositories the caller owns (admins get every repository)."""
+    """Return the repositories the caller owns (admins get every repository).
+
+    Each one carries its *active* project, if any: only a repository inside a
+    project can run pipelines, so ``webhook_enabled`` follows from it.
+    """
     statement = filter_repos_by_owner(select(Repository), current_user)
     repos = session.exec(statement).all()
-    return [RepoResponse.model_validate(r) for r in repos]
+    project_ids = {r.project_id for r in repos if r.project_id is not None}
+    projects = {
+        p.id: p
+        for p in session.exec(
+            select(Project).where(
+                Project.id.in_(project_ids),  # type: ignore[union-attr]
+                Project.is_active == True,  # noqa: E712
+            )
+        ).all()
+    } if project_ids else {}
+
+    def render(repo: Repository) -> RepoResponse:
+        project = projects.get(repo.project_id)
+        response = RepoResponse.model_validate(repo)
+        response.project_id = project.id if project else None
+        response.project_name = project.name if project else None
+        response.webhook_enabled = project is not None
+        return response
+
+    return [render(r) for r in repos]
 
 
 @router.delete(
@@ -232,30 +259,19 @@ async def list_repo_notebooks(
         ) from exc
 
 
-@router.post(
-    "/{repo_id}/trigger",
-    response_model=WebhookAccepted,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Launch a pipeline manually from a chosen branch",
-)
-async def trigger_pipeline(
-    repo_id: int,
-    body: TriggerPipelineRequest,
-    settings: Annotated[AppSettings, Depends(get_settings)],
-    session: Annotated[Session, Depends(get_session)],
-    current_user: Annotated[User, Depends(get_current_user)],
+async def launch_pipeline(
+    repo: Repository,
+    branch: str,
+    settings: AppSettings,
+    session: Session,
+    requested_model_name: str | None = None,
 ) -> WebhookAccepted:
-    """Run the training pipeline on demand, from any branch of the repo.
+    """Pin ``branch`` to its HEAD commit and enqueue a run of ``repo``.
 
-    Unlike the webhook flow, this does not require a push event: it resolves
-    the branch's HEAD commit and enqueues the run directly. Only the owner of
-    the repository (or an admin) may launch a run on it.
+    Shared by the repository trigger and the project's "Run pipeline". Callers
+    have already checked access and that the repository sits in a project.
     """
     from core.pipeline import get_pipeline_runner
-
-    repo = get_visible_repo_or_404(session, repo_id, current_user)
-
-    branch = body.branch.strip() or repo.branch
 
     # Resolve the branch HEAD so the run is pinned to a concrete commit
     from core.github import list_branches
@@ -263,7 +279,7 @@ async def trigger_pipeline(
     try:
         branches = await list_branches(repo.github_url, repo_token(repo, settings))
     except Exception as exc:
-        logger.error("repo.trigger_branch_lookup_failed", repo_id=repo_id, error=str(exc))
+        logger.error("repo.trigger_branch_lookup_failed", repo_id=repo.id, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve branch '{branch}' on GitHub: {exc}",
@@ -292,6 +308,7 @@ async def trigger_pipeline(
         status="queued",
         commit_sha=commit_sha,
         branch=branch,
+        requested_model_name=requested_model_name,
     )
     session.add(pipeline)
     session.commit()
@@ -306,5 +323,38 @@ async def trigger_pipeline(
         repo_id=repo.id,
         branch=branch,
         commit_sha=commit_sha,
+        requested_model_name=requested_model_name,
     )
     return WebhookAccepted(pipeline_id=pipeline.id)
+
+
+@router.post(
+    "/{repo_id}/trigger",
+    response_model=WebhookAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Launch a pipeline manually from a chosen branch",
+)
+async def trigger_pipeline(
+    repo_id: int,
+    body: TriggerPipelineRequest,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> WebhookAccepted:
+    """Run the training pipeline on demand, from any branch of the repo.
+
+    Unlike the webhook flow, this does not require a push event: it resolves
+    the branch's HEAD commit and enqueues the run directly. Only the owner of
+    the repository (or an admin) may launch a run on it.
+    """
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    if repo_project(session, repo) is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Link this repository to a project before running a pipeline.",
+        )
+
+    return await launch_pipeline(
+        repo, body.branch.strip() or repo.branch, settings, session
+    )
+
