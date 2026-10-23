@@ -125,12 +125,22 @@ is a wrapper that creates the app and pushes its context before starting the
 server. `bootstrap.sh` runs the documented command first; if you see that
 error, that is what it is, and it is a small wrapper rather than a redesign.
 
-**The image ships no database drivers at all.** They were dropped in 4.1.0 to
-keep it lean, so every one is the operator's to add — including `psycopg2`,
-which Superset needs for *its own* metadata database. Without it the container
-does not reach the point of serving anything: `superset db upgrade` cannot open
-the connection and the startup dies on `ModuleNotFoundError: No module named
-'psycopg2'`. The Dockerfile installs `psycopg2-binary` alongside DuckDB.
+**The image ships almost nothing optional.** Three things had to be added, and
+each one failed in a different place:
+
+| Missing | Where it showed up |
+|---|---|
+| `psycopg2` | `superset db upgrade` cannot open Superset's *own* metadata database. Drivers were dropped from the image in 4.1.0. |
+| `duckdb`, `duckdb-engine` | No way to read the gold Parquet. |
+| the `fastmcp` extra | `superset mcp run` prints *"fastmcp is not installed, skipping MCP initialization"* and exits — so the MCP container dies instantly and the agent meets a refused connection. |
+
+The `fastmcp` extra is asked for as `apache-superset[fastmcp]==<installed
+version>`, not as a bare `fastmcp`. The extra carries Superset's own constraint
+on which fastmcp its MCP code was written against; a bare install takes the
+newest, which is how you get a server that starts and then disagrees with its
+own host about a schema. Naming the version already installed means the
+resolver treats apache-superset as satisfied and adds only what the extra pulls
+in.
 
 **The driver versions are unpinned.** `duckdb` and `duckdb-engine` have never
 been resolved against this base image here. A pin invented without running it
