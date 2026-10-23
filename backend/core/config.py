@@ -127,6 +127,16 @@ class AppSettings(BaseSettings):
         default="",
         description="Bearer token for that endpoint (provider=openai).",
     )
+    dashboard_agent_tools: str = Field(
+        default="",
+        description=(
+            "Which Superset tools the KPI maker is offered. Empty takes the "
+            "agent's own set; `*` offers all of them; otherwise a comma list. "
+            "Every offered tool travels with every model call, so on a "
+            "tokens-per-minute budget fewer is the difference between running "
+            "and a 413."
+        ),
+    )
     dashboard_agent_model: str = Field(
         default="gemini-pro-latest",
         description=(

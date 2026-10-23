@@ -53,6 +53,36 @@ __all__ = [
 #: spin.
 MAX_TURNS = 12
 
+#: The tools a dashboard is built from. Superset offers ~45, and every one
+#: travels with every model call: on Groq's free tier that alone came to 10,303
+#: tokens against a limit of 8,000 a minute, before the model had read a word
+#: of the request. These are what the job uses — find the gold database, make
+#: or reuse a dataset on it, chart it, put the charts in one dashboard — and a
+#: narrower set is also a model with fewer wrong turns available to it.
+#:
+#: Overridable with DASHBOARD_AGENT_TOOLS: a comma list, or `*` for all of them.
+DEFAULT_TOOLS = (
+    "list_databases",
+    "list_datasets",
+    "get_dataset_info",
+    "create_virtual_dataset",
+    "list_charts",
+    "generate_chart",
+    "update_chart",
+    "get_chart_type_schema",
+    "list_dashboards",
+    "get_dashboard_info",
+    "generate_dashboard",
+    "add_chart_to_existing_dashboard",
+)
+
+#: How much of one tool's answer the model is shown. A listing comes back as
+#: JSON that can run to thousands of tokens, the conversation carries every
+#: answer into every later call, and the budget is per minute. The full answer
+#: is still kept in the run, so nothing is lost from the record — only from
+#: what the model rereads.
+MAX_RESULT_CHARS = 2500
+
 SYSTEM_PROMPT = """You build dashboards in Apache Superset by calling the \
 tools you have been given.
 
@@ -189,6 +219,43 @@ def to_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _select(tools: list[MCPTool], spec: str) -> list[MCPTool]:
+    """The tools the model is offered: the default set, a configured one, or all.
+
+    A configured name that Superset does not offer is skipped. If none of them
+    match — Superset renamed its tools, say — every tool is offered instead of
+    none: a model with too many tools is slow, one with none can only apologise.
+    """
+    spec = spec.strip()
+    if spec == "*":
+        return tools
+    wanted = (
+        {name.strip() for name in spec.split(",") if name.strip()}
+        if spec
+        else set(DEFAULT_TOOLS)
+    )
+    chosen = [tool for tool in tools if tool.name in wanted]
+    if not chosen:
+        logger.warning(
+            "superset_agent.no_tools_matched",
+            wanted=sorted(wanted),
+            offered=[tool.name for tool in tools][:60],
+        )
+        return tools
+    return chosen
+
+
+def _for_the_model(result: str) -> str:
+    """One tool answer, cut to what the model can afford to reread."""
+    if len(result) <= MAX_RESULT_CHARS:
+        return result
+    return (
+        result[:MAX_RESULT_CHARS]
+        + f"\n...[{len(result) - MAX_RESULT_CHARS} more characters cut. "
+        "Ask for something narrower if you need them.]"
+    )
+
+
 def _declarations(tools: list[MCPTool]) -> list[dict[str, Any]]:
     """The tools as the MCP server describes them: plain JSON Schema.
 
@@ -225,7 +292,8 @@ def _wait_for(response: Any, attempt: int) -> float:
     """How long to hold off. The server's own answer wins if it gave one."""
     header = response.headers.get("retry-after", "")
     if header.isdigit():
-        return min(float(header), 30.0)
+        # Up to a minute: tokens-per-minute limits reset on a minute's window.
+        return min(float(header), 60.0)
     # 2, 4, 8 seconds. Long enough for a demand spike to pass, short enough
     # that four attempts do not outlast the caller's patience.
     return float(2**attempt)
@@ -520,7 +588,7 @@ def build_dashboard(
                 "Superset's MCP server offered no tools, so there is nothing "
                 "the model can do with it."
             )
-        declarations = _declarations(tools)
+        declarations = _declarations(_select(tools, settings.dashboard_agent_tools))
 
         contents: list[dict[str, Any]] = []
         for earlier, answer in history or []:
@@ -577,7 +645,7 @@ def build_dashboard(
                     {
                         "functionResponse": {
                             "name": name,
-                            "response": {"result": result},
+                            "response": {"result": _for_the_model(result)},
                         }
                     }
                 )

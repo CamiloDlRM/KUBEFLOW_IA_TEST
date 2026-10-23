@@ -1028,7 +1028,11 @@ class TestDashboardAgent:
     ):
         """Without it the model meets "move that chart" as its first
         instruction and builds a second dashboard."""
-        agent = Recorder(summary="Done.")
+        from core.superset_agent import ToolCall
+
+        agent = Recorder(
+            summary="Done.", calls=[ToolCall("generate_chart", {}, "chart 1")]
+        )
         self._agent(monkeypatch, agent)
 
         test_app.post(
@@ -1040,6 +1044,26 @@ class TestDashboardAgent:
 
         assert agent.history == [("first ask", "Done.")]
         assert agent.request == "now edit it"
+
+    def test_an_exchange_that_built_nothing_is_not_replayed(
+        self, test_app, own_project, built_gold, monkeypatch
+    ):
+        """History exists so "move that chart" has a referent, and a turn that
+        made no calls left none — only words, which can be wrong. The first
+        turn ever recorded in production was the model explaining that no tool
+        could build a chart, which stopped being true one config change later.
+        """
+        agent = Recorder(summary="No tool can build a chart.")
+        self._agent(monkeypatch, agent)
+
+        test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "first ask"}
+        )
+        test_app.post(
+            f"/projects/{own_project.id}/dashboard", json={"prompt": "try again"}
+        )
+
+        assert agent.history == []
 
     def test_the_conversation_can_be_read_back_without_asking_for_anything(
         self, test_app, own_project, built_gold, monkeypatch

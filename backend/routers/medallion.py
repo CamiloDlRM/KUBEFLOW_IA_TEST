@@ -1133,7 +1133,13 @@ def build_dashboard(
             body.prompt,
             schema=described,
             mcp_url=settings.superset_mcp_url,
-            history=[(turn.prompt, turn.summary) for turn in earlier],
+            # Only exchanges that built something. History is there so "move
+            # that chart" has a referent, and a turn that made no calls left
+            # none — only its words, which can be wrong: the first turn ever
+            # recorded here was the model explaining that no tool could build a
+            # chart, which stopped being true one config change later and would
+            # have been replayed into every prompt after it.
+            history=[(turn.prompt, turn.summary) for turn in earlier if turn.calls],
             settings=settings,
         )
     except DashboardRequestError as exc:

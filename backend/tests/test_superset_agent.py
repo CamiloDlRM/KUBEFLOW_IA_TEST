@@ -640,3 +640,69 @@ class TestRidingOutADemandSpike:
         superset_agent._gemini(settings, "m", [], [], sleep=slept.append)
 
         assert slept == [7.0]
+
+
+class TestFittingAFreeTier:
+    """Every offered tool travels with every model call.
+
+    On Groq's free tier, offering all ~45 of Superset's tools came to 10,303
+    tokens in one request against a limit of 8,000 a minute — a 413 before the
+    model had read a word of what was asked.
+    """
+
+    def _superset(self):
+        names = [
+            "health_check", "find_users", "generate_bug_report", "list_reports",
+            "list_databases", "list_datasets", "create_virtual_dataset",
+            "generate_chart", "generate_dashboard",
+        ]
+        return [MCPTool(name, f"does {name}", {"type": "object", "properties": {}}) for name in names]
+
+    def _offered(self, settings, spec):
+        seen = {}
+
+        def generate(settings, model, contents, tools):
+            seen["names"] = [tool["name"] for tool in tools]
+            return text("done")
+
+        settings.dashboard_agent_tools = spec
+        run(generate, FakeMCP(tools=self._superset()), settings=settings)
+        return seen["names"]
+
+    def test_the_model_is_offered_what_the_job_uses(self, settings):
+        offered = self._offered(settings, "")
+
+        assert "generate_chart" in offered
+        assert "create_virtual_dataset" in offered
+        assert "generate_bug_report" not in offered
+        assert "find_users" not in offered
+
+    def test_the_set_can_be_named_in_the_environment(self, settings):
+        assert self._offered(settings, "list_databases, generate_chart") == [
+            "list_databases",
+            "generate_chart",
+        ]
+
+    def test_a_star_offers_everything(self, settings):
+        assert len(self._offered(settings, "*")) == len(self._superset())
+
+    def test_names_that_match_nothing_fall_back_to_everything(self, settings):
+        """If Superset renames its tools, a model with too many is slow; one
+        with none can only apologise."""
+        assert len(self._offered(settings, "renamed_tool, another")) == len(self._superset())
+
+    def test_the_model_rereads_a_cut_answer_but_the_record_keeps_it_whole(self, settings):
+        """The conversation carries every answer into every later call, so a
+        long listing is paid for again on each turn."""
+        from core.superset_agent import MAX_RESULT_CHARS
+
+        long_answer = "x" * (MAX_RESULT_CHARS * 3)
+        mcp = FakeMCP(answers={"create_chart": long_answer})
+        generate = replies(wants("create_chart"), text("done"))
+
+        result = run(generate, mcp, settings=settings)
+
+        shown = answers_in(generate.contents)[0]["parts"][0]["functionResponse"]
+        assert len(shown["response"]["result"]) < len(long_answer)
+        assert "more characters cut" in shown["response"]["result"]
+        assert result.calls[0].result == long_answer, "the record is not cut"
