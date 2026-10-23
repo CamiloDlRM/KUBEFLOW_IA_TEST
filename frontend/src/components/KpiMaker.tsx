@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { askForDashboard, getDashboardConversation } from '../api/client';
 import type { DashboardTurn } from '../types';
 import Spinner from './Spinner';
+import EmbeddedDashboard from './EmbeddedDashboard';
 
 /**
  * Ask for a dashboard over gold, then keep asking until it is right.
@@ -37,8 +38,14 @@ export default function KpiMaker({ projectId }: { projectId: number }) {
 
   const turns = data?.turns ?? [];
   const busy = ask.isPending;
+  // Only exchanges that called Superset can have built anything to show.
+  const latest = [...turns].reverse().find((turn) => turn.calls.length > 0);
 
   return (
+    <div className="space-y-6">
+      {/* The result first, and below it the conversation that changes it. */}
+      {latest && <EmbeddedDashboard projectId={projectId} version={latest.id} />}
+
     <section className="rounded-lg border border-slate-700 bg-slate-900/40">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
         <div>
@@ -130,6 +137,7 @@ export default function KpiMaker({ projectId }: { projectId: number }) {
         </form>
       </div>
     </section>
+    </div>
   );
 }
 

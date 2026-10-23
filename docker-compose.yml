@@ -91,6 +91,14 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
+      # Embedding the KPI maker's dashboards. The secret is the one Superset
+      # verifies guest tokens with, read from the same variable so they cannot
+      # drift; the admin login is the one bootstrap.sh seeds, used only to
+      # switch embedding on for a dashboard.
+      - SUPERSET_GUEST_TOKEN_SECRET=${SUPERSET_GUEST_TOKEN_SECRET:-change-me-guest-token-secret}
+      - SUPERSET_INTERNAL_URL=http://superset:8088
+      - SUPERSET_ADMIN_USERNAME=${SUPERSET_ADMIN_USERNAME:-admin}
+      - SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
     volumes:
       - mlops-models:/app/model_artifacts
       # The same dashboard JSON Grafana is provisioned from. The backend reads
@@ -420,6 +428,9 @@ services:
       - SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
       - SUPERSET_ADMIN_EMAIL=${SUPERSET_ADMIN_EMAIL:-admin@example.com}
       - SUPERSET_MCP_DEV_USERNAME=${SUPERSET_MCP_DEV_USERNAME:-admin}
+      # Verifies the guest tokens the backend signs for embedded dashboards.
+      # The backend reads the same variable, so the two cannot drift.
+      - SUPERSET_GUEST_TOKEN_SECRET=${SUPERSET_GUEST_TOKEN_SECRET:-change-me-guest-token-secret}
       # Read by the DuckDB connection Superset uses to reach the gold bucket.
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}

@@ -976,6 +976,21 @@ class DashboardTurnResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class DashboardEmbedResponse(BaseModel):
+    """What the browser needs to show the KPI maker's dashboard in place.
+
+    No Superset credential is in here. The token names one dashboard and
+    expires in minutes; the SDK asks for another before it does.
+    """
+
+    dashboard_id: int
+    #: The dashboard's embedded configuration, which is not its id.
+    uuid: str
+    #: Where the browser loads the iframe from.
+    superset_domain: str
+    token: str
+
+
 class DashboardResponse(BaseModel):
     """The conversation so far, newest last.
 

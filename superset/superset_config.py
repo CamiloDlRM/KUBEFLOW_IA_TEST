@@ -66,7 +66,30 @@ FEATURE_FLAGS = {
     # Lets a dataset be defined as SQL with parameters, which is how a chart
     # points at one project's gold object without a dataset per project.
     "ENABLE_TEMPLATE_PROCESSING": True,
+    # Lets the KPI maker show a dashboard inside the platform instead of
+    # sending the user to Superset to look at it.
+    "EMBEDDED_SUPERSET": True,
 }
+
+# ---------------------------------------------------------------------------
+# Embedded dashboards
+# ---------------------------------------------------------------------------
+#
+# The platform signs a guest token for one dashboard and the browser hands it
+# to the embedded iframe. Superset never sees the platform's users and the
+# platform never holds a Superset login in the browser: the token is the whole
+# grant, scoped to the dashboards it names.
+
+#: Shared with the backend, which signs with it. Read from the environment,
+#: where compose gives both containers the same variable.
+GUEST_TOKEN_JWT_SECRET = os.environ["SUPERSET_GUEST_TOKEN_SECRET"]
+GUEST_TOKEN_JWT_AUDIENCE = "superset"
+
+#: What a guest may do inside the dashboards its token names. Gamma is
+#: Superset's read-only role; access to the datasets behind an embedded
+#: dashboard is granted by the token's resources, not by this role, so it does
+#: not reach any other dashboard or dataset.
+GUEST_ROLE_NAME = "Gamma"
 
 # ---------------------------------------------------------------------------
 # Serving

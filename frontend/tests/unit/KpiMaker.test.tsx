@@ -11,6 +11,15 @@ const askForDashboard = vi.fn();
 vi.mock('../../src/api/client', () => ({
   getDashboardConversation: (...args: unknown[]) => getDashboardConversation(...args),
   askForDashboard: (...args: unknown[]) => askForDashboard(...args),
+  getDashboardEmbed: () => Promise.reject(new Error('not under test here')),
+}));
+
+// The embedded dashboard has its own tests; here it is only a marker for
+// whether the KPI maker decided there was something to show.
+vi.mock('../../src/components/EmbeddedDashboard', () => ({
+  default: ({ version }: { version: number }) => (
+    <div data-testid="embedded-dashboard">embedded v{version}</div>
+  ),
 }));
 
 function turn(overrides: Partial<DashboardTurn> = {}): DashboardTurn {
@@ -154,4 +163,39 @@ describe('KpiMaker', () => {
 
     expect(await screen.findByText(/Superset is not configured/)).toBeInTheDocument();
   });
+
+  it('shows the dashboard once an exchange has built something', async () => {
+    renderMaker(
+      conversation({
+        turns: [
+          turn({ id: 3, calls: [{ name: 'generate_dashboard', arguments: {}, result: '{}' }] }),
+        ],
+      }),
+    );
+
+    expect(await screen.findByTestId('embedded-dashboard')).toHaveTextContent('embedded v3');
+  });
+
+  it('shows no dashboard while nothing has called Superset', async () => {
+    // An exchange that made no calls built nothing; there is nothing to frame.
+    renderMaker(conversation({ turns: [turn({ calls: [] })] }));
+
+    await screen.findByText('encounters by class');
+    expect(screen.queryByTestId('embedded-dashboard')).toBeNull();
+  });
+
+  it('frames the dashboard from the latest exchange that built something', async () => {
+    renderMaker(
+      conversation({
+        turns: [
+          turn({ id: 1, calls: [{ name: 'generate_dashboard', arguments: {}, result: '{}' }] }),
+          turn({ id: 2, prompt: 'make it a line', calls: [{ name: 'update_chart', arguments: {}, result: '{}' }] }),
+          turn({ id: 3, prompt: 'thanks', calls: [] }),
+        ],
+      }),
+    );
+
+    expect(await screen.findByTestId('embedded-dashboard')).toHaveTextContent('embedded v2');
+  });
 });
+

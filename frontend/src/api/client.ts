@@ -38,6 +38,7 @@ import type {
   Project,
   CleaningSteps,
   DashboardConversation,
+  DashboardEmbed,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -605,5 +606,12 @@ export async function askForDashboard(
     { prompt },
     { timeout: AGENT_TIMEOUT },
   );
+  return data;
+}
+
+/** The embedded dashboard's coordinates and a fresh guest token. Also called
+ *  by the embedding SDK each time the token is about to expire. */
+export async function getDashboardEmbed(projectId: number): Promise<DashboardEmbed> {
+  const { data } = await apiClient.get<DashboardEmbed>(`/projects/${projectId}/dashboard/embed`);
   return data;
 }
