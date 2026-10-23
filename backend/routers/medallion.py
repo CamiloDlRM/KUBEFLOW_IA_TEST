@@ -1065,13 +1065,22 @@ async def dashboard_conversation(
     response_model=DashboardResponse,
     summary="Ask the agent to build or change this project's dashboard",
 )
-async def build_dashboard(
+def build_dashboard(
     project_id: int,
     body: DashboardRequest,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> DashboardResponse:
     """Hand the request, the gold schema and the earlier exchanges to the agent.
+
+    Declared ``def`` and not ``async def``, which is load-bearing rather than
+    an oversight. Everything below it is synchronous — the MCP client, the
+    model calls, the object read — and it runs for minutes. On the event loop
+    that blocks the whole server: while one person waits for a dashboard,
+    nobody else can log in. FastAPI runs a plain ``def`` in a threadpool
+    instead, so the agent occupies one thread rather than the process.
+
+    That is a floor, not a fix. See the note at the end about the queue.
 
     The earlier exchanges are what make this editing rather than a series of
     one-shot requests: without them the model meets "move that chart to the
