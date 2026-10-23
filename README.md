@@ -249,7 +249,7 @@ The pipeline injects these variables via papermill:
 
 | Variable | Description |
 |----------|-------------|
-| `DATASET_PATH` | Local path of the repository's **active dataset**, downloaded from MinIO. Empty when the repo has no active dataset |
+| `DATASET_PATH` | Local path of what the repository **trains on** (see [Choosing the input](#choosing-the-input)), downloaded from MinIO. Empty when there is nothing to mount |
 | `MODEL_OUTPUT_PATH` | Path where the model must be saved |
 | `PIPELINE_ID` | UUID of the current pipeline run |
 | `MLFLOW_TRACKING_URI` | MLflow server URL |
@@ -305,6 +305,27 @@ Always keep a fallback: it lets you run the notebook by hand and keeps the
 pipeline working for repositories that have no active dataset yet.
 `notebooks/example_dataset_notebook.ipynb` is a complete, runnable example of
 this flow (read → train → `mlflow.log_metric` → `joblib.dump`).
+
+### Choosing the input
+
+By default a run mounts the project's active dataset — whatever was last
+uploaded or built. A repository can instead name a layer, with
+`PUT /repos/{id}/pipeline-input`:
+
+| Body | Mounts |
+|------|--------|
+| `{"layer": "gold"}` | The newest gold build, whichever it is when the run starts |
+| `{"layer": "gold", "version": 3}` | Gold v3, and nothing else |
+| `{"layer": "silver", "source_id": 2}` | Source 2's whole silver history, stacked into one Parquet file by column name |
+| `{"layer": "bronze", "source_id": 2}` | The same, uncleaned |
+| `{"layer": ""}` | Back to the active dataset |
+
+A choice that names nothing — gold never built, a source with nothing landed —
+is refused when it is made, not when a run starts. Either way, every run
+records what it actually mounted in `mounted_input`, and the notebook's code,
+cell by cell with its `mlops:*` phase and output, in `cells` (both on
+`GET /pipelines/{id}`). `GET /projects/{id}/medallion/inputs` lists what can be
+chosen. Layer inputs are always Parquet, so read them with `pd.read_parquet`.
 
 ### The MinIO console
 

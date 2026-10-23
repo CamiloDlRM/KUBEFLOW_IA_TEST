@@ -15,6 +15,7 @@ from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     Pipeline,
+    PipelineDetailResponse,
     PipelineListResponse,
     PipelineLogsResponse,
     PipelineResponse,
@@ -63,14 +64,14 @@ async def list_pipelines(
 
 @router.get(
     "/{pipeline_id}",
-    response_model=PipelineResponse,
+    response_model=PipelineDetailResponse,
     summary="Get pipeline details",
 )
 async def get_pipeline(
     pipeline_id: str,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> PipelineResponse:
+) -> PipelineDetailResponse:
     """Return full status, phases, and metrics for a single pipeline run.
 
     A run whose repository belongs to somebody else is reported as 404.
@@ -79,7 +80,7 @@ async def get_pipeline(
         pipeline_id: UUID of the pipeline.
     """
     pipeline = get_visible_pipeline_or_404(session, pipeline_id, current_user)
-    return PipelineResponse.model_validate(pipeline)
+    return PipelineDetailResponse.model_validate(pipeline)
 
 
 @router.get(

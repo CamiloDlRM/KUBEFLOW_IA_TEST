@@ -107,3 +107,79 @@ def extract_config(notebook: dict[str, Any]) -> dict[str, str]:
         version=version,
     )
     return {"model_name": model_name, "version": version}
+
+
+#: The phases a notebook is written in, in the order they run. This is also the
+#: order the pipeline view lays its cards out in, so a notebook and its picture
+#: cannot disagree about what comes after what.
+PHASE_TAGS: list[str] = [
+    "mlops:config",
+    "mlops:data",
+    "mlops:preprocessing",
+    "mlops:training",
+    "mlops:evaluation",
+    "mlops:export",
+]
+
+#: Papermill's own cell, holding the values it injected. It is not the
+#: author's code, and showing it as such would put DATASET_PATH in a card as if
+#: someone had written it there.
+INJECTED_TAG = "injected-parameters"
+
+_MAX_SOURCE_CHARS = 20_000
+_MAX_OUTPUT_CHARS = 2_000
+
+
+def _text(value: Any) -> str:
+    return "".join(value) if isinstance(value, list) else str(value or "")
+
+
+def _output_text(cell: dict[str, Any]) -> tuple[str, str]:
+    """What a cell printed, and the error it raised if it raised one."""
+    printed = ""
+    error = ""
+    for out in cell.get("outputs", []) or []:
+        if out.get("output_type") == "error":
+            error = f"{out.get('ename', 'Error')}: {out.get('evalue', '')}".strip()
+        elif "text" in out:
+            printed += _text(out["text"])
+        elif "text/plain" in (out.get("data") or {}):
+            printed += _text(out["data"]["text/plain"])
+    return printed[:_MAX_OUTPUT_CHARS], error
+
+
+def notebook_cells(notebook: dict[str, Any]) -> list[dict[str, Any]]:
+    """The notebook's code, cell by cell, each with the phase it belongs to.
+
+    Kept as cells in notebook order rather than grouped by phase, because a
+    notebook is allowed untagged cells — imports, a helper — and they still
+    run. Grouping would have to either drop them or invent a phase for them;
+    in order, the view can show them where they actually sit.
+
+    Works on the notebook before execution and after it. After, each cell also
+    carries what it printed, the error it raised, and papermill's status for
+    it, which is how a card can say that training never ran because
+    preprocessing failed rather than leave the reader to infer it.
+    """
+    cells: list[dict[str, Any]] = []
+    for cell in notebook.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        tags = list(_cell_tags(cell))
+        if INJECTED_TAG in tags:
+            continue
+        phase = next((tag for tag in tags if tag in PHASE_TAGS), "")
+        output, error = _output_text(cell)
+        papermill = (cell.get("metadata") or {}).get("papermill") or {}
+        cells.append(
+            {
+                "index": len(cells),
+                "phase": phase.removeprefix("mlops:"),
+                "tags": tags,
+                "source": _text(cell.get("source"))[:_MAX_SOURCE_CHARS],
+                "output": output,
+                "error": error,
+                "status": papermill.get("status", "pending"),
+            }
+        )
+    return cells

@@ -135,6 +135,8 @@ def _update_pipeline_db(
     metrics: dict[str, Any] | None = None,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
+    mounted_input: dict[str, Any] | None = None,
+    cells: list[dict[str, Any]] | None = None,
 ) -> None:
     """Update pipeline record in the database via SQLModel (sync context)."""
     from sqlmodel import Session, select
@@ -157,6 +159,10 @@ def _update_pipeline_db(
             pipeline.started_at = started_at
         if finished_at is not None:
             pipeline.finished_at = finished_at
+        if mounted_input is not None:
+            pipeline.mounted_input = mounted_input
+        if cells is not None:
+            pipeline.cells = cells
         session.add(pipeline)
         session.commit()
 
@@ -471,7 +477,8 @@ def run_pipeline(
 
     from sqlmodel import Session, select
     from models.schemas import Dataset, Pipeline, Repository, ModelDeployment
-    from core.notebook_parser import validate_required_tags, extract_config
+    from core import pipeline_input
+    from core.notebook_parser import extract_config, notebook_cells, validate_required_tags
     from db import engine
 
     log = logger.bind(pipeline_id=pipeline_id, repo_id=repo_id, commit_sha=commit_sha)
@@ -567,6 +574,9 @@ def run_pipeline(
         notebook = json.loads(nb_content)
         _phase("download", "success", f"Notebook '{clean_nb_path}' downloaded successfully from {owner}/{repo_name}@{run_branch}")
         log.info("pipeline.phase.download.done")
+        # Recorded before validation, so a notebook that fails it can still be
+        # read in the view: the missing tag is easier to see than to describe.
+        _update_pipeline_db(pipeline_id, cells=notebook_cells(notebook))
 
         if _shutting_down:
             raise SystemExit("Worker shutting down")
@@ -599,27 +609,46 @@ def run_pipeline(
             with open(input_path, "w") as f:
                 json.dump(notebook, f)
 
-            # Phase 3a: Mount the repository's active dataset (if any).
-            # The dataset is downloaded from MinIO into this same temporary
-            # directory and its local path is injected as DATASET_PATH, so the
-            # notebook never handles S3 credentials.
+            # Phase 3a: Mount what the repository trains on.
+            # Downloaded from MinIO into this same temporary directory and its
+            # local path injected as DATASET_PATH, so the notebook never
+            # handles S3 credentials. The repository's choice of layer wins;
+            # without one, the project's active dataset, as before choices
+            # existed. Either way the run records what it mounted.
             dataset_path: str | None = None
-            _phase("dataset", "running", "Looking up the project's active dataset...")
+            _phase("dataset", "running", "Resolving what this pipeline trains on...")
 
             with Session(engine) as session:
-                # The dataset belongs to the repository's *project*: the code
-                # and the data are separate things that a project brings
-                # together, so the notebook is handed whatever its project
-                # currently publishes.
                 repo_row = session.get(Repository, repo_id)
-                active_dataset = session.exec(
-                    select(Dataset)
-                    .where(
-                        Dataset.project_id == (repo_row.project_id if repo_row else -1),
-                        Dataset.is_active == True,  # noqa: E712
+                project_id = repo_row.project_id if repo_row else None
+                try:
+                    choice = pipeline_input.InputChoice.parse(
+                        repo_row.pipeline_input if repo_row else {}
                     )
-                    .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
-                ).first()
+                    resolved = (
+                        pipeline_input.resolve(session, project_id, choice)
+                        if project_id is not None
+                        else None
+                    )
+                except pipeline_input.InputError as exc:
+                    message = f"The chosen input cannot be mounted: {exc}"
+                    _phase("dataset", "failed", message)
+                    raise ValueError(message) from exc
+
+                # Without a choice, the project's active dataset. It belongs
+                # to the repository's *project*: the code and the data are
+                # separate things that a project brings together, so the
+                # notebook is handed whatever its project currently publishes.
+                active_dataset = None
+                if resolved is None:
+                    active_dataset = session.exec(
+                        select(Dataset)
+                        .where(
+                            Dataset.project_id == (project_id if project_id is not None else -1),
+                            Dataset.is_active == True,  # noqa: E712
+                        )
+                        .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
+                    ).first()
                 dataset_info: dict[str, Any] | None = (
                     {
                         "id": active_dataset.id,
@@ -632,7 +661,24 @@ def run_pipeline(
                     else None
                 )
 
-            if dataset_info:
+            if resolved is not None:
+                try:
+                    mounted = pipeline_input.mount(resolved, Path(tmpdir) / "dataset")
+                except Exception as exc:
+                    message = f"Failed to mount {resolved.label}: {exc}"
+                    _phase("dataset", "failed", message)
+                    log.error("pipeline.phase.dataset.failed", input=resolved.label, error=str(exc))
+                    raise ValueError(message) from exc
+                dataset_path = str(mounted)
+                _update_pipeline_db(pipeline_id, mounted_input=resolved.as_dict())
+                _phase(
+                    "dataset",
+                    "success",
+                    f"{resolved.label} mounted at {dataset_path}. "
+                    "Injected as papermill parameter DATASET_PATH.",
+                )
+                log.info("pipeline.phase.dataset.mounted", input=resolved.label)
+            elif dataset_info:
                 from core.storage import download_to_path, sanitize_filename
 
                 dataset_dir = os.path.join(tmpdir, "dataset")
@@ -658,6 +704,16 @@ def run_pipeline(
                     )
                     raise ValueError(message) from exc
 
+                _update_pipeline_db(
+                    pipeline_id,
+                    mounted_input={
+                        "layer": "dataset",
+                        "bucket": dataset_info["bucket"],
+                        "keys": [dataset_info["object_key"]],
+                        "label": f"active dataset · {dataset_info['name']}",
+                        "dataset_id": dataset_info["id"],
+                    },
+                )
                 _phase(
                     "dataset",
                     "success",
@@ -727,16 +783,32 @@ def run_pipeline(
             if dataset_path:
                 parameters["DATASET_PATH"] = dataset_path
 
-            pm.execute_notebook(
-                input_path,
-                output_path,
-                parameters=parameters,
-                cwd=tmpdir,
-            )
+            try:
+                pm.execute_notebook(
+                    input_path,
+                    output_path,
+                    parameters=parameters,
+                    cwd=tmpdir,
+                )
+            except Exception:
+                # Papermill writes the executed notebook even when a cell
+                # raises, with the error on that cell and the ones after it
+                # marked as never run. That is the most useful thing a failed
+                # run can leave behind, so it is kept before the failure
+                # carries on up.
+                if os.path.exists(output_path):
+                    try:
+                        with open(output_path, "r") as f:
+                            failed_nb = nbformat.read(f, as_version=4)
+                        _update_pipeline_db(pipeline_id, cells=notebook_cells(failed_nb))
+                    except Exception as read_exc:  # noqa: BLE001 - the original error matters more
+                        log.warning("pipeline.cells.unreadable", error=str(read_exc))
+                raise
 
             # Read output notebook for cell logs
             with open(output_path, "r") as f:
                 output_nb = nbformat.read(f, as_version=4)
+            _update_pipeline_db(pipeline_id, cells=notebook_cells(output_nb))
 
             cell_logs = []
             for i, cell in enumerate(output_nb.cells):
