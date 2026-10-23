@@ -136,10 +136,23 @@ class MCPClient:
         """
         result = self._rpc("tools/call", {"name": name, "arguments": arguments})
         text = _as_text(result.get("content") or [])
+
+        # A tool with an output schema answers in `structuredContent`, and the
+        # text block that is supposed to mirror it is a SHOULD, not a MUST.
+        # Reading only `content` turned every listing into an empty string: the
+        # model asked for the gold database ten different ways, heard nothing
+        # each time, and spent its whole run asking.
+        structured = result.get("structuredContent")
+        if not text and structured is not None:
+            text = json.dumps(structured, default=str, ensure_ascii=False)
+
         if result.get("isError"):
             logger.info("mcp.tool_failed", tool=name, detail=text[:200])
             return f"The tool reported an error: {text}"
-        return text
+
+        # Said, rather than passed on as nothing. An empty answer reads to a
+        # model as "ask again"; this one reads as an answer.
+        return text or "(The tool returned no content.)"
 
     # ------------------------------------------------------------------- rpc
     def _rpc(
