@@ -8,6 +8,8 @@ and that the schemas handed to Gemini are ones it will accept.
 """
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from core.config import AppSettings
@@ -706,3 +708,156 @@ class TestFittingAFreeTier:
         assert len(shown["response"]["result"]) < len(long_answer)
         assert "more characters cut" in shown["response"]["result"]
         assert result.calls[0].result == long_answer, "the record is not cut"
+
+
+class TestARejectedToolCall:
+    """Groq checks every tool call against its schema before returning it.
+
+    When the model gets one wrong it refuses the whole request with a 400
+    `tool_use_failed`, instead of passing the bad call through. The first time
+    this happened it ended the run, over `list_databases({})` — the model had
+    left out the `request` wrapper that every Superset tool nests its
+    arguments in. That is a slip the model can fix if it is told about it.
+    """
+
+    def _settings(self):
+        return AppSettings(
+            dashboard_agent_provider="openai",
+            dashboard_agent_api_key="gsk-for-tests",
+            dashboard_agent_model="openai/gpt-oss-120b",
+        )
+
+    @staticmethod
+    def _rejected():
+        import httpx
+
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "parameters for tool list_databases did not match "
+                    "schema: errors: [missing properties: 'request']",
+                    "type": "invalid_request_error",
+                    "code": "tool_use_failed",
+                    "failed_generation": '{"name": "list_databases", "arguments": {}}',
+                }
+            },
+        )
+
+    @staticmethod
+    def _call():
+        import httpx
+
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "function": {
+                                        "name": "list_databases",
+                                        "arguments": '{"request": {}}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    def _answers(self, monkeypatch, *responses):
+        import httpx
+
+        queue = iter(responses)
+        sent = []
+
+        def post(url, **kwargs):
+            # A copy, as the wire would take one: the backend extends the same
+            # payload when it corrects the model, and holding a reference here
+            # would make the first request look like the last.
+            sent.append(copy.deepcopy(kwargs["json"]))
+            return next(queue)
+
+        monkeypatch.setattr(httpx, "post", post)
+        return sent
+
+    def test_the_model_is_told_what_was_wrong_and_asked_again(self, monkeypatch):
+        from core import superset_agent
+
+        sent = self._answers(monkeypatch, self._rejected(), self._call())
+
+        content = superset_agent._openai_compatible(
+            self._settings(), "m", [], [], sleep=lambda _: None
+        )
+
+        assert content["parts"][0]["functionCall"]["args"] == {"request": {}}
+        correction = sent[1]["messages"][-1]["content"]
+        assert "missing properties: 'request'" in correction
+        assert '"arguments": {}' in correction, "it is shown what it sent"
+
+    def test_the_correction_is_not_carried_into_the_next_turn(self, monkeypatch):
+        """Once the call is valid, the valid call is what the conversation
+        records. The correction was for one generation, not for the record."""
+        import httpx
+
+        from core import superset_agent
+
+        done = httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        sent = self._answers(monkeypatch, self._rejected(), self._call(), done)
+
+        first = superset_agent._openai_compatible(
+            self._settings(), "m", [], [], sleep=lambda _: None
+        )
+        # The next turn, built the way the loop builds it.
+        contents = [
+            {"role": "model", "parts": first["parts"]},
+            {
+                "role": "user",
+                "parts": [
+                    {"functionResponse": {"name": "list_databases", "response": {"result": "[]"}}}
+                ],
+            },
+        ]
+        superset_agent._openai_compatible(
+            self._settings(), "m", contents, [], sleep=lambda _: None
+        )
+
+        next_turn = sent[2]["messages"]
+        assert not any("rejected" in str(m.get("content")) for m in next_turn)
+
+    def test_a_model_that_cannot_get_it_right_ends_the_run_with_the_reason(
+        self, monkeypatch
+    ):
+        from core import superset_agent
+
+        sent = self._answers(
+            monkeypatch, *[self._rejected() for _ in range(superset_agent._CORRECTIONS + 1)]
+        )
+
+        with pytest.raises(DashboardRequestError) as caught:
+            superset_agent._openai_compatible(
+                self._settings(), "m", [], [], sleep=lambda _: None
+            )
+
+        assert len(sent) == superset_agent._CORRECTIONS + 1
+        assert "tool_use_failed" in str(caught.value)
+
+    def test_any_other_400_is_not_mistaken_for_a_fixable_call(self, monkeypatch):
+        import httpx
+
+        from core import superset_agent
+
+        sent = self._answers(
+            monkeypatch, httpx.Response(400, json={"error": {"code": "invalid_api_key"}})
+        )
+
+        with pytest.raises(DashboardRequestError):
+            superset_agent._openai_compatible(
+                self._settings(), "m", [], [], sleep=lambda _: None
+            )
+
+        assert len(sent) == 1

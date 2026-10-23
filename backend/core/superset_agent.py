@@ -299,6 +299,35 @@ def _wait_for(response: Any, attempt: int) -> float:
     return float(2**attempt)
 
 
+def _post(url: str, headers: dict[str, str], payload: dict[str, Any], model: str, sleep: Any) -> Any:
+    """POST, riding out what is transient. Shared by both backends."""
+    import httpx
+
+    for attempt in range(1, _ATTEMPTS + 1):
+        response = httpx.post(url, headers=headers, json=payload, timeout=300)
+        if response.status_code not in _RETRYABLE or attempt == _ATTEMPTS:
+            return response
+        delay = _wait_for(response, attempt)
+        logger.info(
+            "superset_agent.retrying",
+            status=response.status_code,
+            attempt=attempt,
+            waiting=delay,
+            model=model,
+        )
+        sleep(delay)
+    return response
+
+
+def _refusal(response: Any, model: str) -> DashboardRequestError:
+    """The provider said no. Its body goes up whole, because it is the useful part."""
+    tried = f" after {_ATTEMPTS} attempts" if response.status_code in _RETRYABLE else ""
+    return DashboardRequestError(
+        f"The model API refused the request{tried}: HTTP "
+        f"{response.status_code} for model {model!r}. {response.text[:400]}"
+    )
+
+
 def _gemini(
     settings: AppSettings,
     model: str,
@@ -309,8 +338,6 @@ def _gemini(
 ) -> dict[str, Any]:
     """One turn: the conversation so far plus the tools, in; a candidate, out."""
     import time
-
-    import httpx
 
     sleep = sleep or time.sleep
     url = (
@@ -325,35 +352,13 @@ def _gemini(
         "generationConfig": {"maxOutputTokens": 8000},
     }
 
-    for attempt in range(1, _ATTEMPTS + 1):
-        response = httpx.post(
-            url,
-            headers={"x-goog-api-key": settings.gemini_api_key},
-            json=payload,
-            timeout=300,
-        )
-        if response.status_code not in _RETRYABLE or attempt == _ATTEMPTS:
-            break
-        delay = _wait_for(response, attempt)
-        logger.info(
-            "superset_agent.retrying",
-            status=response.status_code,
-            attempt=attempt,
-            waiting=delay,
-            model=model,
-        )
-        sleep(delay)
-
+    response = _post(url, {"x-goog-api-key": settings.gemini_api_key}, payload, model, sleep)
     if response.status_code >= 400:
         # Google's body says which model names it would have accepted, and a
         # 404 here is almost always a model name this key cannot use rather
         # than anything wrong with the request. Raised as our own error so it
         # reaches the user as a message instead of as a 500 with a trace.
-        tried = f" after {_ATTEMPTS} attempts" if response.status_code in _RETRYABLE else ""
-        raise DashboardRequestError(
-            f"The model API refused the request{tried}: HTTP "
-            f"{response.status_code} for model {model!r}. {response.text[:400]}"
-        )
+        raise _refusal(response, model)
     data = response.json()
 
     candidates = data.get("candidates") or []
@@ -476,8 +481,6 @@ def _openai_compatible(
     """One turn against any provider speaking the OpenAI chat API."""
     import time
 
-    import httpx
-
     sleep = sleep or time.sleep
     url = f"{settings.dashboard_agent_base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -488,36 +491,67 @@ def _openai_compatible(
         "tool_choice": "auto",
     }
 
-    for attempt in range(1, _ATTEMPTS + 1):
-        response = httpx.post(
-            url,
-            headers={"Authorization": f"Bearer {settings.dashboard_agent_api_key}"},
-            json=payload,
-            timeout=300,
-        )
-        if response.status_code not in _RETRYABLE or attempt == _ATTEMPTS:
+    headers = {"Authorization": f"Bearer {settings.dashboard_agent_api_key}"}
+
+    # Groq checks every tool call against its schema before handing it back,
+    # and when the model gets one wrong it refuses the whole request with a
+    # 400 rather than passing the bad call through. That is a mistake the
+    # model can correct, not a reason to end the run: it is told what it
+    # sent and why that was rejected, and asked again. The correction lives
+    # only in this request — once the model produces a valid call, that call
+    # is what the conversation records.
+    for correction in range(_CORRECTIONS + 1):
+        response = _post(url, headers, payload, model, sleep)
+        rejected = _rejected_tool_call(response)
+        if rejected is None or correction == _CORRECTIONS:
             break
-        delay = _wait_for(response, attempt)
+        reason, attempted = rejected
         logger.info(
-            "superset_agent.retrying",
-            status=response.status_code,
-            attempt=attempt,
-            waiting=delay,
-            model=model,
+            "superset_agent.correcting",
+            attempt=correction + 1,
+            reason=reason[:200],
+            attempted=attempted[:200],
         )
-        sleep(delay)
+        payload["messages"] = payload["messages"] + [
+            {
+                "role": "user",
+                "content": (
+                    "Your last tool call was rejected before it ran.\n"
+                    f"You sent: {attempted}\n"
+                    f"Reason: {reason}\n"
+                    "Call the tool again with arguments that match its schema "
+                    "exactly — every required property, nested where the "
+                    "schema nests it."
+                ),
+            }
+        ]
 
     if response.status_code >= 400:
-        tried = f" after {_ATTEMPTS} attempts" if response.status_code in _RETRYABLE else ""
-        raise DashboardRequestError(
-            f"The model API refused the request{tried}: HTTP "
-            f"{response.status_code} for model {model!r}. {response.text[:400]}"
-        )
+        raise _refusal(response, model)
 
     choices = response.json().get("choices") or []
     if not choices:
         raise DashboardRequestError("The model returned no choices.")
     return _as_parts(choices[0].get("message") or {})
+
+
+#: How many times a model may be told its tool call was malformed before the
+#: run gives up. Two is enough for a slip; a model that cannot produce a valid
+#: call three times running is not going to on the fourth.
+_CORRECTIONS = 2
+
+
+def _rejected_tool_call(response: Any) -> tuple[str, str] | None:
+    """The reason and the attempted call, if the provider refused a tool call."""
+    if response.status_code != 400:
+        return None
+    try:
+        error = response.json().get("error") or {}
+    except ValueError:
+        return None
+    if error.get("code") != "tool_use_failed":
+        return None
+    return str(error.get("message", "")), str(error.get("failed_generation", ""))
 
 
 _BACKENDS: dict[str, Any] = {"gemini": _gemini, "openai": _openai_compatible}
