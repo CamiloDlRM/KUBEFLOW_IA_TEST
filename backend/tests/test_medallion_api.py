@@ -10,6 +10,8 @@ one thing this view exists to show.
 """
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -1126,3 +1128,75 @@ class TestDashboardAgent:
             other_member_app.get(f"/projects/{own_project.id}/dashboard").status_code
             == 404
         )
+
+
+class TestEmbeddingTheDashboard:
+    """The endpoint the KPI maker calls to show its dashboard in place."""
+
+    def _turn(self, db_session, project_id, calls):
+        from models.schemas import KpiTurn
+
+        db_session.add(KpiTurn(project_id=project_id, prompt="p", summary="s", calls=calls))
+        db_session.commit()
+
+    def _superset(self, monkeypatch, uuid="emb-uuid"):
+        from core import superset_embed
+
+        monkeypatch.setattr(
+            superset_embed.SupersetApi, "embedded_uuid", lambda self, d, a: uuid
+        )
+
+    def test_nothing_to_show_before_a_dashboard_is_built(self, test_app, own_project):
+        response = test_app.get(f"/projects/{own_project.id}/dashboard/embed")
+        assert response.status_code == 404
+        assert "not built a dashboard" in response.json()["detail"]
+
+    def test_it_returns_what_the_sdk_needs_and_no_credential(
+        self, test_app, db_session, own_project, monkeypatch
+    ):
+        self._turn(
+            db_session,
+            own_project.id,
+            [{"name": "generate_dashboard", "arguments": {}, "result": '{"dashboard": {"id": 7}}'}],
+        )
+        self._superset(monkeypatch)
+
+        body = test_app.get(f"/projects/{own_project.id}/dashboard/embed").json()
+
+        assert body["dashboard_id"] == 7
+        assert body["uuid"] == "emb-uuid"
+        assert body["token"] and body["superset_domain"]
+        assert "password" not in json.dumps(body).lower()
+
+    def test_another_tenant_cannot_frame_this_dashboard(
+        self, other_member_app, db_session, own_project, monkeypatch
+    ):
+        self._turn(
+            db_session,
+            own_project.id,
+            [{"name": "generate_dashboard", "arguments": {}, "result": '{"dashboard": {"id": 7}}'}],
+        )
+        self._superset(monkeypatch)
+
+        response = other_member_app.get(f"/projects/{own_project.id}/dashboard/embed")
+        assert response.status_code == 404
+
+    def test_superset_refusing_is_a_bad_gateway_with_its_reason(
+        self, test_app, db_session, own_project, monkeypatch
+    ):
+        from core import superset_embed
+
+        self._turn(
+            db_session,
+            own_project.id,
+            [{"name": "generate_dashboard", "arguments": {}, "result": '{"dashboard": {"id": 7}}'}],
+        )
+
+        def refuse(self, dashboard_id, allowed):
+            raise superset_embed.EmbedError("Superset refused the platform's login")
+
+        monkeypatch.setattr(superset_embed.SupersetApi, "embedded_uuid", refuse)
+
+        response = test_app.get(f"/projects/{own_project.id}/dashboard/embed")
+        assert response.status_code == 502
+        assert "refused the platform's login" in response.json()["detail"]

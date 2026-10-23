@@ -537,3 +537,13 @@ export interface DashboardConversation {
   /** Where a person reaches Superset. Empty when it is not configured. */
   superset_url: string;
 }
+
+/** What the browser needs to show the KPI maker's dashboard in place. No
+ *  Superset credential: the token names one dashboard and expires in minutes. */
+export interface DashboardEmbed {
+  dashboard_id: number;
+  /** The dashboard's embedded configuration, which is not its id. */
+  uuid: string;
+  superset_domain: string;
+  token: string;
+}

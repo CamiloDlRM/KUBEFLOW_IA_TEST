@@ -39,6 +39,7 @@ from models.schemas import (
     CleaningStepResponse,
     CleaningStepsResponse,
     DashboardRequest,
+    DashboardEmbedResponse,
     DashboardResponse,
     DashboardToolCallResponse,
     DashboardTurnResponse,
@@ -1166,3 +1167,63 @@ def build_dashboard(
     session.refresh(turn)
 
     return _as_response(earlier + [turn], settings)
+
+
+
+@router.get(
+    "/{project_id}/dashboard/embed",
+    response_model=DashboardEmbedResponse,
+    summary="What the browser needs to show this project's dashboard in place",
+)
+def embed_dashboard(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> DashboardEmbedResponse:
+    """The dashboard the agent last built for this project, ready to frame.
+
+    Called again by the embedding SDK whenever its token is about to expire,
+    so it is cheap after the first time: the embedded UUID is created once and
+    read back after that.
+
+    ``def`` and not ``async def``: it calls Superset over blocking HTTP, and on
+    the event loop that would stall every other request while it waited.
+    """
+    get_visible_project_or_404(session, project_id, current_user)
+
+    settings = get_settings()
+    if not settings.superset_mcp_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Superset is not configured for this installation.",
+        )
+
+    from core.superset_embed import EmbedError, SupersetApi, dashboard_id_from, guest_token
+
+    turns = [turn.calls or [] for turn in _conversation(session, project_id)]
+    dashboard_id = dashboard_id_from(turns)
+    if dashboard_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The KPI maker has not built a dashboard for this project yet.",
+        )
+
+    allowed = [
+        domain.strip()
+        for domain in settings.superset_embed_allowed_domains.split(",")
+        if domain.strip()
+    ]
+    api = SupersetApi(settings)
+    try:
+        uuid = api.embedded_uuid(dashboard_id, allowed)
+    except EmbedError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    finally:
+        api.close()
+
+    return DashboardEmbedResponse(
+        dashboard_id=dashboard_id,
+        uuid=uuid,
+        superset_domain=settings.superset_public_url.rstrip("/"),
+        token=guest_token(settings.superset_guest_token_secret, uuid),
+    )

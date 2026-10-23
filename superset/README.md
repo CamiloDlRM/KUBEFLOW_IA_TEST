@@ -175,6 +175,35 @@ It runs synchronously and can take minutes. That is the wrong shape for an HTTP
 request and it should move onto the Celery queue the way the pipeline analysis
 did; that is a change to how it is called, not to what it does.
 
+## Seeing the dashboard inside the platform
+
+The KPI maker shows the dashboard it built above the conversation, through
+Superset's own embedding SDK rather than a bare iframe. A bare iframe would
+need the user signed in to Superset in the same browser, and would hand them
+all of Superset rather than one dashboard.
+
+```
+KPI maker ──GET /projects/{id}/dashboard/embed──▶ backend
+                                                  ├ the dashboard id, read from the agent's tool calls
+                                                  ├ embedding switched on in Superset → its UUID
+                                                  └ a guest token signed for that one dashboard
+          ◀── { uuid, token, superset_domain } ──
+          └ embedDashboard() → iframe
+```
+
+The guest token is signed by the backend with `SUPERSET_GUEST_TOKEN_SECRET`,
+which Superset verifies against the same variable. It names one dashboard and
+lives five minutes; the SDK asks for a fresh one before it runs out. No
+Superset credential ever reaches the browser. The backend does hold the admin
+login, inside the compose network, and uses it for one thing: switching
+embedding on for a dashboard, once.
+
+**In production `SUPERSET_PUBLIC_URL` has to be a real address.** The iframe
+loads from the user's browser, so `http://localhost:8088` only works on the
+machine running compose. And the app is served over HTTPS, which a browser
+will not let frame a page served over HTTP — so Superset needs its own route
+through the reverse proxy, behind TLS, before this works for anyone else.
+
 ## What is not here
 
 - The DuckDB view per project, and refreshing it when `rebuild_gold` writes a

@@ -155,6 +155,32 @@ class AppSettings(BaseSettings):
             "fact: `curl .../v1beta/models` lists the ones it has."
         ),
     )
+    superset_internal_url: str = Field(
+        default="http://superset:8088",
+        description=(
+            "Where the backend reaches Superset's REST API, inside the compose "
+            "network. Used only to switch embedding on for a dashboard."
+        ),
+    )
+    superset_admin_username: str = Field(default="admin")
+    superset_admin_password: str = Field(default="admin")
+    superset_guest_token_secret: str = Field(
+        default="change-me-guest-token-secret",
+        description=(
+            "Signs the guest tokens that let the browser show one embedded "
+            "dashboard. Must equal Superset's GUEST_TOKEN_JWT_SECRET; compose "
+            "gives both containers the same variable so they cannot drift."
+        ),
+    )
+    superset_embed_allowed_domains: str = Field(
+        default="",
+        description=(
+            "Origins allowed to frame an embedded dashboard, comma separated. "
+            "Empty allows any: the guest token is the grant, and this is "
+            "defence against clickjacking on top of it — worth setting to the "
+            "app's own origin in production."
+        ),
+    )
     superset_public_url: str = Field(
         default="http://localhost:8088",
         description=(
