@@ -100,5 +100,12 @@ GUEST_ROLE_NAME = "Gamma"
 #: on here makes Superset issue https-only cookies that never come back.
 TALISMAN_ENABLED = False
 
+#: Superset is published behind a proxy that terminates TLS (Cloudflare, in
+#: production), so it receives plain HTTP and would otherwise build its own
+#: redirects as http:// — which a dashboard framed in an HTTPS page then
+#: follows straight into a mixed-content block. This makes it believe the
+#: X-Forwarded-Proto/Host the proxy sends. Harmless where nothing sends them.
+ENABLE_PROXY_FIX = True
+
 SUPERSET_WEBSERVER_TIMEOUT = 120
 ROW_LIMIT = 50_000

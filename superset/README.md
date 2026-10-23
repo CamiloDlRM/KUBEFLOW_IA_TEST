@@ -204,6 +204,20 @@ machine running compose. And the app is served over HTTPS, which a browser
 will not let frame a page served over HTTP — so Superset needs its own route
 through the reverse proxy, behind TLS, before this works for anyone else.
 
+Left at the default, the KPI maker says so instead of showing a blank frame.
+On the production server, behind the Cloudflare tunnel:
+
+1. Add a public hostname to the tunnel: `superset.kubeflowia.site` →
+   `http://localhost:8088` (or `http://superset:8088` if `cloudflared` runs
+   inside the compose network).
+2. In the server's `.env`: `SUPERSET_PUBLIC_URL=https://superset.kubeflowia.site`.
+3. `docker compose up -d backend superset` — the backend to read the new
+   address, Superset for `ENABLE_PROXY_FIX`, which makes it trust the
+   `X-Forwarded-Proto` Cloudflare sends instead of building `http://` links.
+
+That publishes Superset's login page to the internet, so the admin password
+in `SUPERSET_ADMIN_PASSWORD` has to be a real one first.
+
 ## What is not here
 
 - The DuckDB view per project, and refreshing it when `rebuild_gold` writes a

@@ -4,6 +4,41 @@ import { embedDashboard } from '@superset-ui/embedded-sdk';
 import { getDashboardEmbed } from '../api/client';
 import Spinner from './Spinner';
 
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * Why this browser will refuse to frame Superset at `domain`, if it will.
+ *
+ * Both refusals below look identical on screen — a grey frame with a broken
+ * page icon — and give their reason only in the console. Naming them here is
+ * the difference between a configuration fix and an afternoon of guessing.
+ */
+export function unframeableReason(
+  domain: string,
+  page: Pick<Location, 'protocol' | 'hostname'> = window.location,
+): string | null {
+  let superset: URL;
+  try {
+    superset = new URL(domain);
+  } catch {
+    return `Superset's address is not a URL: "${domain}". Set SUPERSET_PUBLIC_URL.`;
+  }
+  if (page.protocol === 'https:' && superset.protocol === 'http:') {
+    return (
+      `Superset is at ${superset.origin}, over plain HTTP, and a browser will not ` +
+      'show an HTTP page inside an HTTPS one. Publish Superset over HTTPS and set ' +
+      'SUPERSET_PUBLIC_URL to that address.'
+    );
+  }
+  if (LOCAL_HOSTS.includes(superset.hostname) && !LOCAL_HOSTS.includes(page.hostname)) {
+    return (
+      `Superset is at ${superset.origin}, which only exists on the machine running ` +
+      'it. Set SUPERSET_PUBLIC_URL to an address this browser can reach.'
+    );
+  }
+  return null;
+}
+
 /**
  * The dashboard the KPI maker built, shown where it was asked for.
  *
@@ -34,7 +69,11 @@ export default function EmbeddedDashboard({
 
   useEffect(() => {
     if (!data || !mount.current) return;
-    setFailure(null);
+    // Refused up front rather than handed to the SDK, which would build an
+    // iframe the browser then blanks without saying why.
+    const refusal = unframeableReason(data.superset_domain);
+    setFailure(refusal);
+    if (refusal) return;
 
     // The first token is the one that came with the coordinates, so the page
     // does not ask for a second before it has shown anything. Every token
@@ -102,7 +141,7 @@ export default function EmbeddedDashboard({
         ref={mount}
         data-testid="dashboard-mount"
         className={`h-[70vh] min-h-[420px] w-full [&>iframe]:h-full [&>iframe]:w-full [&>iframe]:border-0 ${
-          data ? '' : 'hidden'
+          data && !failure ? '' : 'hidden'
         }`}
       />
     </section>

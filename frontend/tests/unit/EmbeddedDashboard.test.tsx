@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import EmbeddedDashboard from '../../src/components/EmbeddedDashboard';
+import EmbeddedDashboard, { unframeableReason } from '../../src/components/EmbeddedDashboard';
 import type { DashboardEmbed } from '../../src/types';
 
 const getDashboardEmbed = vi.fn();
@@ -112,6 +112,14 @@ describe('EmbeddedDashboard', () => {
     await waitFor(() => expect(unmount).toHaveBeenCalled());
   });
 
+  it('names the refusal instead of framing a page the browser will blank', async () => {
+    getDashboardEmbed.mockResolvedValue({ ...EMBED, superset_domain: 'superset' });
+    renderEmbed();
+
+    expect(await screen.findByText(/address is not a URL/)).toBeInTheDocument();
+    expect(embedDashboard).not.toHaveBeenCalled();
+  });
+
   it('embeds afresh when a later exchange may have changed it', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { rerender } = render(
@@ -128,5 +136,29 @@ describe('EmbeddedDashboard', () => {
     );
 
     await waitFor(() => expect(embedDashboard).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('unframeableReason', () => {
+  const app = { protocol: 'https:', hostname: 'app.kubeflowia.site' };
+
+  it('refuses plain HTTP inside an HTTPS page', () => {
+    // The production failure: the default address, framed by the real site.
+    expect(unframeableReason('http://localhost:8088', app)).toMatch(/over plain HTTP/);
+  });
+
+  it('refuses localhost when the page is not on that machine', () => {
+    const remote = { protocol: 'http:', hostname: 'app.kubeflowia.site' };
+    expect(unframeableReason('http://localhost:8088', remote)).toMatch(/only exists on the machine/);
+  });
+
+  it('lets a published HTTPS Superset through', () => {
+    expect(unframeableReason('https://superset.kubeflowia.site', app)).toBeNull();
+  });
+
+  it('lets localhost through when the page is local too', () => {
+    // Compose on one machine: both ends really are on localhost.
+    const local = { protocol: 'http:', hostname: 'localhost' };
+    expect(unframeableReason('http://localhost:8088', local)).toBeNull();
   });
 });
