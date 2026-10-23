@@ -279,3 +279,62 @@ class TestTheServerNotBeingThere:
         client = server(slow)
         with pytest.raises(MCPError, match="Could not reach"):
             client.tools()
+
+
+class TestStructuredAnswers:
+    """A tool with an output schema answers in `structuredContent`.
+
+    The text block mirroring it is a SHOULD in the spec, not a MUST, and
+    Superset's listing tools leave it out. Reading only `content` turned every
+    listing into an empty string, and the model spent a whole run asking for
+    the gold database ten different ways and hearing nothing each time.
+    """
+
+    def test_a_structured_answer_reaches_the_caller(self):
+        def handler(request):
+            return ok(
+                request,
+                {
+                    "content": [],
+                    "structuredContent": {
+                        "databases": [{"id": 3, "database_name": "Gold (DuckDB)"}],
+                        "count": 1,
+                    },
+                },
+            )
+
+        answer = server(handler).call("list_databases", {"request": {}})
+
+        assert "Gold (DuckDB)" in answer
+        assert json.loads(answer)["count"] == 1
+
+    def test_text_wins_when_the_server_sends_both(self):
+        """They are meant to say the same thing; reading one avoids sending
+        the model the same listing twice."""
+
+        def handler(request):
+            return ok(
+                request,
+                {
+                    "content": [{"type": "text", "text": "two databases"}],
+                    "structuredContent": {"count": 2},
+                },
+            )
+
+        assert server(handler).call("list_databases", {}) == "two databases"
+
+    def test_nothing_at_all_is_said_rather_than_passed_on_as_nothing(self):
+        """An empty answer reads to a model as "ask again"."""
+        answer = server(lambda request: ok(request, {"content": []})).call("x", {})
+        assert answer == "(The tool returned no content.)"
+
+    def test_a_structured_error_is_still_reported_as_an_error(self):
+        def handler(request):
+            return ok(
+                request,
+                {"content": [], "structuredContent": {"error": "no such table"}, "isError": True},
+            )
+
+        answer = server(handler).call("create_virtual_dataset", {})
+        assert answer.startswith("The tool reported an error")
+        assert "no such table" in answer
