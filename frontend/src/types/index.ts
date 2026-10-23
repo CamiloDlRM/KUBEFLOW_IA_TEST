@@ -52,6 +52,78 @@ export interface Pipeline {
   finished_at: string | null;
   phases: PipelinePhase[];
   metrics: PipelineMetrics;
+  /** What was mounted as DATASET_PATH. Empty for runs older than the record. */
+  mounted_input?: MountedInput | Record<string, never>;
+  /** The code this run executed. Only on the detail, never on the list. */
+  cells?: NotebookCell[];
+}
+
+/** One code cell of the training notebook, with the phase its tag puts it in. */
+export interface NotebookCell {
+  index: number;
+  /** `config`, `data`, `preprocessing`, `training`, `evaluation`, `export`,
+   *  or empty for a cell with no `mlops:*` tag. */
+  phase: string;
+  tags: string[];
+  source: string;
+  output: string;
+  error: string;
+  /** Papermill's: `pending` until a run reaches the cell. */
+  status: 'pending' | 'running' | 'completed' | 'failed';
+}
+
+/** What a run mounted, or what a choice resolves to right now. */
+export interface MountedInput {
+  layer: Layer | 'dataset';
+  label: string;
+  bucket: string;
+  keys: string[];
+  version?: number | null;
+  source_id?: number | null;
+  dataset_id?: number;
+}
+
+/** What a repository asks to train on. No layer means the active dataset. */
+export interface PipelineInputChoice {
+  layer?: Layer | '';
+  source_id?: number;
+  version?: number;
+}
+
+export interface PipelineInputState {
+  choice: PipelineInputChoice;
+  resolved: MountedInput | null;
+  /** Set when the stored choice no longer resolves to anything. */
+  error: string;
+}
+
+export interface InputStream {
+  source_id: number;
+  source_name: string;
+  objects: number;
+  size_bytes: number;
+}
+
+export interface InputGoldVersion {
+  version: number;
+  key: string;
+  size_bytes: number;
+  built_at: string | null;
+  latest: boolean;
+}
+
+/** Everything in a project a pipeline can be pointed at. */
+export interface PipelineInputOptions {
+  bronze: InputStream[];
+  silver: InputStream[];
+  gold: InputGoldVersion[];
+}
+
+/** The notebook as a branch has it now — what the next run will execute. */
+export interface RepoNotebook {
+  branch: string;
+  notebook_path: string;
+  cells: NotebookCell[];
 }
 
 export interface BranchInfo {

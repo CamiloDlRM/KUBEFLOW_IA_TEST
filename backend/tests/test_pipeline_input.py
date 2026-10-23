@@ -393,3 +393,55 @@ class TestApi:
         # The list carries what was mounted but not every run's notebook.
         assert listed["mounted_input"]["label"] == "gold v2"
         assert "cells" not in listed
+
+
+class TestCanvasApi:
+    NOTEBOOK = {"cells": [
+        {"cell_type": "code", "metadata": {"tags": ["mlops:data"]}, "source": "df = load()", "outputs": []},
+    ]}
+
+    def test_the_notebook_at_a_branch_comes_back_by_phase(self, test_app, db_session, project):
+        repo = seed_repo(db_session, project_id=project.id, branch="main")
+
+        with patch("core.github.download_notebook", return_value=self.NOTEBOOK) as download:
+            body = test_app.get(f"/repos/{repo.id}/notebook", params={"branch": "dev"}).json()
+
+        assert download.call_args.args[2:] == ("dev", "notebooks/train.ipynb")
+        assert body["branch"] == "dev"
+        assert [(c["phase"], c["source"]) for c in body["cells"]] == [("data", "df = load()")]
+
+    def test_a_missing_notebook_is_a_404_that_names_the_path(self, test_app, db_session, project):
+        import httpx
+
+        repo = seed_repo(db_session, project_id=project.id)
+        missing = httpx.HTTPStatusError(
+            "404", request=httpx.Request("GET", "https://api.github.com"),
+            response=httpx.Response(404),
+        )
+
+        with patch("core.github.download_notebook", side_effect=missing):
+            response = test_app.get(f"/repos/{repo.id}/notebook")
+
+        assert response.status_code == 404
+        assert "notebooks/train.ipynb" in response.json()["detail"]
+
+    def test_runs_can_be_narrowed_to_one_repository(self, test_app, db_session, project):
+        mine = seed_repo(db_session, project_id=project.id)
+        other = seed_repo(db_session, github_url="https://github.com/testuser/other")
+        seed_pipeline(db_session, mine.id)
+        seed_pipeline(db_session, other.id)
+
+        body = test_app.get("/pipelines", params={"repo_id": mine.id}).json()
+
+        assert body["total"] == 1
+        assert [item["repo_id"] for item in body["items"]] == [mine.id]
+
+    def test_naming_someone_elses_repository_yields_nothing(
+        self, other_member_app, db_session, project
+    ):
+        repo = seed_repo(db_session, project_id=project.id)
+        seed_pipeline(db_session, repo.id)
+
+        body = other_member_app.get("/pipelines", params={"repo_id": repo.id}).json()
+
+        assert body["total"] == 0 and body["items"] == []

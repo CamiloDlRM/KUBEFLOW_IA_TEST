@@ -594,6 +594,18 @@ class PipelineLogsResponse(BaseModel):
     logs: list[dict[str, Any]]
 
 
+class NotebookCellsResponse(BaseModel):
+    """A notebook's code as a branch has it now, cell by cell with its phase.
+
+    What the pipeline view shows before a run exists to show it, and what the
+    next run will execute.
+    """
+
+    branch: str
+    notebook_path: str
+    cells: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class PipelineInputRequest(BaseModel):
     """What to train on. An empty layer goes back to the active dataset."""
 

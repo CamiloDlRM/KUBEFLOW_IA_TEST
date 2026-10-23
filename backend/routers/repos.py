@@ -18,6 +18,7 @@ from db import get_session
 from models.schemas import (
     BranchInfo,
     MessageResponse,
+    NotebookCellsResponse,
     Pipeline,
     PipelineInputRequest,
     PipelineInputResponse,
@@ -232,6 +233,57 @@ async def list_repo_notebooks(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to list notebooks from GitHub: {exc}",
         ) from exc
+
+
+@router.get(
+    "/{repo_id}/notebook",
+    response_model=NotebookCellsResponse,
+    summary="The notebook's code by phase, as a branch has it now",
+)
+async def get_repo_notebook(
+    repo_id: int,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    branch: str = "",
+) -> NotebookCellsResponse:
+    """Read the repository's notebook from GitHub and split it by phase.
+
+    A run records the code it executed; this is the code the *next* run will
+    execute, which is what there is to show before the first one.
+    """
+    import httpx
+
+    from core.github import download_notebook
+    from core.notebook_parser import notebook_cells
+
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    ref = branch.strip() or repo.branch
+    path = repo.notebook_path.strip("/")
+    if not path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This repository has no notebook selected.",
+        )
+    try:
+        notebook = await download_notebook(repo.github_url, repo_token(repo, settings), ref, path)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No notebook at '{path}' on branch '{ref}'.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GitHub refused the notebook: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.error("repo.notebook_failed", repo_id=repo_id, branch=ref, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read the notebook from GitHub: {exc}",
+        ) from exc
+    return NotebookCellsResponse(branch=ref, notebook_path=path, cells=notebook_cells(notebook))
 
 
 @router.post(

@@ -11,6 +11,7 @@ import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import DataFactory from './pages/DataFactory';
 import PipelineDetail from './pages/PipelineDetail';
+import PipelineCanvas from './pages/PipelineCanvas';
 import Models from './pages/Models';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/projects/:projectId/data" element={<DataFactory />} />
+        <Route path="/projects/:projectId/pipeline" element={<PipelineCanvas />} />
         {/* The builds gold has produced, with the one the pipeline uses. Its
             own route rather than a seventh stage: it is a record of outputs,
             not a step in making them. */}

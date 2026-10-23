@@ -39,6 +39,10 @@ import type {
   CleaningSteps,
   DashboardConversation,
   DashboardEmbed,
+  PipelineInputChoice,
+  PipelineInputOptions,
+  PipelineInputState,
+  RepoNotebook,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -173,6 +177,38 @@ export async function triggerPipeline(
   return data;
 }
 
+/** The notebook as `branch` has it now, by phase. Defaults to the repo's branch. */
+export async function getRepoNotebook(repoId: number, branch = ''): Promise<RepoNotebook> {
+  const { data } = await apiClient.get<RepoNotebook>(`/repos/${repoId}/notebook`, {
+    params: branch ? { branch } : {},
+  });
+  return data;
+}
+
+export async function getPipelineInput(repoId: number): Promise<PipelineInputState> {
+  const { data } = await apiClient.get<PipelineInputState>(`/repos/${repoId}/pipeline-input`);
+  return data;
+}
+
+/** Point the pipeline at a layer. An empty choice goes back to the active dataset. */
+export async function setPipelineInput(
+  repoId: number,
+  choice: PipelineInputChoice,
+): Promise<PipelineInputState> {
+  const { data } = await apiClient.put<PipelineInputState>(
+    `/repos/${repoId}/pipeline-input`,
+    choice,
+  );
+  return data;
+}
+
+export async function getPipelineInputOptions(projectId: number): Promise<PipelineInputOptions> {
+  const { data } = await apiClient.get<PipelineInputOptions>(
+    `/projects/${projectId}/medallion/inputs`,
+  );
+  return data;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Projects                                                           */
 /* ------------------------------------------------------------------ */
@@ -289,9 +325,10 @@ export async function getDatasetPreview(datasetId: number): Promise<DatasetPrevi
 export async function getPipelines(
   page = 1,
   size = 20,
+  repoId?: number,
 ): Promise<PaginatedPipelines> {
   const { data } = await apiClient.get<PaginatedPipelines>('/pipelines', {
-    params: { page, size },
+    params: repoId === undefined ? { page, size } : { page, size, repo_id: repoId },
   });
   return data;
 }
