@@ -137,6 +137,14 @@ class AppSettings(BaseSettings):
             "and a 413."
         ),
     )
+    dashboard_agent_max_turns: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many model calls the KPI maker may make for one prompt. "
+            "0 takes the agent's own limit."
+        ),
+    )
     dashboard_agent_model: str = Field(
         default="gemini-pro-latest",
         description=(
