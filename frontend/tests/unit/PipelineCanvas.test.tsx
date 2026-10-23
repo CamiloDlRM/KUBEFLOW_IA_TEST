@@ -21,6 +21,7 @@ const api = {
   getPipelineInputOptions: vi.fn(),
   setPipelineInput: vi.fn(),
   triggerPipeline: vi.fn(),
+  previewLayer: vi.fn(),
 };
 
 vi.mock('../../src/api/client', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../src/api/client', () => ({
   getPipelineInputOptions: (...args: unknown[]) => api.getPipelineInputOptions(...args),
   setPipelineInput: (...args: unknown[]) => api.setPipelineInput(...args),
   triggerPipeline: (...args: unknown[]) => api.triggerPipeline(...args),
+  previewLayer: (...args: unknown[]) => api.previewLayer(...args),
 }));
 
 const PROJECT: Project = {
@@ -117,6 +119,14 @@ describe('PipelineCanvas', () => {
       error: '',
     });
     api.triggerPipeline.mockResolvedValue({ status: 'queued', pipeline_id: 'run-new' });
+    api.previewLayer.mockResolvedValue({
+      layer: 'silver',
+      key: 'project-4/source-2/run-b.parquet',
+      columns: [{ name: 'patient_id', type: 'string' }, { name: 'age', type: 'integer' }],
+      rows: [['p1', 44], ['p2', null]],
+      object_rows: 2,
+      truncated: false,
+    });
   });
 
   it('shows the branch code as cards before anything has run', async () => {
@@ -134,7 +144,9 @@ describe('PipelineCanvas', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Preprocessing' }));
 
     const detail = screen.getByRole('region', { name: 'Preprocessing detail' });
-    expect(within(detail).getByText('preprocessing_code()')).toBeInTheDocument();
+    // Highlighted, so the text is split across tokens; read it whole.
+    expect(within(detail).getByRole('article', { name: 'cell 3' })).toHaveTextContent('preprocessing_code()');
+    expect(within(detail).getByRole('navigation', { name: 'Breadcrumb' })).toHaveTextContent('train.ipynb›Preprocessing');
   });
 
   it('chooses the input when a layer is dropped on it', async () => {
@@ -164,21 +176,57 @@ describe('PipelineCanvas', () => {
     expect(api.setPipelineInput).not.toHaveBeenCalled();
   });
 
-  it('chooses on click too, for anyone not dragging', async () => {
+  it('previews a layer on click without choosing it', async () => {
+    // Looking at the data must not change what the model trains on.
     renderCanvas();
 
     await userEvent.click(await screen.findByRole('button', { name: /silver · Hospital HIS/ }));
 
+    const peek = await screen.findByRole('dialog', { name: 'Preview of silver · Hospital HIS' });
+    expect(await within(peek).findByText('patient_id')).toBeInTheDocument();
+    expect(within(peek).getByText('null')).toBeInTheDocument();
+    expect(api.previewLayer).toHaveBeenCalledWith(4, 'silver', { sourceId: 2, version: undefined, limit: 25 });
+    expect(api.setPipelineInput).not.toHaveBeenCalled();
+  });
+
+  it('previews the gold build that was clicked, not the newest', async () => {
+    renderCanvas();
+
+    await userEvent.click(await screen.findByRole('button', { name: /gold v2/ }));
+
+    await waitFor(() =>
+      expect(api.previewLayer).toHaveBeenCalledWith(4, 'gold', { sourceId: undefined, version: 2, limit: 25 }),
+    );
+  });
+
+  it('chooses from the preview, for anyone not dragging', async () => {
+    renderCanvas();
+    await userEvent.click(await screen.findByRole('button', { name: /silver · Hospital HIS/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Use as input' }));
+
     await waitFor(() =>
       expect(api.setPipelineInput).toHaveBeenCalledWith(9, { layer: 'silver', source_id: 2 }),
     );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('closes the preview on Escape', async () => {
+    renderCanvas();
+    await userEvent.click(await screen.findByRole('button', { name: /silver · Hospital HIS/ }));
+    await screen.findByRole('dialog');
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('says why a choice was refused', async () => {
     api.setPipelineInput.mockRejectedValue(new Error('gold has not been built for this project yet'));
     renderCanvas();
-
     await userEvent.click(await screen.findByRole('button', { name: /gold · newest/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Use as input' }));
 
     expect(await screen.findByText(/gold has not been built/)).toBeInTheDocument();
   });

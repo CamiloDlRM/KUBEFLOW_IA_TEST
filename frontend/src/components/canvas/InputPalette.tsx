@@ -12,17 +12,26 @@ import { INPUT_DRAG_TYPE, encodeChoice, sameChoice } from './phases';
  * cleaning helps — not the default. "Newest gold" is its own entry, separate
  * from the versions, because following new builds and pinning one are
  * different decisions and both have to be visible as choices.
+ *
+ * A click opens a preview of the data and does not choose it: what a model
+ * trains on should not change because someone wanted a look. Dragging onto
+ * Input chooses, and so does the preview's own "Use as input" button.
  */
 export default function InputPalette({
   options,
   current,
+  previewing,
   disabled,
   onChoose,
+  onPreview,
 }: {
   options: PipelineInputOptions | undefined;
   current: PipelineInputChoice;
+  /** The entry whose preview is open, if one is. */
+  previewing: PipelineInputChoice | null;
   disabled: boolean;
   onChoose: (choice: PipelineInputChoice) => void;
+  onPreview: (choice: PipelineInputChoice, label: string) => void;
 }) {
   if (!options) {
     return <p className="text-xs text-slate-500">Loading layers…</p>;
@@ -38,8 +47,9 @@ export default function InputPalette({
       detail={detail}
       tone={tone}
       active={sameChoice(choice, current)}
+      open={previewing !== null && sameChoice(choice, previewing)}
       disabled={disabled}
-      onChoose={onChoose}
+      onPreview={onPreview}
     />
   );
 
@@ -120,16 +130,19 @@ function Chip({
   detail,
   tone,
   active,
+  open,
   disabled,
-  onChoose,
+  onPreview,
 }: {
   choice: PipelineInputChoice;
   label: string;
   detail: string;
   tone: string;
+  /** In use: the input the next run mounts. */
   active: boolean;
+  open: boolean;
   disabled: boolean;
-  onChoose: (choice: PipelineInputChoice) => void;
+  onPreview: (choice: PipelineInputChoice, label: string) => void;
 }) {
   return (
     <li>
@@ -141,20 +154,25 @@ function Chip({
           event.dataTransfer.setData('text/plain', label);
           event.dataTransfer.effectAllowed = 'copy';
         }}
-        // Clicking does what dropping does, for anyone not using a mouse.
-        onClick={() => onChoose(choice)}
+        onClick={() => onPreview(choice, label)}
         disabled={disabled}
-        title="Drag onto Input, or click to use"
-        aria-pressed={active}
+        title="Click to preview · drag onto Input to use"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         className={`flex w-full cursor-grab items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition hover:brightness-125 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 ${tone} ${
-          active ? 'ring-2 ring-brand-400' : ''
+          active ? 'ring-2 ring-brand-400' : open ? 'ring-1 ring-slate-300/60' : ''
         }`}
       >
         <GripVertical size={14} aria-hidden="true" className="shrink-0 opacity-50" />
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium">{label}</span>
           <span className="block truncate text-[10px] opacity-70">{detail}</span>
         </span>
+        {active && (
+          <span className="shrink-0 rounded bg-brand-500/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-brand-200">
+            in use
+          </span>
+        )}
       </button>
     </li>
   );

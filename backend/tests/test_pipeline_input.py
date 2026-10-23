@@ -445,3 +445,33 @@ class TestCanvasApi:
         body = other_member_app.get("/pipelines", params={"repo_id": repo.id}).json()
 
         assert body["total"] == 0 and body["items"] == []
+
+
+class TestPreviewAVersion:
+    """The palette previews a build before a pipeline is pointed at it."""
+
+    def test_an_older_gold_build_can_be_previewed(
+        self, test_app, db_session, project, storage_patched, tmp_path
+    ):
+        seed_gold(db_session, project.id, version=2)
+        put_parquet(storage_patched, tmp_path, "gold",
+                    medallion.gold_key(project.id, "gold", 2), {"x": [1, 2, 3]})
+        put_parquet(storage_patched, tmp_path, "gold",
+                    medallion.gold_key(project.id, "gold", 1), {"x": [7]})
+
+        body = test_app.get(
+            f"/projects/{project.id}/medallion/gold/preview", params={"version": 1}
+        ).json()
+
+        assert body["key"].endswith("v0001.parquet")
+        assert body["rows"] == [[7]]
+
+    def test_a_build_that_is_gone_is_a_404(self, test_app, db_session, project, storage_patched):
+        seed_gold(db_session, project.id, version=2)
+
+        response = test_app.get(
+            f"/projects/{project.id}/medallion/gold/preview", params={"version": 1}
+        )
+
+        assert response.status_code == 404
+        assert "v1" in response.json()["detail"]
