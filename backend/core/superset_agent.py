@@ -180,11 +180,18 @@ def to_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _declarations(tools: list[MCPTool]) -> list[dict[str, Any]]:
+    """The tools as the MCP server describes them: plain JSON Schema.
+
+    Narrowing happens in the backend that needs it. Gemini takes an OpenAPI
+    subset and must have the schema trimmed; everything speaking the OpenAI
+    shape takes JSON Schema as it stands. Trimming here would quietly impose
+    Gemini's limits on providers that do not have them.
+    """
     return [
         {
             "name": tool.name,
             "description": tool.description[:1024],
-            "parameters": to_gemini_schema(tool.schema),
+            "parameters": tool.schema or {"type": "object", "properties": {}},
         }
         for tool in tools
     ]
@@ -195,35 +202,79 @@ def _declarations(tools: list[MCPTool]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+#: Statuses that mean "ask again", not "you asked wrong". 503 is the one that
+#: matters in practice: a free tier meets "this model is currently
+#: experiencing high demand" often, and a run makes up to MAX_TURNS model
+#: calls — so without retries the chance of finishing a dashboard is the
+#: chance of winning that coin toss a dozen times in a row.
+_RETRYABLE = frozenset({429, 500, 502, 503, 504})
+_ATTEMPTS = 4
+
+
+def _wait_for(response: Any, attempt: int) -> float:
+    """How long to hold off. The server's own answer wins if it gave one."""
+    header = response.headers.get("retry-after", "")
+    if header.isdigit():
+        return min(float(header), 30.0)
+    # 2, 4, 8 seconds. Long enough for a demand spike to pass, short enough
+    # that four attempts do not outlast the caller's patience.
+    return float(2**attempt)
+
+
 def _gemini(
-    settings: AppSettings, model: str, contents: list[dict[str, Any]], tools: list[dict[str, Any]]
+    settings: AppSettings,
+    model: str,
+    contents: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    sleep: Any = None,
 ) -> dict[str, Any]:
     """One turn: the conversation so far plus the tools, in; a candidate, out."""
+    import time
+
     import httpx
 
+    sleep = sleep or time.sleep
     url = (
         "https://generativelanguage.googleapis.com/v1beta/"
         f"models/{model}:generateContent"
     )
-    response = httpx.post(
-        url,
-        headers={"x-goog-api-key": settings.gemini_api_key},
-        json={
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-            "contents": contents,
-            "tools": [{"functionDeclarations": tools}],
-            "generationConfig": {"maxOutputTokens": 8000},
-        },
-        timeout=300,
-    )
+    narrowed = [dict(tool, parameters=to_gemini_schema(tool["parameters"])) for tool in tools]
+    payload = {
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": contents,
+        "tools": [{"functionDeclarations": narrowed}],
+        "generationConfig": {"maxOutputTokens": 8000},
+    }
+
+    for attempt in range(1, _ATTEMPTS + 1):
+        response = httpx.post(
+            url,
+            headers={"x-goog-api-key": settings.gemini_api_key},
+            json=payload,
+            timeout=300,
+        )
+        if response.status_code not in _RETRYABLE or attempt == _ATTEMPTS:
+            break
+        delay = _wait_for(response, attempt)
+        logger.info(
+            "superset_agent.retrying",
+            status=response.status_code,
+            attempt=attempt,
+            waiting=delay,
+            model=model,
+        )
+        sleep(delay)
+
     if response.status_code >= 400:
         # Google's body says which model names it would have accepted, and a
         # 404 here is almost always a model name this key cannot use rather
         # than anything wrong with the request. Raised as our own error so it
         # reaches the user as a message instead of as a 500 with a trace.
+        tried = f" after {_ATTEMPTS} attempts" if response.status_code in _RETRYABLE else ""
         raise DashboardRequestError(
-            f"The model API refused the request: HTTP {response.status_code} "
-            f"for model {model!r}. {response.text[:400]}"
+            f"The model API refused the request{tried}: HTTP "
+            f"{response.status_code} for model {model!r}. {response.text[:400]}"
         )
     data = response.json()
 
@@ -233,6 +284,165 @@ def _gemini(
             f"Gemini returned no candidates (blocked?): {json.dumps(data)[:400]}"
         )
     return candidates[0].get("content") or {}
+
+
+# ---------------------------------------------------------------------------
+# The OpenAI-compatible backend: Groq, OpenRouter, and most of the rest
+# ---------------------------------------------------------------------------
+#
+# One backend covers the family because they all speak the same dialect:
+# /chat/completions, a bearer token, `messages`, and `tools` carrying plain
+# JSON Schema. Switching between them is a base URL and a model name, not code.
+#
+# The loop above speaks Gemini's shape, and keeps doing so. This translates at
+# the edges instead — in on the way to the provider, out on the way back — so
+# the loop, and every test of it, stays as it is. The alternative was a third
+# neutral shape that nothing speaks natively, converted twice.
+
+
+def _tool_call_id(message: int, index: int) -> str:
+    """A name for one call, derived rather than remembered.
+
+    The OpenAI shape pairs a result with the call it answers by id; Gemini's
+    has no id at all. Deriving it from position works because the loop answers
+    every call of a turn, in order, in the one message that follows it — so
+    the Nth result belongs to the Nth call, and both sides can compute the
+    same name without anything being carried between them.
+    """
+    return f"call_{message}_{index}"
+
+
+def _as_messages(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Gemini's `contents` as OpenAI's `messages`."""
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    #: Which message the calls being answered came from, so a result can name
+    #: the call it belongs to.
+    answering = 0
+
+    for position, entry in enumerate(contents):
+        parts = entry.get("parts") or []
+        calls = [part["functionCall"] for part in parts if "functionCall" in part]
+        results = [part["functionResponse"] for part in parts if "functionResponse" in part]
+        text = "".join(part.get("text", "") for part in parts)
+
+        if calls:
+            answering = position
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": text or None,
+                    "tool_calls": [
+                        {
+                            "id": _tool_call_id(position, index),
+                            "type": "function",
+                            "function": {
+                                "name": call.get("name", ""),
+                                "arguments": json.dumps(call.get("args") or {}),
+                            },
+                        }
+                        for index, call in enumerate(calls)
+                    ],
+                }
+            )
+        elif results:
+            for index, result in enumerate(results):
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": _tool_call_id(answering, index),
+                        "content": str((result.get("response") or {}).get("result", "")),
+                    }
+                )
+        else:
+            messages.append(
+                {
+                    "role": "assistant" if entry.get("role") == "model" else "user",
+                    "content": text,
+                }
+            )
+    return messages
+
+
+def _as_parts(message: dict[str, Any]) -> dict[str, Any]:
+    """One OpenAI message as the Gemini-shaped content the loop reads."""
+    parts: list[dict[str, Any]] = []
+
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") or {}
+        raw = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw) if isinstance(raw, str) else raw
+        except json.JSONDecodeError:
+            # A model that emits unparseable arguments has made a mistake it
+            # can recover from, so it is passed along as an empty call rather
+            # than crashing the run: the tool will refuse it and say why.
+            logger.info("superset_agent.bad_arguments", tool=function.get("name"), raw=raw[:200])
+            arguments = {}
+        parts.append({"functionCall": {"name": function.get("name", ""), "args": arguments}})
+
+    text = message.get("content")
+    if text:
+        parts.append({"text": text})
+
+    return {"parts": parts}
+
+
+def _openai_compatible(
+    settings: AppSettings,
+    model: str,
+    contents: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    sleep: Any = None,
+) -> dict[str, Any]:
+    """One turn against any provider speaking the OpenAI chat API."""
+    import time
+
+    import httpx
+
+    sleep = sleep or time.sleep
+    url = f"{settings.dashboard_agent_base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": _as_messages(contents),
+        # Plain JSON Schema, which is the point of coming this way.
+        "tools": [{"type": "function", "function": tool} for tool in tools],
+        "tool_choice": "auto",
+    }
+
+    for attempt in range(1, _ATTEMPTS + 1):
+        response = httpx.post(
+            url,
+            headers={"Authorization": f"Bearer {settings.dashboard_agent_api_key}"},
+            json=payload,
+            timeout=300,
+        )
+        if response.status_code not in _RETRYABLE or attempt == _ATTEMPTS:
+            break
+        delay = _wait_for(response, attempt)
+        logger.info(
+            "superset_agent.retrying",
+            status=response.status_code,
+            attempt=attempt,
+            waiting=delay,
+            model=model,
+        )
+        sleep(delay)
+
+    if response.status_code >= 400:
+        tried = f" after {_ATTEMPTS} attempts" if response.status_code in _RETRYABLE else ""
+        raise DashboardRequestError(
+            f"The model API refused the request{tried}: HTTP "
+            f"{response.status_code} for model {model!r}. {response.text[:400]}"
+        )
+
+    choices = response.json().get("choices") or []
+    if not choices:
+        raise DashboardRequestError("The model returned no choices.")
+    return _as_parts(choices[0].get("message") or {})
+
+
+_BACKENDS: dict[str, Any] = {"gemini": _gemini, "openai": _openai_compatible}
 
 
 def build_dashboard(
@@ -270,11 +480,16 @@ def build_dashboard(
         client: Seam for tests. Defaults to opening one against ``mcp_url``.
     """
     settings = settings or get_settings()
-    if not settings.gemini_api_key:
+    provider = settings.dashboard_agent_provider
+    # Checked whatever the caller injects: a missing credential is a fact
+    # about the configuration, not about who is making the call.
+    if provider == "gemini" and not settings.gemini_api_key:
         raise DashboardRequestError("GEMINI_API_KEY is not set.")
+    if provider == "openai" and not settings.dashboard_agent_api_key:
+        raise DashboardRequestError("DASHBOARD_AGENT_API_KEY is not set.")
     model = model or settings.dashboard_agent_model
 
-    call_model = generate or _gemini
+    call_model = generate or _BACKENDS[provider]
     opened = client is None
     connection = client or MCPClient(mcp_url)
 
