@@ -5,9 +5,12 @@ import type { ModelDeployment } from '../types';
 import Spinner from '../components/Spinner';
 import ModelDashboard, { ModelStatusBadge } from '../components/ModelDashboard';
 import { formatDate } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 export default function Models() {
   const queryClient = useQueryClient();
+  // Members only ever see their own models, so the column would say nothing.
+  const { isAdmin } = useAuth();
   const { data: models, isLoading, error } = useQuery({
     queryKey: ['models'],
     queryFn: getModels,
@@ -92,6 +95,7 @@ export default function Models() {
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3">Model</th>
+                {isAdmin && <th className="px-4 py-3">User</th>}
                 <th className="px-4 py-3">Version</th>
                 <th className="px-4 py-3">Accuracy</th>
                 <th className="px-4 py-3">Deployed</th>
@@ -112,6 +116,9 @@ export default function Models() {
                       {m.model_name}
                     </button>
                   </td>
+                  {isAdmin && (
+                    <td className="px-4 py-3 text-slate-300">{m.owner_username ?? '--'}</td>
+                  )}
                   <td className="px-4 py-3 text-slate-300">v{m.version}</td>
                   <td className="px-4 py-3 font-mono text-slate-300">
                     {(m.accuracy * 100).toFixed(1)}%

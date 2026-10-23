@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 
-from models.schemas import Project
-from tests.conftest import make_webhook_signature, seed_repo, seed_repo_in_project
+from sqlmodel import select
+
+from models.schemas import Pipeline, Project
+from tests.conftest import make_webhook_signature, seed_project, seed_repo, seed_repo_in_project
 
 
 class TestGithubWebhook:
@@ -238,7 +240,7 @@ class TestProjectRequirement:
         self, test_app, db_session, sample_webhook_payload, mock_pipeline_runner
     ):
         repo = seed_repo_in_project(db_session)
-        project = db_session.get(Project, repo.project_id)
+        project = db_session.exec(select(Project).where(Project.repo_id == repo.id)).one()
         project.is_active = False
         db_session.add(project)
         db_session.commit()
@@ -247,3 +249,47 @@ class TestProjectRequirement:
 
         assert resp.status_code == 200
         mock_pipeline_runner.run.assert_not_awaited()
+
+
+class TestNotebookLinks:
+    """A push runs the linked notebooks it changed, each in its own project."""
+
+    _push = TestProjectRequirement._push
+
+    def _project(self, db_session, name: str, repo_id: int, notebook_path: str) -> Project:
+        project = seed_project(db_session, name=name)
+        project.repo_id = repo_id
+        project.notebook_path = notebook_path
+        db_session.add(project)
+        db_session.commit()
+        return project
+
+    def test_only_the_changed_notebook_runs(
+        self, test_app, db_session, sample_webhook_payload, mock_pipeline_runner
+    ):
+        repo = seed_repo(db_session)
+        self._project(db_session, "Untouched", repo.id, "notebooks/other.ipynb")
+
+        resp = self._push(test_app, sample_webhook_payload)
+
+        assert resp.status_code == 200
+        assert "No notebook files modified" in resp.json()["detail"]
+        mock_pipeline_runner.run.assert_not_awaited()
+
+    def test_each_changed_notebook_runs_in_its_own_project(
+        self, test_app, db_session, sample_webhook_payload, mock_pipeline_runner
+    ):
+        repo = seed_repo(db_session)
+        first = self._project(db_session, "First", repo.id, "notebooks/train.ipynb")
+        second = self._project(db_session, "Second", repo.id, "notebooks/eval.ipynb")
+        sample_webhook_payload["commits"][0]["modified"] = ["notebooks/eval.ipynb"]
+
+        resp = self._push(test_app, sample_webhook_payload)
+
+        assert resp.status_code == 202
+        runs = [db_session.get(Pipeline, pid) for pid in resp.json()["pipeline_ids"]]
+        assert {(r.project_id, r.notebook_path) for r in runs} == {
+            (first.id, "notebooks/train.ipynb"),
+            (second.id, "notebooks/eval.ipynb"),
+        }
+        assert mock_pipeline_runner.run.await_count == 2

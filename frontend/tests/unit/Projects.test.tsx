@@ -149,7 +149,7 @@ describe('ProjectDetail', () => {
     vi.clearAllMocks();
     getProject.mockResolvedValue(project());
     getRepos.mockResolvedValue([
-      { id: 1, github_url: 'https://github.com/a/first.git', branch: 'main' },
+      { id: 1, github_url: 'https://github.com/a/first.git', notebooks: [] },
     ]);
     getRepoBranches.mockResolvedValue([{ name: 'main', commit_sha: 'abc1234' }]);
     getRepoNotebooks.mockResolvedValue(['notebooks/train.ipynb']);

@@ -6,16 +6,22 @@ export interface Repository {
   id: number;
   github_url: string;
   github_token_masked: string;
-  branch: string;
-  notebook_path: string;
   webhook_id: number | null;
   webhook_url: string | null;
   created_at: string;
   is_active: boolean;
-  /** Active project; null means "No project": pushes are ignored, runs refused. */
-  project_id: number | null;
-  project_name: string | null;
-  webhook_enabled: boolean;
+  /** Notebooks active projects have linked; empty means pushes are ignored. */
+  notebooks: LinkedNotebook[];
+}
+
+/** One notebook of a repository, linked by one project. */
+export interface LinkedNotebook {
+  project_id: number;
+  project_name: string;
+  branch: string;
+  notebook_path: string;
+  /** Newest run in flight, else the newest behind a deployed model; null when neither. */
+  active_pipeline_id: string | null;
 }
 
 export interface CreateRepoPayload {
@@ -56,6 +62,8 @@ export interface Pipeline {
   finished_at: string | null;
   phases: PipelinePhase[];
   metrics: PipelineMetrics;
+  /** Owner of the run's project; shown to admins, who see everyone's. */
+  owner_username: string | null;
 }
 
 export interface BranchInfo {
@@ -96,6 +104,8 @@ export interface ModelDeployment {
   deployed_at: string;
   is_active: boolean;
   pipeline_id: string;
+  /** Owner of the pipeline that trained it; shown to admins. */
+  owner_username: string | null;
 }
 
 export interface PredictionResult {

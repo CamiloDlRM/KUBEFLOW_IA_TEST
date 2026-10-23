@@ -84,9 +84,9 @@ class Project(SQLModel, table=True):
     which is why a project can exist, ingest and be explored with no repository
     at all, and why deleting the link does not touch the data.
 
-    Ownership lives here. A repository's owner is its project's owner; the
-    column it still carries is kept in step so that the multi-tenancy rules,
-    which every route depends on, did not all have to change at once.
+    Ownership lives here. A project may only link a notebook from a repository
+    of the same owner, so the repository's own column — which the multi-tenancy
+    rules for pipelines still read — always agrees with it.
     """
 
     __tablename__ = "projects"
@@ -101,35 +101,30 @@ class Project(SQLModel, table=True):
     owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
+    #: The notebook this project trains with: one file on one branch of one
+    #: repository. The unit is the notebook, not the repository, so several
+    #: projects may share a repository — but a notebook runs in one project.
+    repo_id: int | None = SQLField(default=None, foreign_key="repositories.id", index=True)
+    branch: str = SQLField(default="main")
+    notebook_path: str = SQLField(default="")
 
 
 class Repository(SQLModel, table=True):
-    """The code a project trains with: a GitHub repository and a notebook."""
+    """A registered GitHub repository: code that projects pick notebooks from."""
 
     __tablename__ = "repositories"
 
     id: int | None = SQLField(default=None, primary_key=True)
-    #: The project this repository belongs to. Nullable only for rows that
-    #: predate projects; the migration gives every existing repository one.
-    project_id: int | None = SQLField(
-        default=None, foreign_key="projects.id", index=True
-    )
     # Owner of the repository. Members only see and manage their own
     # repositories (and everything derived from them: pipelines, datasets,
-    # deployments, insights); admins see all of them.
-    #
-    # Kept equal to the project's owner. The project is where ownership is
-    # decided; this column is the form every existing route already reads.
+    # deployments, insights); admins see all of them. A notebook may only be
+    # linked to a project of the same owner, so the two never disagree.
     owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
     github_url: str = SQLField(index=True)
     github_token_masked: str = SQLField(
         default="",
         description="Masked token stored for display only (last 4 chars).",
     )
-    branch: str = SQLField(default="main")
-    # Selected when the repository is associated with a project. An
-    # unassociated repository is intentionally allowed to have no notebook.
-    notebook_path: str = SQLField(default="")
     github_token_encrypted: str = SQLField(default="")
     webhook_id: int | None = SQLField(default=None)
     webhook_url: str | None = SQLField(default=None)
@@ -144,9 +139,13 @@ class Pipeline(SQLModel, table=True):
 
     id: str = SQLField(default_factory=_new_uuid, primary_key=True)
     repo_id: int = SQLField(foreign_key="repositories.id")
+    #: The project and notebook the run executed, fixed at launch so a later
+    #: re-link does not rewrite what an old run was.
+    project_id: int | None = SQLField(default=None, foreign_key="projects.id", index=True)
+    notebook_path: str = SQLField(default="")
     status: str = SQLField(default="queued")  # queued | running | success | failed
     commit_sha: str = SQLField(default="")
-    branch: str = SQLField(default="")  # branch the run was launched from ("" = repo default)
+    branch: str = SQLField(default="")  # branch the run was launched from
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
     phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
@@ -541,6 +540,18 @@ class RollbackRequest(BaseModel):
 # Response schemas
 # ---------------------------------------------------------------------------
 
+class LinkedNotebookResponse(BaseModel):
+    """One notebook of a repository, as an active project has linked it."""
+
+    project_id: int
+    project_name: str
+    branch: str
+    notebook_path: str
+    #: The run that makes the notebook "live": the newest one still queued or
+    #: running, else the newest behind a deployed model. ``None`` when neither.
+    active_pipeline_id: str | None = None
+
+
 class RepoResponse(BaseModel):
     """Repository read representation."""
 
@@ -550,17 +561,13 @@ class RepoResponse(BaseModel):
     owner_id: int | None
     github_url: str
     github_token_masked: str
-    branch: str
-    notebook_path: str
     webhook_id: int | None
     webhook_url: str | None
     created_at: datetime
     is_active: bool
-    #: The repository's active project; ``None`` means "No project", in which
-    #: case pushes are ignored and the manual trigger is refused.
-    project_id: int | None = None
-    project_name: str | None = None
-    webhook_enabled: bool = False
+    #: The notebooks of this repository that active projects have linked.
+    #: Empty means pushes are ignored and the manual trigger is refused.
+    notebooks: list[LinkedNotebookResponse] = []
 
 
 class RepoCreatedResponse(BaseModel):
@@ -585,6 +592,8 @@ class PipelineResponse(BaseModel):
     finished_at: datetime | None
     phases: list[dict[str, Any]]
     metrics: dict[str, Any]
+    #: Whose run this is: the owner of its project (and repository).
+    owner_username: str | None = None
 
 
 class PipelineListResponse(BaseModel):
@@ -608,6 +617,8 @@ class WebhookAccepted(BaseModel):
 
     status: str = "queued"
     pipeline_id: str
+    #: Every run the event started: a push may change several linked notebooks.
+    pipeline_ids: list[str] = []
 
 
 class ModelDeploymentResponse(BaseModel):
@@ -622,6 +633,8 @@ class ModelDeploymentResponse(BaseModel):
     deployed_at: datetime
     is_active: bool
     pipeline_id: str | None
+    #: Whose model this is: the owner of the pipeline that trained it.
+    owner_username: str | None = None
 
 
 class PredictResponse(BaseModel):
@@ -1206,7 +1219,7 @@ class TriggerPipelineRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    branch: str = Field(default="", description="Branch to run from (empty = repo default).")
+    branch: str = Field(default="", description="Branch to run from (empty = the linked one).")
 
 
 class BranchInfo(BaseModel):

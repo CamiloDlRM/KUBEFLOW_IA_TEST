@@ -384,15 +384,19 @@ def seed_repo(session: Session, **kwargs) -> "Repository":
     everything derived from it) is visible to the ``test_app`` client. Pass
     ``owner_id=OTHER_USER_ID`` to seed another tenant's repository, or
     ``owner_id=None`` for a legacy row that no member owns.
-    """
-    from models.schemas import Repository
 
+    ``project_id`` links the repository's notebook (``notebook_path`` on
+    ``branch``) to that project, which is where the link lives.
+    """
+    from models.schemas import Project, Repository
+
+    project_id = kwargs.pop("project_id", None)
+    branch = kwargs.pop("branch", "main")
+    notebook_path = kwargs.pop("notebook_path", "notebooks/train.ipynb")
     defaults = {
         "owner_id": DEFAULT_USER_ID,
         "github_url": "https://github.com/testuser/testrepo",
         "github_token_masked": "****cdef",
-        "branch": "main",
-        "notebook_path": "notebooks/train.ipynb",
         "webhook_id": 12345,
         "webhook_url": "http://localhost:3000/api/webhook/github",
         "is_active": True,
@@ -402,6 +406,13 @@ def seed_repo(session: Session, **kwargs) -> "Repository":
     session.add(repo)
     session.commit()
     session.refresh(repo)
+    if project_id is not None:
+        project = session.get(Project, project_id)
+        project.repo_id = repo.id
+        project.branch = branch
+        project.notebook_path = notebook_path
+        session.add(project)
+        session.commit()
     return repo
 
 
@@ -418,10 +429,17 @@ def seed_repo_in_project(session: Session, **kwargs) -> "Repository":
 
 def seed_pipeline(session: Session, repo_id: int, **kwargs) -> "Pipeline":
     """Insert a Pipeline record into the session and return it."""
-    from models.schemas import Pipeline
+    from sqlmodel import select
 
+    from models.schemas import Pipeline, Project
+
+    # A run belongs to the project linking the repository's notebook, if any.
+    project = session.exec(select(Project).where(Project.repo_id == repo_id)).first()
     defaults = {
         "repo_id": repo_id,
+        "project_id": project.id if project else None,
+        "notebook_path": project.notebook_path if project else "notebooks/train.ipynb",
+        "branch": "main",
         "status": "queued",
         "commit_sha": "abc123def456789",
         "phases": [],

@@ -12,12 +12,14 @@ import structlog
 
 from core.config import AppSettings, get_settings
 from core.github_credentials import encrypt_token, repo_token
-from core.ownership import filter_repos_by_owner, get_visible_repo_or_404, repo_project
+from core.ownership import filter_repos_by_owner, get_visible_repo_or_404, linked_projects
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     BranchInfo,
+    LinkedNotebookResponse,
     MessageResponse,
+    ModelDeployment,
     Pipeline,
     Project,
     RepoCreateRequest,
@@ -104,8 +106,6 @@ async def create_repo(
         owner_id=current_user.id,
         github_url=canonical_url,
         github_token_masked=masked_token,
-        branch="main",
-        notebook_path="",
         github_token_encrypted=encrypt_token(token, settings),
         webhook_id=hook_data.get("id"),
         webhook_url=webhook_url,
@@ -139,28 +139,49 @@ async def list_repos(
 ) -> list[RepoResponse]:
     """Return the repositories the caller owns (admins get every repository).
 
-    Each one carries its *active* project, if any: only a repository inside a
-    project can run pipelines, so ``webhook_enabled`` follows from it.
+    Each one lists the notebooks active projects have linked from it: only a
+    linked notebook can run pipelines.
     """
     statement = filter_repos_by_owner(select(Repository), current_user)
     repos = session.exec(statement).all()
-    project_ids = {r.project_id for r in repos if r.project_id is not None}
-    projects = {
-        p.id: p
-        for p in session.exec(
-            select(Project).where(
-                Project.id.in_(project_ids),  # type: ignore[union-attr]
-                Project.is_active == True,  # noqa: E712
-            )
-        ).all()
-    } if project_ids else {}
+    repo_ids = [r.id for r in repos]
+    projects = session.exec(
+        select(Project)
+        .where(Project.repo_id.in_(repo_ids), Project.is_active == True)  # type: ignore[union-attr]  # noqa: E712
+        .order_by(Project.id)  # type: ignore[arg-type]
+    ).all() if repo_ids else []
+
+    # Oldest first, so the newest run per project wins the dict; in-flight
+    # runs are written last so they win over a deployed model's run.
+    project_ids = [p.id for p in projects]
+    deployed = session.exec(
+        select(Pipeline)
+        .join(ModelDeployment, ModelDeployment.pipeline_id == Pipeline.id)
+        .where(Pipeline.project_id.in_(project_ids), ModelDeployment.is_active == True)  # type: ignore[union-attr]  # noqa: E712
+        .order_by(ModelDeployment.deployed_at)
+    ).all() if project_ids else []
+    in_flight = session.exec(
+        select(Pipeline)
+        .where(Pipeline.project_id.in_(project_ids), Pipeline.status.in_(["queued", "running"]))  # type: ignore[union-attr]
+        .order_by(Pipeline.started_at)
+    ).all() if project_ids else []
+    # Keyed by notebook too: a run from the project's previous notebook is not
+    # a run of the one it links now.
+    active = {(p.project_id, p.notebook_path): p.id for p in [*deployed, *in_flight]}
 
     def render(repo: Repository) -> RepoResponse:
-        project = projects.get(repo.project_id)
         response = RepoResponse.model_validate(repo)
-        response.project_id = project.id if project else None
-        response.project_name = project.name if project else None
-        response.webhook_enabled = project is not None
+        response.notebooks = [
+            LinkedNotebookResponse(
+                project_id=p.id,  # type: ignore[arg-type]
+                project_name=p.name,
+                branch=p.branch,
+                notebook_path=p.notebook_path,
+                active_pipeline_id=active.get((p.id, p.notebook_path)),
+            )
+            for p in projects
+            if p.repo_id == repo.id
+        ]
         return response
 
     return [render(r) for r in repos]
@@ -201,6 +222,11 @@ async def delete_repo(
                 error=str(exc),
             )
 
+    # Archived projects too: a link to a deleted row would fail on restore.
+    for project in session.exec(select(Project).where(Project.repo_id == repo.id)).all():
+        project.repo_id = None
+        project.notebook_path = ""
+        session.add(project)
     session.delete(repo)
     session.commit()
     logger.info("repo.deleted", repo_id=repo_id)
@@ -261,15 +287,16 @@ async def list_repo_notebooks(
 
 async def launch_pipeline(
     repo: Repository,
+    project: Project,
     branch: str,
     settings: AppSettings,
     session: Session,
     requested_model_name: str | None = None,
 ) -> WebhookAccepted:
-    """Pin ``branch`` to its HEAD commit and enqueue a run of ``repo``.
+    """Pin ``branch`` to its HEAD commit and enqueue a run of ``project``'s notebook.
 
     Shared by the repository trigger and the project's "Run pipeline". Callers
-    have already checked access and that the repository sits in a project.
+    have already checked access and that ``project`` links a notebook of ``repo``.
     """
     from core.pipeline import get_pipeline_runner
 
@@ -295,7 +322,7 @@ async def launch_pipeline(
     # Deduplication: skip if an identical run is already queued or running
     existing = session.exec(
         select(Pipeline).where(
-            Pipeline.repo_id == repo.id,
+            Pipeline.project_id == project.id,
             Pipeline.commit_sha == commit_sha,
             Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
         )
@@ -305,6 +332,8 @@ async def launch_pipeline(
 
     pipeline = Pipeline(
         repo_id=repo.id,  # type: ignore[arg-type]
+        project_id=project.id,
+        notebook_path=project.notebook_path,
         status="queued",
         commit_sha=commit_sha,
         branch=branch,
@@ -346,15 +375,26 @@ async def trigger_pipeline(
     Unlike the webhook flow, this does not require a push event: it resolves
     the branch's HEAD commit and enqueues the run directly. Only the owner of
     the repository (or an admin) may launch a run on it.
+
+    It runs the repository's one linked notebook. With several linked there is
+    no telling which was meant, so the project's own "Run pipeline" is asked
+    for instead of guessing.
     """
     repo = get_visible_repo_or_404(session, repo_id, current_user)
-    if repo_project(session, repo) is None:
+    projects = linked_projects(session, repo)
+    if not projects:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Link this repository to a project before running a pipeline.",
+            detail="Link a notebook of this repository to a project before running a pipeline.",
         )
+    if len(projects) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Several projects link notebooks of this repository; run it from the project.",
+        )
+    (project,) = projects
 
     return await launch_pipeline(
-        repo, body.branch.strip() or repo.branch, settings, session
+        repo, project, body.branch.strip() or project.branch, settings, session
     )
 

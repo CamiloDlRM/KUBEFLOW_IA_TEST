@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tests.conftest import (
     DEFAULT_USER_ID,
     OTHER_USER_ID,
+    make_user,
     seed_dataset,
     seed_model_deployment,
     seed_pipeline,
@@ -498,6 +499,19 @@ class TestModelIsolation:
         assert [d["model_name"] for d in admin_app.get("/models").json()] == [
             "orphan-model"
         ]
+
+    def test_admin_sees_whose_pipelines_and_models_they_are(self, admin_app, db_session):
+        db_session.add(make_user(DEFAULT_USER_ID, username="ana"))
+        db_session.add(make_user(OTHER_USER_ID, username="luis"))
+        db_session.commit()
+        my_run = seed_pipeline(db_session, _seed_mine(db_session).id, status="success")
+        their_run = seed_pipeline(db_session, _seed_theirs(db_session).id, status="success")
+        seed_model_deployment(db_session, model_name="m", pipeline_id=their_run.id)
+
+        owners = {p["id"]: p["owner_username"] for p in admin_app.get("/pipelines").json()["items"]}
+        assert owners == {my_run.id: "ana", their_run.id: "luis"}
+        assert admin_app.get(f"/pipelines/{my_run.id}").json()["owner_username"] == "ana"
+        assert admin_app.get("/models").json()[0]["owner_username"] == "luis"
 
     def test_admin_should_list_every_deployment(self, admin_app, db_session):
         theirs = _seed_theirs(db_session)

@@ -26,6 +26,7 @@ from core.ownership import (
     filter_projects_by_owner,
     get_visible_project_or_404,
     get_visible_repo_or_404,
+    linked_projects,
 )
 from core.security import get_current_user
 from db import get_session
@@ -61,12 +62,7 @@ def _active_dataset(session: Session, project_id: int | None) -> Dataset | None:
 
 def _render(session: Session, project: Project) -> ProjectResponse:
     """Describe a project with the two counts its card needs."""
-    repository = session.exec(
-        select(Repository).where(
-            Repository.project_id == project.id,
-            Repository.is_active == True,  # noqa: E712
-        )
-    ).first()
+    repository = _linked_repo(session, project)
 
     sources = len(
         session.exec(
@@ -88,7 +84,14 @@ def _render(session: Session, project: Project) -> ProjectResponse:
         owner_id=project.owner_id,
         created_at=project.created_at,
         repository=(
-            ProjectRepositoryResponse.model_validate(repository) if repository else None
+            ProjectRepositoryResponse(
+                id=repository.id,  # type: ignore[arg-type]
+                github_url=repository.github_url,
+                branch=project.branch,
+                notebook_path=project.notebook_path,
+            )
+            if repository
+            else None
         ),
         sources=sources,
         gold_rows=gold.rows if gold else 0,
@@ -99,18 +102,29 @@ def _render(session: Session, project: Project) -> ProjectResponse:
         ),
     )
 
+def _linked_repo(session: Session, project: Project) -> Repository | None:
+    """The repository the project's notebook lives in, if it links one."""
+    if project.repo_id is None:
+        return None
+    repo = session.get(Repository, project.repo_id)
+    return repo if repo is not None and repo.is_active else None
 
 
-async def _sync_webhook(repo: Repository, active: bool, settings: AppSettings) -> None:
-    """Mirror "is this repository in a project?" onto its GitHub webhook.
+async def _sync_webhook(
+    session: Session, repo: Repository | None, settings: AppSettings
+) -> None:
+    """Mirror "does any active project link a notebook of this repository?"
+    onto its GitHub webhook.
 
-    Best-effort: the webhook handler already ignores pushes from repositories
-    outside a project, so a GitHub failure only leaves the flag stale and must
-    not undo the link/unlink the user asked for.
+    Best-effort: the webhook handler already ignores pushes no project links,
+    so a GitHub failure only leaves the flag stale and must not undo the
+    link/unlink the user asked for.
     """
-    if not repo.webhook_id:
+    if repo is None or not repo.webhook_id:
         return
     from core.github import set_webhook_active
+
+    active = bool(linked_projects(session, repo))
 
     try:
         await set_webhook_active(
@@ -201,45 +215,59 @@ async def link_repository(
     branch: str = "main",
     notebook_path: str = "",
 ) -> ProjectResponse:
-    """Attach a repository the caller already owns.
+    """Link one notebook of a repository the caller already owns.
 
     Both sides are checked: a caller who can see the project is not thereby
     entitled to attach somebody else's repository to it, which would make that
     repository's pipelines run under this project's roof.
 
-    A repository belongs to one project at a time. Moving it is allowed and is
-    what re-linking does, but it is logged, because it changes which data the
-    notebook will be handed.
+    The unit is the notebook: several projects may share a repository, but a
+    notebook runs in one project only. Re-linking replaces the project's
+    previous notebook.
     """
     project = get_visible_project_or_404(session, project_id, current_user)
     repo = get_visible_repo_or_404(session, repo_id, current_user)
     assert_repo_access(repo, current_user)
-    if not notebook_path.strip() and not repo.notebook_path:
+    path = notebook_path.strip().strip("/")
+    if not path:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Select a notebook before linking the repository to a project.",
         )
-
-    if repo.project_id not in (None, project.id):
-        logger.info(
-            "project.repository_moved",
-            repo_id=repo.id,
-            from_project=repo.project_id,
-            to_project=project.id,
+    # Pipelines are visible through their repository's owner, so a project of
+    # someone else would run notebooks whose runs it could never see.
+    if repo.owner_id != project.owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The repository and the project belong to different owners.",
+        )
+    taken = session.exec(
+        select(Project).where(
+            Project.repo_id == repo.id,
+            Project.notebook_path == path,
+            Project.is_active == True,  # noqa: E712
+            Project.id != project.id,
+        )
+    ).first()
+    if taken is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Notebook '{path}' is already linked to project '{taken.name}'.",
         )
 
-    repo.project_id = project.id
-    repo.branch = branch.strip() or repo.branch or "main"
-    if notebook_path.strip():
-        repo.notebook_path = notebook_path.strip().strip("/")
-    # Keep the two owners equal: the project decides, and every existing route
-    # reads the repository's column.
-    repo.owner_id = project.owner_id
-    session.add(repo)
+    previous = _linked_repo(session, project)
+    project.repo_id = repo.id
+    project.branch = branch.strip() or "main"
+    project.notebook_path = path
+    session.add(project)
     session.commit()
 
-    logger.info("project.repository_linked", project_id=project.id, repo_id=repo.id)
-    await _sync_webhook(repo, True, settings)
+    logger.info(
+        "project.notebook_linked", project_id=project.id, repo_id=repo.id, notebook_path=path
+    )
+    await _sync_webhook(session, repo, settings)
+    if previous is not None and previous.id != repo.id:
+        await _sync_webhook(session, previous, settings)
     return _render(session, project)
 
 
@@ -271,13 +299,8 @@ async def run_project(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Model name may only use letters, digits, '_', '.' or '-' (max 200).",
         )
-    repo = session.exec(
-        select(Repository).where(
-            Repository.project_id == project.id,
-            Repository.is_active == True,  # noqa: E712
-        )
-    ).first()
-    if repo is None or not repo.notebook_path:
+    repo = _linked_repo(session, project)
+    if repo is None or not project.notebook_path:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Link a repository and select a notebook before running a pipeline.",
@@ -289,7 +312,7 @@ async def run_project(
         )
 
     return await launch_pipeline(
-        repo, repo.branch, settings, session, requested_model_name=model_name
+        repo, project, project.branch, settings, session, requested_model_name=model_name
     )
 
 
@@ -306,21 +329,20 @@ async def unlink_repository(
 ) -> ProjectResponse:
     """Detach the code. The data factory is untouched — it was never the repo's."""
     project = get_visible_project_or_404(session, project_id, current_user)
-    repo = session.exec(
-        select(Repository).where(Repository.project_id == project.id)
-    ).first()
-    if repo is None:
+    if project.repo_id is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="This project has no repository linked.",
         )
 
-    repo.project_id = None
-    session.add(repo)
+    repo = session.get(Repository, project.repo_id)
+    project.repo_id = None
+    project.notebook_path = ""
+    session.add(project)
     session.commit()
 
-    logger.info("project.repository_unlinked", project_id=project.id, repo_id=repo.id)
-    await _sync_webhook(repo, False, settings)
+    logger.info("project.repository_unlinked", project_id=project.id, repo_id=repo and repo.id)
+    await _sync_webhook(session, repo, settings)
     return _render(session, project)
 
 
@@ -346,7 +368,5 @@ async def delete_project(
     session.commit()
 
     logger.info("project.archived", project_id=project_id)
-    repo = session.exec(select(Repository).where(Repository.project_id == project.id)).first()
-    if repo is not None:
-        await _sync_webhook(repo, False, settings)
+    await _sync_webhook(session, _linked_repo(session, project), settings)
     return MessageResponse(message=f"Project {project_id} archived.")

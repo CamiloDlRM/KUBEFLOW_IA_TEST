@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from models.schemas import Project, Repository
+from models.schemas import ModelDeployment, Pipeline, Project, Repository
 from tests.conftest import DEFAULT_USER_ID, seed_repo
 
 
@@ -122,27 +122,51 @@ class TestRenaming:
         assert response.status_code == 404
 
 
+def link(client, project_id: int, repo_id: int, notebook_path: str = "notebooks/train.ipynb"):
+    return client.put(
+        f"/projects/{project_id}/repository",
+        params={"repo_id": repo_id, "notebook_path": notebook_path},
+    )
+
+
+@pytest.fixture()
+def second_project(db_session):
+    project = Project(name="Second", owner_id=DEFAULT_USER_ID)
+    db_session.add(project)
+    db_session.commit()
+    db_session.refresh(project)
+    return project
+
+
 class TestLinkingARepository:
-    def test_a_repository_can_be_linked_and_is_reported(
+    def test_a_notebook_can_be_linked_and_is_reported(
         self, test_app, db_session, own_project
     ):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
 
-        response = test_app.put(
-            f"/projects/{own_project.id}/repository", params={"repo_id": repo.id}
-        )
+        response = link(test_app, own_project.id, repo.id)
 
         assert response.status_code == 200
-        assert response.json()["repository"]["id"] == repo.id
+        assert response.json()["repository"] == {
+            "id": repo.id,
+            "github_url": repo.github_url,
+            "branch": "main",
+            "notebook_path": "notebooks/train.ipynb",
+        }
 
-    def test_linking_records_the_project_on_the_repository(
+    def test_linking_records_the_notebook_on_the_project(
         self, test_app, db_session, own_project
     ):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
-        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
+        link(test_app, own_project.id, repo.id, "/nb/a.ipynb/")
 
         db_session.expire_all()
-        assert db_session.get(Repository, repo.id).project_id == own_project.id
+        stored = db_session.get(Project, own_project.id)
+        assert (stored.repo_id, stored.notebook_path) == (repo.id, "nb/a.ipynb")
+
+    def test_a_notebook_is_required(self, test_app, db_session, own_project):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        assert link(test_app, own_project.id, repo.id, "").status_code == 422
 
     def test_somebody_elses_repository_cannot_be_attached(
         self, test_app, db_session, own_project
@@ -152,28 +176,29 @@ class TestLinkingARepository:
             db_session, owner_id=2, github_url="https://github.com/other/repo"
         )
 
-        response = test_app.put(
-            f"/projects/{own_project.id}/repository", params={"repo_id": theirs.id}
-        )
+        response = link(test_app, own_project.id, theirs.id)
 
         assert response.status_code == 404
         db_session.expire_all()
-        assert db_session.get(Repository, theirs.id).project_id is None
+        assert db_session.get(Project, own_project.id).repo_id is None
 
     def test_a_repository_cannot_be_attached_to_somebody_elses_project(
         self, test_app, db_session, other_project
     ):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
-        response = test_app.put(
-            f"/projects/{other_project.id}/repository", params={"repo_id": repo.id}
-        )
-        assert response.status_code == 404
+        assert link(test_app, other_project.id, repo.id).status_code == 404
+
+    def test_an_admin_cannot_mix_owners(self, admin_app, db_session, other_project):
+        """Runs are visible through the repository's owner: a project of
+        somebody else would run notebooks whose runs it could never see."""
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        assert link(admin_app, other_project.id, repo.id).status_code == 409
 
     def test_unlinking_leaves_the_repository_alone(
         self, test_app, db_session, own_project
     ):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
-        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
+        link(test_app, own_project.id, repo.id)
 
         response = test_app.delete(f"/projects/{own_project.id}/repository")
 
@@ -190,38 +215,74 @@ class TestLinkingARepository:
         assert response.status_code == 404
         assert "no repository linked" in response.json()["detail"]
 
-    def test_a_repository_moves_rather_than_belonging_to_two_projects(
-        self, test_app, db_session, own_project
+    def test_two_projects_can_share_a_repository_with_different_notebooks(
+        self, test_app, db_session, own_project, second_project
     ):
-        second = Project(name="Second", owner_id=DEFAULT_USER_ID)
-        db_session.add(second)
-        db_session.commit()
-        db_session.refresh(second)
+        """The unit is the notebook, not the repository."""
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
 
-        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
-        test_app.put(f"/projects/{second.id}/repository", params={"repo_id": repo.id})
+        assert link(test_app, own_project.id, repo.id, "a.ipynb").status_code == 200
+        assert link(test_app, second_project.id, repo.id, "b.ipynb").status_code == 200
 
-        assert test_app.get(f"/projects/{own_project.id}").json()["repository"] is None
-        assert test_app.get(f"/projects/{second.id}").json()["repository"]["id"] == repo.id
+        first = test_app.get(f"/projects/{own_project.id}").json()["repository"]
+        second = test_app.get(f"/projects/{second_project.id}").json()["repository"]
+        assert (first["notebook_path"], second["notebook_path"]) == ("a.ipynb", "b.ipynb")
+
+    def test_a_notebook_runs_in_one_project_only(
+        self, test_app, db_session, own_project, second_project
+    ):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        link(test_app, own_project.id, repo.id, "a.ipynb")
+
+        response = link(test_app, second_project.id, repo.id, "a.ipynb")
+
+        assert response.status_code == 409
+        assert "Mine" in response.json()["detail"]
+        assert test_app.get(f"/projects/{second_project.id}").json()["repository"] is None
+
+    def test_relinking_the_same_project_is_not_a_conflict(
+        self, test_app, db_session, own_project
+    ):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        link(test_app, own_project.id, repo.id, "a.ipynb")
+        assert link(test_app, own_project.id, repo.id, "a.ipynb").status_code == 200
+
+    def test_an_archived_project_frees_its_notebook(
+        self, test_app, db_session, own_project, second_project
+    ):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        link(test_app, own_project.id, repo.id, "a.ipynb")
+        test_app.delete(f"/projects/{own_project.id}")
+
+        assert link(test_app, second_project.id, repo.id, "a.ipynb").status_code == 200
 
 
 class TestWebhookFollowsTheProject:
-    """Only a repository inside a project may run; its GitHub hook says so too."""
+    """Only a linked notebook may run; the repository's GitHub hook says so too."""
 
     def test_linking_enables_the_webhook(self, test_app, db_session, own_project, github_hooks):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
-        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
+        link(test_app, own_project.id, repo.id)
 
         github_hooks.assert_awaited_once()
         assert github_hooks.await_args.args[2:] == (repo.webhook_id, True)
 
     def test_unlinking_disables_the_webhook(self, test_app, db_session, own_project, github_hooks):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
-        test_app.put(f"/projects/{own_project.id}/repository", params={"repo_id": repo.id})
+        link(test_app, own_project.id, repo.id)
         test_app.delete(f"/projects/{own_project.id}/repository")
 
         assert github_hooks.await_args.args[2:] == (repo.webhook_id, False)
+
+    def test_the_webhook_stays_on_while_another_project_links_the_repository(
+        self, test_app, db_session, own_project, second_project, github_hooks
+    ):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
+        link(test_app, own_project.id, repo.id, "a.ipynb")
+        link(test_app, second_project.id, repo.id, "b.ipynb")
+        test_app.delete(f"/projects/{own_project.id}/repository")
+
+        assert github_hooks.await_args.args[2:] == (repo.webhook_id, True)
 
     def test_archiving_disables_the_webhook(self, test_app, db_session, own_project, github_hooks):
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
@@ -235,15 +296,13 @@ class TestWebhookFollowsTheProject:
         github_hooks.side_effect = RuntimeError("GitHub is down")
         repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID)
 
-        response = test_app.put(
-            f"/projects/{own_project.id}/repository", params={"repo_id": repo.id}
-        )
+        response = link(test_app, own_project.id, repo.id)
 
         assert response.status_code == 200
         db_session.expire_all()
-        assert db_session.get(Repository, repo.id).project_id == own_project.id
+        assert db_session.get(Project, own_project.id).repo_id == repo.id
 
-    def test_repository_list_reports_the_project(self, test_app, db_session, own_project):
+    def test_repository_list_reports_its_linked_notebooks(self, test_app, db_session, own_project):
         seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
         seed_repo(
             db_session, owner_id=DEFAULT_USER_ID, github_url="https://github.com/testuser/other"
@@ -251,14 +310,16 @@ class TestWebhookFollowsTheProject:
 
         by_url = {r["github_url"]: r for r in test_app.get("/repos").json()}
 
-        linked = by_url["https://github.com/testuser/testrepo"]
-        assert (linked["project_id"], linked["project_name"], linked["webhook_enabled"]) == (
-            own_project.id, "Mine", True,
-        )
-        loose = by_url["https://github.com/testuser/other"]
-        assert (loose["project_id"], loose["project_name"], loose["webhook_enabled"]) == (
-            None, None, False,
-        )
+        assert by_url["https://github.com/testuser/testrepo"]["notebooks"] == [
+            {
+                "project_id": own_project.id,
+                "project_name": "Mine",
+                "branch": "main",
+                "notebook_path": "notebooks/train.ipynb",
+                "active_pipeline_id": None,
+            }
+        ]
+        assert by_url["https://github.com/testuser/other"]["notebooks"] == []
 
     def test_an_archived_project_counts_as_no_project(self, test_app, db_session, own_project):
         seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
@@ -267,7 +328,40 @@ class TestWebhookFollowsTheProject:
         db_session.commit()
 
         (repo,) = test_app.get("/repos").json()
-        assert repo["project_name"] is None and repo["webhook_enabled"] is False
+        assert repo["notebooks"] == []
+
+    def test_repository_list_reports_the_active_pipeline(self, test_app, db_session, own_project):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
+
+        def active():
+            return test_app.get("/repos").json()[0]["notebooks"][0]["active_pipeline_id"]
+
+        def run(status, notebook="notebooks/train.ipynb"):
+            pipeline = Pipeline(
+                repo_id=repo.id, project_id=own_project.id, notebook_path=notebook, status=status
+            )
+            db_session.add(pipeline)
+            db_session.commit()
+            return pipeline
+
+        assert active() is None
+
+        # A finished run counts only while its model is deployed.
+        done = run("success")
+        run("failed")
+        assert active() is None
+
+        db_session.add(ModelDeployment(model_name="m", pipeline_id=done.id))
+        db_session.commit()
+        assert active() == done.id
+
+        # A run of the project's previous notebook is not this notebook's.
+        run("running", notebook="old.ipynb")
+        assert active() == done.id
+
+        # A run in flight wins over the deployed one.
+        running = run("running")
+        assert active() == running.id
 
 
 class TestRunPipeline:

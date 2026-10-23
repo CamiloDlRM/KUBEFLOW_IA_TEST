@@ -172,17 +172,20 @@ def get_visible_repo_or_404(
     return assert_repo_access(repo, user)
 
 
-def repo_project(session: Session, repo: Repository) -> Project | None:
-    """Return the *active* project ``repo`` belongs to, or ``None``.
+def linked_projects(session: Session, repo: Repository) -> list[Project]:
+    """Return the *active* projects that have linked a notebook of ``repo``.
 
-    A pipeline trains on its project's data, so a repository outside a project
-    (or inside an archived one) has nothing to run: the webhook ignores its
+    A pipeline trains on its project's data, so a repository no project links
+    (or only archived ones do) has nothing to run: the webhook ignores its
     pushes and the manual trigger refuses it.
     """
-    if repo.project_id is None:
-        return None
-    project = session.get(Project, repo.project_id)
-    return project if project is not None and project.is_active else None
+    return list(
+        session.exec(
+            select(Project)
+            .where(Project.repo_id == repo.id, Project.is_active == True)  # noqa: E712
+            .order_by(Project.id)  # type: ignore[arg-type]
+        ).all()
+    )
 
 
 def get_visible_project_or_404(
@@ -366,6 +369,24 @@ def restrict_by_pipeline(statement: Any, column: Any, session: Session, user: Us
     if pipeline_ids is None:
         return statement
     return statement.where(column.in_(pipeline_ids))
+
+
+def pipeline_owners(session: Session, pipeline_ids: Sequence[str | None]) -> dict[str, str]:
+    """Map each pipeline id to its owner's username.
+
+    Through the repository, the same path visibility takes, so the name shown
+    is always the user who can see the run. Orphan rows are simply absent.
+    """
+    ids = [pid for pid in pipeline_ids if pid]
+    if not ids:
+        return {}
+    rows = session.exec(
+        select(Pipeline.id, User.username)
+        .join(Repository, Repository.id == Pipeline.repo_id)  # type: ignore[arg-type]
+        .join(User, User.id == Repository.owner_id)  # type: ignore[arg-type]
+        .where(Pipeline.id.in_(ids))  # type: ignore[union-attr]
+    ).all()
+    return dict(rows)
 
 
 # ---------------------------------------------------------------------------

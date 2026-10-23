@@ -161,8 +161,8 @@ def _update_pipeline_db(
         session.commit()
 
 
-def _download_notebook_for_analysis(repo: Any, ref: str) -> dict[str, Any]:
-    """Fetch the repo's training notebook from GitHub at a given ref."""
+def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:
+    """Fetch a run's training notebook from GitHub at a given ref."""
     import base64
 
     import httpx
@@ -174,7 +174,7 @@ def _download_notebook_for_analysis(repo: Any, ref: str) -> dict[str, Any]:
         "Authorization": f"Bearer {settings.github_token or ''}",
         "Accept": "application/vnd.github+json",
     }
-    clean_nb_path = repo.notebook_path.strip("/")
+    clean_nb_path = notebook_path.strip("/")
     nb_url = (
         f"https://api.github.com/repos/{owner}/{repo_name}"
         f"/contents/{clean_nb_path}"
@@ -273,6 +273,8 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
                 select(Pipeline)
                 .where(
                     Pipeline.repo_id == pipeline.repo_id,
+                    # The same notebook's runs: another notebook's are no history.
+                    Pipeline.notebook_path == pipeline.notebook_path,
                     Pipeline.id != pipeline_id,
                 )
                 .order_by(Pipeline.started_at.desc())  # type: ignore[union-attr]
@@ -292,10 +294,14 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
                 "metrics": pipeline.metrics,
                 "phases": pipeline.phases,
                 "commit_sha": pipeline.commit_sha,
+                "notebook_path": pipeline.notebook_path,
+                "branch": pipeline.branch,
             }
 
         notebook = _download_notebook_for_analysis(
-            repo, pipeline_data["commit_sha"] or repo.branch
+            repo,
+            pipeline_data["notebook_path"],
+            pipeline_data["commit_sha"] or pipeline_data["branch"],
         )
 
         report = generate_insight(
@@ -389,15 +395,16 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
             if not repo:
                 raise ValueError(f"Repository {pipeline.repo_id} not found.")
             report = insight.content
-            base_branch = pipeline.branch or repo.branch
+            base_branch = pipeline.branch
             commit_ref = pipeline.commit_sha or base_branch
+            notebook_path = pipeline.notebook_path
 
         token = settings.github_token
         if not token:
             raise ValueError("GITHUB_TOKEN is not configured; cannot push.")
 
         # 1. Notebook as it was for this run
-        notebook = _download_notebook_for_analysis(repo, commit_ref)
+        notebook = _download_notebook_for_analysis(repo, notebook_path, commit_ref)
 
         # 2. LLM applies the report's recommendations
         patched, commit_message = generate_improved_notebook(
@@ -411,7 +418,7 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
             repo.github_url,
             token,
             AI_BRANCH_NAME,
-            repo.notebook_path,
+            notebook_path,
             json.dumps(patched, indent=1, ensure_ascii=False).encode("utf-8"),
             f"{commit_message}\n\nGenerado por el AI Training Advisor "
             f"(insight #{insight_id}, pipeline {pipeline_id[:8]})",
@@ -547,8 +554,12 @@ def run_pipeline(
             if not repo:
                 raise ValueError(f"Repository {repo_id} not found.")
             pipeline_row = session.get(Pipeline, pipeline_id)
-            run_branch = (pipeline_row.branch if pipeline_row else "") or repo.branch
-            requested_model_name = pipeline_row.requested_model_name if pipeline_row else None
+            if not pipeline_row:
+                raise ValueError(f"Pipeline {pipeline_id} not found.")
+            run_branch = pipeline_row.branch
+            requested_model_name = pipeline_row.requested_model_name
+            notebook_path = pipeline_row.notebook_path
+            project_id = pipeline_row.project_id
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
@@ -562,10 +573,10 @@ def run_pipeline(
         }
         # Sanitise notebook_path: strip leading/trailing slashes to avoid
         # double-slash in the URL (e.g. /contents//?ref=main).
-        clean_nb_path = repo.notebook_path.strip("/")
+        clean_nb_path = notebook_path.strip("/")
         if not clean_nb_path:
             raise ValueError(
-                f"Repository {repo_id} has an empty notebook_path. "
+                f"Pipeline {pipeline_id} has an empty notebook_path. "
                 "A valid notebook_path is required (e.g. 'train.ipynb' or 'notebooks/train.ipynb')."
             )
         nb_url = (
@@ -586,7 +597,7 @@ def run_pipeline(
                 raise ValueError(
                     f"Notebook not found at '{clean_nb_path}' in repo "
                     f"{owner}/{repo_name} (branch: {run_branch}). "
-                    f"Check the notebook_path setting for repository {repo_id}."
+                    f"Check the notebook linked to project {project_id}."
                 ) from exc
             raise
         nb_content = base64.b64decode(resp.json()["content"])
@@ -648,15 +659,14 @@ def run_pipeline(
             dataset_info: dict[str, Any] | None = None
             if uses_data:
                 with Session(engine) as session:
-                    # The dataset belongs to the repository's *project*: the code
-                    # and the data are separate things that a project brings
+                    # The dataset belongs to the run's *project*: the code and
+                    # the data are separate things that a project brings
                     # together, so the notebook is handed whatever its project
                     # currently publishes.
-                    repo_row = session.get(Repository, repo_id)
                     active_dataset = session.exec(
                         select(Dataset)
                         .where(
-                            Dataset.project_id == (repo_row.project_id if repo_row else -1),
+                            Dataset.project_id == (project_id if project_id is not None else -1),
                             Dataset.is_active == True,  # noqa: E712
                         )
                         .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]

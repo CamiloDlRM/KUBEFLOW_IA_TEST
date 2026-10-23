@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
 from core.metrics import record_model_prediction, record_model_reload, record_model_rollback
-from core.ownership import assert_model_access, restrict_by_pipeline
+from core.ownership import assert_model_access, pipeline_owners, restrict_by_pipeline
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
@@ -142,7 +142,13 @@ async def list_models(
         current_user,
     )
     deployments = session.exec(statement).all()
-    return [ModelDeploymentResponse.model_validate(d) for d in deployments]
+    owners = pipeline_owners(session, [d.pipeline_id for d in deployments])
+    return [
+        ModelDeploymentResponse.model_validate(d).model_copy(
+            update={"owner_username": owners.get(d.pipeline_id or "")}
+        )
+        for d in deployments
+    ]
 
 
 @router.post(

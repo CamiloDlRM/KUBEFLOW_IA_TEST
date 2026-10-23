@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, getRepoBranches, getRepoNotebooks, getRepos } from '../api/client';
-import type { Repository } from '../types';
+import type { LinkedNotebook, Repository } from '../types';
 import Spinner from '../components/Spinner';
 import { ChevronDown } from 'lucide-react';
 
@@ -192,7 +192,10 @@ const TAG_CLASS =
   'inline-flex rounded-full border border-brand-500/30 bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-400 transition hover:border-brand-400/60 hover:bg-brand-600/30 hover:text-brand-300';
 
 function RepositoryCard({ repo }: { repo: Repository }) {
-  const [branch, setBranch] = useState(repo.branch || 'main');
+  const [branch, setBranch] = useState(repo.notebooks[0]?.branch || 'main');
+  // One tag per project, even if a project ever shows up twice.
+  const projects = [...new Map(repo.notebooks.map((n) => [n.project_id, n.project_name])).entries()];
+  const live = repo.notebooks.filter((n) => n.active_pipeline_id);
 
   return (
     <article className="rounded-lg border border-slate-700 bg-slate-900 p-3 transition hover:border-brand-500/60 hover:bg-slate-800/60">
@@ -210,17 +213,20 @@ function RepositoryCard({ repo }: { repo: Repository }) {
             >
               Link
             </a>
-            {repo.project_id !== null ? (
-              <Link
-                to={`/projects/${repo.project_id}`}
-                title="Open project"
-                className={`${TAG_CLASS} max-w-[12rem] truncate`}
-              >
-                {repo.project_name}
-              </Link>
+            {projects.length > 0 ? (
+              projects.map(([id, name]) => (
+                <Link
+                  key={id}
+                  to={`/projects/${id}`}
+                  title="Open project"
+                  className={`${TAG_CLASS} max-w-[12rem] truncate`}
+                >
+                  {name}
+                </Link>
+              ))
             ) : (
               <span
-                title="Link this repository to a project to run pipelines"
+                title="Link a notebook of this repository to a project to run pipelines"
                 className="inline-flex rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-400"
               >
                 No project
@@ -228,8 +234,11 @@ function RepositoryCard({ repo }: { repo: Repository }) {
             )}
           </div>
         </div>
-        {repo.webhook_enabled ? (
-          <span className="shrink-0 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300">
+        {live.length > 0 ? (
+          <span
+            title={live.map((n) => `${n.notebook_path} (${n.branch})`).join('\n')}
+            className="shrink-0 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300"
+          >
             webhook active
           </span>
         ) : (
@@ -243,6 +252,8 @@ function RepositoryCard({ repo }: { repo: Repository }) {
         repoUrl={repo.github_url}
         branch={branch}
         onBranchChange={setBranch}
+        // A link is to one notebook on one branch: only that branch shows it.
+        linked={repo.notebooks.filter((n) => n.branch === branch)}
       />
     </article>
   );
@@ -257,11 +268,13 @@ function RepositoryExplorer({
   repoUrl,
   branch,
   onBranchChange,
+  linked,
 }: {
   repoId: number;
   repoUrl: string;
   branch: string;
   onBranchChange: (branch: string) => void;
+  linked: LinkedNotebook[];
 }) {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const branchMenuRef = useRef<HTMLDivElement>(null);
@@ -346,18 +359,36 @@ function RepositoryExplorer({
       )}
       {notebooks.data && notebooks.data.length > 0 && (
         <ul className="mt-1 space-y-1 text-sm text-slate-200">
-          {notebooks.data.map((path) => (
-            <li key={path} className="font-mono">
-              <a
-                href={notebookUrl(repoUrl, branch, path)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-brand-400 underline-offset-2 hover:text-brand-300 hover:underline"
-              >
-                {path}
-              </a>
-            </li>
-          ))}
+          {notebooks.data.map((path) => {
+            const link = linked.find((n) => n.notebook_path === path);
+            return (
+              <li key={path} className="flex items-center gap-2 font-mono">
+                {link?.active_pipeline_id ? (
+                  <Link
+                    to={`/pipelines/${link.active_pipeline_id}`}
+                    aria-label={`Open the active pipeline of ${path}`}
+                    title={`Webhook active (${link.project_name}). Open its pipeline`}
+                    className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 ring-emerald-400/40 transition hover:ring-4 focus:outline-none focus-visible:ring-4"
+                  />
+                ) : link ? (
+                  <span
+                    role="img"
+                    aria-label={`Linked to ${link.project_name}, nothing running`}
+                    title={`Linked to ${link.project_name}. No pipeline running or deployed`}
+                    className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-500"
+                  />
+                ) : null}
+                <a
+                  href={notebookUrl(repoUrl, branch, path)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-brand-400 underline-offset-2 hover:text-brand-300 hover:underline"
+                >
+                  {path}
+                </a>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.conftest import seed_pipeline, seed_repo, seed_repo_in_project
+from tests.conftest import seed_pipeline, seed_project, seed_repo, seed_repo_in_project
 from tests.test_insights import seed_insight
 
 
@@ -119,6 +119,21 @@ class TestTriggerPipeline:
 
         assert resp.status_code == 409
         assert "project" in resp.json()["detail"]
+        runner.run.assert_not_called()
+
+    def test_trigger_does_not_guess_between_linked_notebooks(self, test_app, db_session):
+        repo = seed_repo_in_project(db_session)
+        other = seed_project(db_session, name="Other")
+        other.repo_id = repo.id
+        other.notebook_path = "notebooks/eval.ipynb"
+        db_session.add(other)
+        db_session.commit()
+        runner = self._mock_runner()
+        with patch("core.pipeline.get_pipeline_runner", return_value=runner):
+            resp = test_app.post(f"/repos/{repo.id}/trigger", json={"branch": ""})
+
+        assert resp.status_code == 409
+        assert "Several projects" in resp.json()["detail"]
         runner.run.assert_not_called()
 
 

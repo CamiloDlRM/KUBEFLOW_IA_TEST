@@ -231,7 +231,7 @@ function RepoPicker({
   busy,
   error,
 }: {
-  repos: { id: number; github_url: string; branch: string }[] | undefined;
+  repos: { id: number; github_url: string }[] | undefined;
   onPick: (repoId: number, branch: string, notebookPath: string) => void;
   busy: boolean;
   error: string | null;
@@ -287,19 +287,14 @@ function RepoPicker({
             <button
               onClick={() => {
                 setSelectedId(repo.id);
-                setBranch(repo.branch || 'main');
+                setBranch('main');
                 setNotebookPath('');
               }}
               disabled={busy}
               className="flex w-full items-center justify-between gap-3 rounded border border-slate-700 px-3 py-2 text-left transition hover:border-brand-500/60 hover:bg-slate-800/60 disabled:opacity-40"
             >
-              <span className="min-w-0">
-                <span className="block truncate text-sm text-slate-100">
-                  {repoNameFromUrl(repo.github_url)}
-                </span>
-                <span className="block truncate font-mono text-xs text-slate-500">
-                  {repo.branch}
-                </span>
+              <span className="min-w-0 truncate text-sm text-slate-100">
+                {repoNameFromUrl(repo.github_url)}
               </span>
               <span className="shrink-0 text-xs text-brand-400">
                 {selectedId === repo.id ? 'Selected' : 'Explore'}
