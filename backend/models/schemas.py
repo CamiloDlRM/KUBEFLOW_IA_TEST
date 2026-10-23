@@ -199,6 +199,11 @@ class Pipeline(SQLModel, table=True):
     #: after execution what each cell printed. Stored rather than re-read from
     #: GitHub, because the branch moves and the code that ran does not.
     cells: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
+    #: What the trained model expects and how it answers across that: its
+    #: inputs in order with their training ranges, and one sweep per input.
+    #: Built by the worker from the features the notebook wrote; empty when it
+    #: wrote none. See :mod:`core.model_card`.
+    model_card: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -656,6 +661,7 @@ class PipelineDetailResponse(PipelineResponse):
     """One run, with the code it ran. Kept off the list, where it would be
     every notebook of every run on the page."""
     cells: list[dict[str, Any]] = Field(default_factory=list)
+    model_card: dict[str, Any] = Field(default_factory=dict)
 
 
 class PipelineListResponse(BaseModel):
@@ -752,6 +758,9 @@ class ModelDeploymentResponse(BaseModel):
     pipeline_id: str | None
     #: Whose model this is: the owner of the pipeline that trained it.
     owner_username: str | None = None
+    #: The card of the run that produced it — what to send it, in what range,
+    #: and what it answers across that. Empty for models trained before cards.
+    model_card: dict[str, Any] = Field(default_factory=dict)
 
 
 class PredictResponse(BaseModel):
@@ -760,6 +769,9 @@ class PredictResponse(BaseModel):
     prediction: list[Any]
     model_name: str
     version: str
+    #: Per row, the probability of each class, when the model can say. A
+    #: classifier's answer without its confidence reads the same at 34% as at 99%.
+    probabilities: list[dict[str, float]] | None = None
 
 
 class HealthResponse(BaseModel):

@@ -20,6 +20,7 @@ from db import get_session
 from models.schemas import (
     MessageResponse,
     ModelDeployment,
+    Pipeline,
     ModelDeploymentResponse,
     PredictRequest,
     PredictResponse,
@@ -143,9 +144,20 @@ async def list_models(
     )
     deployments = session.exec(statement).all()
     owners = pipeline_owners(session, [d.pipeline_id for d in deployments])
+
+    # Each model's card lives on the run that trained it. One query for all of
+    # them, rather than one per row of the table.
+    run_ids = [d.pipeline_id for d in deployments if d.pipeline_id]
+    cards = {
+        run.id: run.model_card or {}
+        for run in session.exec(select(Pipeline).where(Pipeline.id.in_(run_ids))).all()  # type: ignore[attr-defined]
+    } if run_ids else {}
     return [
         ModelDeploymentResponse.model_validate(d).model_copy(
-            update={"owner_username": owners.get(d.pipeline_id or "")}
+            update={
+                "owner_username": owners.get(d.pipeline_id or ""),
+                "model_card": cards.get(d.pipeline_id or "", {}),
+            }
         )
         for d in deployments
     ]

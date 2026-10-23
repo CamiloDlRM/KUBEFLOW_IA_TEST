@@ -180,12 +180,62 @@ export interface ModelDeployment {
   pipeline_id: string;
   /** Owner of the pipeline that trained it; shown to admins. */
   owner_username: string | null;
+  /** What to send the model and what it answers across that. `{}` when the
+   *  notebook wrote no training features. */
+  model_card?: ModelCard;
+}
+
+/** One input of a trained model, with the range it saw in training. */
+export interface ModelInput {
+  name: string;
+  type?: 'number' | 'category';
+  min?: number | null;
+  p05?: number | null;
+  /** The typical value — the median, or the commonest category. */
+  median?: number | string | null;
+  p95?: number | null;
+  max?: number | null;
+  values?: string[];
+  missing?: number;
+}
+
+/** A range of one input, and what the model answered for the training rows in it. */
+export interface EffectSegment {
+  from: number;
+  to: number;
+  prediction: string | number;
+  /** How many of the rows in this range got that answer. */
+  share: number;
+  rows: number;
+}
+
+export interface ModelEffect {
+  input: string;
+  segments?: EffectSegment[];
+  ranges?: { from: number; to: number; mean: number; rows: number }[];
+  categories?: { value: string; prediction?: string | number; share?: number; mean?: number; rows: number }[];
+}
+
+export interface ModelCard {
+  kind?: 'classifier' | 'regressor';
+  rows?: number;
+  inputs?: ModelInput[];
+  baseline?: {
+    values: (number | string | null)[];
+    prediction: unknown;
+    probabilities?: Record<string, number>;
+  };
+  effects?: ModelEffect[];
+  classes?: (string | number)[];
+  note?: string;
 }
 
 export interface PredictionResult {
   prediction: unknown[];
   model_name: string;
   version: string;
+  /** Per row, each class's probability, when the model can say. */
+  probabilities?: Record<string, number>[] | null;
 }
 
 export interface HealthResponse {
