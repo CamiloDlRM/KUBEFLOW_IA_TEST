@@ -53,12 +53,15 @@ from models.schemas import (
     GoldSuggestResponse,
     GoldTable,
     IngestionRun,
+    InputGoldVersionResponse,
+    InputStreamResponse,
     KpiTurn,
     LayerDiffResponse,
     LayerPreviewResponse,
     LayerStreamResponse,
     LayerSummaryResponse,
     MedallionResponse,
+    PipelineInputOptionsResponse,
     User,
 )
 
@@ -241,6 +244,38 @@ async def get_medallion(
         bronze=_summarise("bronze", project_id, sources, runs),
         silver=_summarise("silver", project_id, sources, runs),
         gold=_summarise_gold(project_id, table),
+    )
+
+
+@router.get(
+    "/{project_id}/medallion/inputs",
+    response_model=PipelineInputOptionsResponse,
+    summary="What a pipeline in this project can train on",
+)
+def get_pipeline_inputs(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PipelineInputOptionsResponse:
+    """Every source's bronze and silver, and every gold build still stored.
+
+    This is the palette the pipeline view drags from. It lists what is in
+    object storage, because that is what a run can actually mount.
+    """
+    from core import pipeline_input
+
+    get_visible_project_or_404(session, project_id, current_user)
+    try:
+        found = pipeline_input.options(session, project_id)
+    except medallion.MedallionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Object storage could not be read: {exc}",
+        )
+    return PipelineInputOptionsResponse(
+        bronze=[InputStreamResponse(**vars(option)) for option in found.bronze],
+        silver=[InputStreamResponse(**vars(option)) for option in found.silver],
+        gold=[InputGoldVersionResponse(**vars(option)) for option in found.gold],
     )
 
 

@@ -130,6 +130,11 @@ class Repository(SQLModel, table=True):
     # Selected when the repository is associated with a project. An
     # unassociated repository is intentionally allowed to have no notebook.
     notebook_path: str = SQLField(default="")
+    #: What the pipeline trains on: ``{"layer": "gold"}`` for the newest gold
+    #: build, ``{"layer": "gold", "version": 3}`` for a particular one,
+    #: ``{"layer": "silver", "source_id": 2}`` for one source's silver. Empty
+    #: means the project's active dataset. See :mod:`core.pipeline_input`.
+    pipeline_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
     github_token_encrypted: str = SQLField(default="")
     webhook_id: int | None = SQLField(default=None)
     webhook_url: str | None = SQLField(default=None)
@@ -151,6 +156,15 @@ class Pipeline(SQLModel, table=True):
     finished_at: datetime | None = SQLField(default=None)
     phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
     metrics: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: What was actually mounted as DATASET_PATH: the layer, the objects and a
+    #: label. The repository holds the choice; this holds what the choice
+    #: meant on the day, so "follow the newest gold" still leaves each run
+    #: naming its build.
+    mounted_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The notebook's code as this run had it, cell by cell with its phase, and
+    #: after execution what each cell printed. Stored rather than re-read from
+    #: GitHub, because the branch moves and the code that ran does not.
+    cells: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -554,6 +568,14 @@ class PipelineResponse(BaseModel):
     finished_at: datetime | None
     phases: list[dict[str, Any]]
     metrics: dict[str, Any]
+    mounted_input: dict[str, Any] = Field(default_factory=dict)
+
+
+class PipelineDetailResponse(PipelineResponse):
+    """One run, with the code it ran. Kept off the list, where it would be
+    every notebook of every run on the page."""
+
+    cells: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PipelineListResponse(BaseModel):
@@ -570,6 +592,61 @@ class PipelineLogsResponse(BaseModel):
 
     pipeline_id: str
     logs: list[dict[str, Any]]
+
+
+class NotebookCellsResponse(BaseModel):
+    """A notebook's code as a branch has it now, cell by cell with its phase.
+
+    What the pipeline view shows before a run exists to show it, and what the
+    next run will execute.
+    """
+
+    branch: str
+    notebook_path: str
+    cells: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PipelineInputRequest(BaseModel):
+    """What to train on. An empty layer goes back to the active dataset."""
+
+    layer: str = ""
+    source_id: int | None = None
+    version: int | None = None
+
+
+class PipelineInputResponse(BaseModel):
+    """A repository's choice, and what it resolves to right now.
+
+    ``error`` is set when the choice no longer resolves — a source deleted,
+    a pinned build removed — so the view can say so before a run fails on it.
+    """
+
+    choice: dict[str, Any] = Field(default_factory=dict)
+    resolved: dict[str, Any] | None = None
+    error: str = ""
+
+
+class InputStreamResponse(BaseModel):
+    source_id: int
+    source_name: str
+    objects: int
+    size_bytes: int
+
+
+class InputGoldVersionResponse(BaseModel):
+    version: int
+    key: str
+    size_bytes: int
+    built_at: datetime | None = None
+    latest: bool = False
+
+
+class PipelineInputOptionsResponse(BaseModel):
+    """What in a project a pipeline can be pointed at."""
+
+    bronze: list[InputStreamResponse] = Field(default_factory=list)
+    silver: list[InputStreamResponse] = Field(default_factory=list)
+    gold: list[InputGoldVersionResponse] = Field(default_factory=list)
 
 
 class WebhookAccepted(BaseModel):
