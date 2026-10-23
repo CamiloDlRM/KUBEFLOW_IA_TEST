@@ -49,13 +49,16 @@ print('duckdb', duckdb.__version__, '| psycopg2', psycopg2.__version__)"
 # you get a server that starts and then disagrees with its own host about a
 # schema. Naming the installed version means the resolver sees apache-superset
 # as already satisfied and adds only what the extra pulls in.
-RUN VERSION="$(/app/.venv/bin/python -c 'import importlib.metadata as m; print(m.version(\"apache-superset\"))')" \
- && echo "superset ${VERSION}: adding the fastmcp extra" \
- && uv pip install --no-cache --python /app/.venv/bin/python \
-      "apache-superset[fastmcp]==${VERSION}" \
- && /app/.venv/bin/python -c "\
-import fastmcp, uvicorn; \
-print('fastmcp', fastmcp.__version__, '| uvicorn', uvicorn.__version__)"
+# The requirement is written to a file rather than interpolated through a
+# shell variable. `VERSION="$(python -c '...')"` needs double quotes inside
+# single quotes inside double quotes, and the layer Docker adds on top makes
+# that a quoting puzzle rather than a command — the first attempt reached
+# Python as `m.version(\"apache-superset\")` and died on the backslash.
+RUN /app/.venv/bin/python -c "import importlib.metadata as m; open('/tmp/mcp-req.txt', 'w').write('apache-superset[fastmcp]==' + m.version('apache-superset'))" \
+ && cat /tmp/mcp-req.txt \
+ && uv pip install --no-cache --python /app/.venv/bin/python -r /tmp/mcp-req.txt \
+ && rm /tmp/mcp-req.txt \
+ && /app/.venv/bin/python -c "import fastmcp, uvicorn; print('fastmcp', fastmcp.__version__, '| uvicorn', uvicorn.__version__)"
 
 # Owned by the user that will write into it during the build and read from it
 # at runtime.
