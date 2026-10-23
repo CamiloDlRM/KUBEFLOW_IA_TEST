@@ -322,3 +322,55 @@ class TestWhenSupersetIsNotThere:
         assert len(result.calls) == 1
         assert "stopped answering" in result.summary
         assert "connection lost" in result.summary
+
+
+class TestWhenTheModelApiRefuses:
+    """A 404 from Google is a configuration fact, not a crash.
+
+    Which model names a key may use depends on the account, so the name is
+    settable in the environment — and when it is wrong the message has to
+    carry Google's own explanation, because that is the part that says which
+    names would have worked.
+    """
+
+    def _refusing(self, status: int, body: str):
+        def generate(settings, model, contents, tools):
+            from core.superset_agent import DashboardRequestError
+
+            raise DashboardRequestError(
+                f"The model API refused the request: HTTP {status} "
+                f"for model {model!r}. {body}"
+            )
+
+        return generate
+
+    def test_the_model_name_comes_from_the_settings(self, settings):
+        seen = {}
+
+        def generate(settings, model, contents, tools):
+            seen["model"] = model
+            return text("done")
+
+        settings.dashboard_agent_model = "gemini-3-whatever"
+        run(generate, FakeMCP(), settings=settings)
+
+        assert seen["model"] == "gemini-3-whatever"
+
+    def test_an_explicit_model_still_wins(self, settings):
+        seen = {}
+
+        def generate(settings, model, contents, tools):
+            seen["model"] = model
+            return text("done")
+
+        run(generate, FakeMCP(), settings=settings, model="gemini-chosen")
+        assert seen["model"] == "gemini-chosen"
+
+    def test_a_refusal_names_the_model_and_carries_the_reason(self, settings):
+        body = "models/gemini-2.5-pro is not found for API version v1beta"
+        with pytest.raises(DashboardRequestError) as caught:
+            run(self._refusing(404, body), FakeMCP(), settings=settings)
+
+        message = str(caught.value)
+        assert "404" in message
+        assert "not found for API version" in message

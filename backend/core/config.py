@@ -111,6 +111,14 @@ class AppSettings(BaseSettings):
             "Empty turns the feature off rather than failing per request."
         ),
     )
+    dashboard_agent_model: str = Field(
+        default="gemini-2.5-pro",
+        description=(
+            "Which Gemini model the KPI maker drives. Settable here because "
+            "which names a given API key may use is an account fact, not a "
+            "code fact: `curl .../v1beta/models` lists the ones it has."
+        ),
+    )
     superset_public_url: str = Field(
         default="http://localhost:8088",
         description=(
