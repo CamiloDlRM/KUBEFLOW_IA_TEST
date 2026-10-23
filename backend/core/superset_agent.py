@@ -47,11 +47,12 @@ __all__ = [
     "build_dashboard",
 ]
 
-#: How many times the model may go round the loop. Each turn is one call to
-#: Gemini plus however many tools it asked for. Enough for "look at what is
-#: there, make a dataset, make four charts, make a dashboard", not enough to
-#: spin.
-MAX_TURNS = 12
+#: How many times the model may go round the loop, unless
+#: DASHBOARD_AGENT_MAX_TURNS says otherwise. Each turn is one model call plus
+#: however many tools it asked for. The first real run used all twelve of the
+#: old limit and needed more: a dataset, a chart schema, two charts and a
+#: dashboard is already eight calls before anything goes wrong once.
+MAX_TURNS = 20
 
 #: The tools a dashboard is built from. Superset offers ~45, and every one
 #: travels with every model call: on Groq's free tier that alone came to 10,303
@@ -76,12 +77,19 @@ DEFAULT_TOOLS = (
     "add_chart_to_existing_dashboard",
 )
 
-#: How much of one tool's answer the model is shown. A listing comes back as
-#: JSON that can run to thousands of tokens, the conversation carries every
-#: answer into every later call, and the budget is per minute. The full answer
-#: is still kept in the run, so nothing is lost from the record — only from
-#: what the model rereads.
+#: How much of a *listing* the model is shown. A listing comes back as JSON
+#: that can run to thousands of tokens, the conversation carries every answer
+#: into every later call, and a listing is paged: "ask for a narrower page" is
+#: a real thing to do. The full answer is still kept in the run.
+#:
+#: Only listings. Cutting everything was a mistake that cost a whole run: a
+#: chart-type schema cut at 2,500 characters is a schema whose end the model
+#: never sees, so it asked for it again — seven of twelve calls in the first
+#: run that reached Superset were get_chart_type_schema, each answered with the
+#: same truncated half and the advice to ask for something narrower, when there
+#: is nothing narrower to ask for.
 MAX_RESULT_CHARS = 2500
+TRUNCATED_PREFIX = "list_"
 
 SYSTEM_PROMPT = """You build dashboards in Apache Superset by calling the \
 tools you have been given.
@@ -245,9 +253,9 @@ def _select(tools: list[MCPTool], spec: str) -> list[MCPTool]:
     return chosen
 
 
-def _for_the_model(result: str) -> str:
-    """One tool answer, cut to what the model can afford to reread."""
-    if len(result) <= MAX_RESULT_CHARS:
+def _for_the_model(tool: str, result: str) -> str:
+    """One tool answer as the model rereads it: whole, unless it is a long listing."""
+    if not tool.startswith(TRUNCATED_PREFIX) or len(result) <= MAX_RESULT_CHARS:
         return result
     return (
         result[:MAX_RESULT_CHARS]
@@ -645,7 +653,8 @@ def build_dashboard(
         )
 
         run = DashboardRun(summary="")
-        for turn in range(1, MAX_TURNS + 1):
+        max_turns = settings.dashboard_agent_max_turns or MAX_TURNS
+        for turn in range(1, max_turns + 1):
             run.turns = turn
             content = call_model(settings, model, contents, declarations)
             parts = content.get("parts") or []
@@ -679,7 +688,7 @@ def build_dashboard(
                     {
                         "functionResponse": {
                             "name": name,
-                            "response": {"result": _for_the_model(result)},
+                            "response": {"result": _for_the_model(name, result)},
                         }
                     }
                 )
@@ -688,7 +697,7 @@ def build_dashboard(
         run.exhausted = True
         run.summary = (
             run.summary
-            or f"Stopped after {MAX_TURNS} turns without the model finishing."
+            or f"Stopped after {max_turns} turns without the model finishing."
         )
         logger.warning("superset_agent.exhausted", calls=len(run.calls))
         return run

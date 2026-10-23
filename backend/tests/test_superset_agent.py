@@ -693,14 +693,15 @@ class TestFittingAFreeTier:
         with none can only apologise."""
         assert len(self._offered(settings, "renamed_tool, another")) == len(self._superset())
 
-    def test_the_model_rereads_a_cut_answer_but_the_record_keeps_it_whole(self, settings):
+    def test_the_model_rereads_a_cut_listing_but_the_record_keeps_it_whole(self, settings):
         """The conversation carries every answer into every later call, so a
-        long listing is paid for again on each turn."""
+        long listing is paid for again on each turn — and a listing is paged,
+        so asking for a narrower page is a real thing to do."""
         from core.superset_agent import MAX_RESULT_CHARS
 
         long_answer = "x" * (MAX_RESULT_CHARS * 3)
-        mcp = FakeMCP(answers={"create_chart": long_answer})
-        generate = replies(wants("create_chart"), text("done"))
+        mcp = FakeMCP(answers={"list_datasets": long_answer})
+        generate = replies(wants("list_datasets"), text("done"))
 
         result = run(generate, mcp, settings=settings)
 
@@ -861,3 +862,29 @@ class TestARejectedToolCall:
             )
 
         assert len(sent) == 1
+
+
+    def test_a_schema_is_never_cut(self, settings):
+        """A schema whose end the model never sees is one it asks for again.
+        Seven of twelve calls in the first run that reached Superset were
+        get_chart_type_schema, each answered with the same truncated half."""
+        from core.superset_agent import MAX_RESULT_CHARS
+
+        schema = "{" + "s" * (MAX_RESULT_CHARS * 4) + "}"
+        mcp = FakeMCP(answers={"get_chart_type_schema": schema})
+        generate = replies(wants("get_chart_type_schema"), text("done"))
+
+        run(generate, mcp, settings=settings)
+
+        shown = answers_in(generate.contents)[0]["parts"][0]["functionResponse"]
+        assert shown["response"]["result"] == schema
+
+    def test_the_turn_limit_can_be_raised_in_the_environment(self, settings):
+        settings.dashboard_agent_max_turns = 3
+        forever = replies(*[wants("create_chart") for _ in range(10)])
+
+        result = run(forever, FakeMCP(), settings=settings)
+
+        assert result.turns == 3
+        assert result.exhausted is True
+        assert "3 turns" in result.summary
