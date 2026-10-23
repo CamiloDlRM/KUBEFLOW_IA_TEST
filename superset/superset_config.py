@@ -37,6 +37,21 @@ ENABLE_MCP_SERVICE = True
 #: value turns the shortcut off.
 MCP_DEV_USERNAME = os.environ.get("SUPERSET_MCP_DEV_USERNAME") or None
 
+#: Every tool under its real name, rather than behind a search.
+#:
+#: The default "compatibility mode" lists four tools — health_check,
+#: get_instance_info, search_tools, call_tool — and hides the ~45 real ones
+#: behind the search. That is built for chat clients juggling many servers in
+#: a small context. Our agent is the opposite case: one server, and a model
+#: that has to see `generate_chart` to think of calling it. In compatibility
+#: mode the first model to try this read the four names, concluded nothing
+#: could build a chart, and said so politely instead of searching.
+MCP_TOOL_SEARCH_CONFIG = {"enabled": False}
+
+#: Every tool's schema goes into every model call, a dozen calls per prompt.
+#: Compact keeps that affordable on a free tier's tokens-per-minute.
+MCP_NATIVE_TOOL_LIST_CONFIG = {"compact": True, "max_description_length": 300}
+
 # ---------------------------------------------------------------------------
 # Connecting to gold
 # ---------------------------------------------------------------------------

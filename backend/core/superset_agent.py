@@ -63,6 +63,16 @@ clean it, and do not invent columns: use only the ones named in the schema below
 - Build the dashboard out of the tools. Never answer with instructions for a \
 human to follow by hand.
 
+How to reach the gold table:
+- It lives in Superset's database named "Gold (DuckDB)". Find its id with \
+list_databases.
+- It is a Parquet object, read with DuckDB's read_parquet. The object's path is \
+given with the schema below. Build a virtual dataset on that database whose SQL \
+is: SELECT * FROM read_parquet('<that path>')
+- Before creating that dataset, check list_datasets: if one already reads the \
+same path, reuse it.
+- Then build charts on the dataset, and put them in one dashboard.
+
 How to work:
 - Look before you build. List what already exists rather than assuming.
 - If you have built a dashboard for this project already, FIND IT AND CHANGE \

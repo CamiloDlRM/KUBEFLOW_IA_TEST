@@ -66,6 +66,7 @@ RUN mkdir -p /app/duckdb_extensions && chown superset:superset /app/duckdb_exten
 
 COPY bootstrap.sh /app/bootstrap.sh
 COPY install_extensions.py /app/install_extensions.py
+COPY provision.py /app/provision.py
 RUN chmod +x /app/bootstrap.sh
 
 USER superset
