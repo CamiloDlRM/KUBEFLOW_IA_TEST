@@ -89,7 +89,7 @@ class AppSettings(BaseSettings):
         default="",
         description=(
             "Model used to generate training feedback. Leave empty to use the "
-            "provider default (claude-opus-4-8 / gemini-2.5-pro / llama3.1)."
+            "provider default (claude-opus-4-8 / gemini-pro-latest / llama3.1)."
         ),
     )
     anthropic_api_key: str = Field(
@@ -109,6 +109,16 @@ class AppSettings(BaseSettings):
         description=(
             "Superset's MCP server, which is what the dashboard agent drives. "
             "Empty turns the feature off rather than failing per request."
+        ),
+    )
+    dashboard_agent_model: str = Field(
+        default="gemini-pro-latest",
+        description=(
+            "Which Gemini model the KPI maker drives. An alias rather than a "
+            "pinned version: gemini-2.5-pro was pinned here until Google "
+            "closed it to new accounts and began answering 404. Settable "
+            "because which names a key may use is an account fact, not a code "
+            "fact: `curl .../v1beta/models` lists the ones it has."
         ),
     )
     superset_public_url: str = Field(

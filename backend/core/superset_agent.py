@@ -216,7 +216,15 @@ def _gemini(
         },
         timeout=300,
     )
-    response.raise_for_status()
+    if response.status_code >= 400:
+        # Google's body says which model names it would have accepted, and a
+        # 404 here is almost always a model name this key cannot use rather
+        # than anything wrong with the request. Raised as our own error so it
+        # reaches the user as a message instead of as a 500 with a trace.
+        raise DashboardRequestError(
+            f"The model API refused the request: HTTP {response.status_code} "
+            f"for model {model!r}. {response.text[:400]}"
+        )
     data = response.json()
 
     candidates = data.get("candidates") or []
@@ -234,7 +242,7 @@ def build_dashboard(
     mcp_url: str,
     history: list[tuple[str, str]] | None = None,
     settings: AppSettings | None = None,
-    model: str = "gemini-2.5-pro",
+    model: str = "",
     generate: Callable[..., dict[str, Any]] | None = None,
     client: MCPClient | None = None,
 ) -> DashboardRun:
@@ -246,6 +254,10 @@ def build_dashboard(
             what exists rather than left to discover it, because discovery
             costs a tool call per guess and the platform already knows.
         mcp_url: Where Superset's MCP server is listening.
+        model: Which Gemini model to drive. Empty takes
+            ``settings.dashboard_agent_model``, which is settable in the
+            environment — a model name that a particular API key cannot use is
+            a configuration problem, and fixing it should not need a rebuild.
         history: Earlier exchanges, oldest first, as ``(request, summary)``.
             This is what makes "move that chart" mean anything: without it the
             model meets each prompt as its first, and builds a second dashboard
@@ -260,6 +272,7 @@ def build_dashboard(
     settings = settings or get_settings()
     if not settings.gemini_api_key:
         raise DashboardRequestError("GEMINI_API_KEY is not set.")
+    model = model or settings.dashboard_agent_model
 
     call_model = generate or _gemini
     opened = client is None

@@ -212,7 +212,7 @@ class TestProviderConfig:
         assert resolve_model(settings) == "claude-opus-4-8"
 
         settings = self._settings(monkeypatch, AI_ADVISOR_PROVIDER="gemini")
-        assert resolve_model(settings) == "gemini-2.5-pro"
+        assert resolve_model(settings) == "gemini-pro-latest"
 
         settings = self._settings(monkeypatch, AI_ADVISOR_PROVIDER="ollama")
         assert resolve_model(settings) == "llama3.1"

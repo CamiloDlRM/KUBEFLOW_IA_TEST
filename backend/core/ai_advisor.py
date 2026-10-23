@@ -26,9 +26,13 @@ from core.config import AppSettings, get_settings
 logger = structlog.get_logger(__name__)
 
 # Default model per provider, used when AI_ADVISOR_MODEL is left empty.
+#: Aliases rather than pinned versions where the provider offers them.
+#: `gemini-2.5-pro` was pinned here until Google closed it to new accounts and
+#: started answering 404 — a pinned name is a name that can be retired under
+#: you, and the alias is the one thing that cannot.
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
-    "gemini": "gemini-2.5-pro",
+    "gemini": "gemini-pro-latest",
     "ollama": "llama3.1",
 }
 
