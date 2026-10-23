@@ -17,7 +17,8 @@ import InputPalette from '../components/canvas/InputPalette';
 import RunList, { BRANCH_CODE } from '../components/canvas/RunList';
 import { Connector, InputNode, ModelNode, PhaseNode, cardStatusOfPhase } from '../components/canvas/Nodes';
 import { InputDetail, ModelDetail, PhaseDetail } from '../components/canvas/NodeDetail';
-import { latestPhases, mountedOf, phaseCards } from '../components/canvas/phases';
+import DataPeek from '../components/canvas/DataPeek';
+import { latestPhases, mountedOf, phaseCards, sameChoice } from '../components/canvas/phases';
 import type { PipelineInputChoice, Project, ProjectRepository } from '../types';
 import { repoNameFromUrl } from '../utils/format';
 
@@ -86,6 +87,7 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
   const queryClient = useQueryClient();
   const [selection, setSelection] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
+  const [peek, setPeek] = useState<{ choice: PipelineInputChoice; label: string } | null>(null);
 
   const runsQuery = useQuery({
     queryKey: ['repo-runs', repo.id],
@@ -181,17 +183,35 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
 
       <div className="grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
         <aside className="space-y-6">
-          <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4">
+          <section className="relative rounded-2xl border border-slate-700 bg-slate-900/40 p-4">
             <h3 className="text-sm font-semibold text-slate-100">Data</h3>
-            <p className="mb-3 mt-0.5 text-xs text-slate-500">Drag a layer onto Input.</p>
+            <p className="mb-3 mt-0.5 text-xs text-slate-500">
+              Click to preview, drag onto Input to use.
+            </p>
             <InputPalette
               options={options.data}
               current={inputState.data?.choice ?? {}}
+              previewing={peek?.choice ?? null}
               disabled={choose.isPending}
               onChoose={(choice) => choose.mutate(choice)}
+              onPreview={(choice, label) =>
+                setPeek(peek && sameChoice(peek.choice, choice) ? null : { choice, label })
+              }
             />
             {options.isError && (
               <p className="mt-2 text-xs text-red-300">{(options.error as Error).message}</p>
+            )}
+            {peek && (
+              <DataPeek
+                projectId={project.id}
+                choice={peek.choice}
+                label={peek.label}
+                onClose={() => setPeek(null)}
+                onUse={() => {
+                  choose.mutate(peek.choice);
+                  setPeek(null);
+                }}
+              />
             )}
           </section>
           <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4">
@@ -269,7 +289,14 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
 
           {focus === 'input' && <InputDetail state={inputState.data} run={shownRun} />}
           {focus === 'model' && <ModelDetail run={shownRun} />}
-          {focused && <PhaseDetail card={focused} fromRun={fromRun} />}
+          {focused && (
+            <PhaseDetail
+              card={focused}
+              fromRun={fromRun}
+              notebookPath={head.data?.notebook_path || repo.notebook_path}
+              branch={(fromRun && shownRun?.branch) || repo.branch}
+            />
+          )}
           {!focus && (
             <p className="text-center text-xs text-slate-500">
               Click a card to see its code and what it printed.

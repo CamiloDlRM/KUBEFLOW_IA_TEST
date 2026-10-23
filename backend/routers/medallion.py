@@ -290,12 +290,16 @@ async def preview_layer(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
     source_id: int | None = None,
+    version: int | None = Query(default=None, ge=1, description="A gold build other than the newest."),
     limit: int = Query(default=20, ge=1, le=200),
 ) -> LayerPreviewResponse:
     """Return the newest object of ``layer`` and its first rows.
 
     The same rows appear in bronze and in silver, which is the point: put the
     two side by side and the cleaning is visible rather than asserted.
+
+    Gold takes a ``version``, so a pinned build can be looked at before a
+    pipeline is pointed at it.
     """
     get_visible_project_or_404(session, project_id, current_user)
     if layer not in medallion.LAYERS:
@@ -311,6 +315,14 @@ async def preview_layer(
                 detail="This project has not built a gold table yet.",
             )
         key = table.object_key
+        if version is not None and version != table.version:
+            key = medallion.gold_key(project_id, table.name, version)
+            stored = medallion.list_layer("gold", medallion.gold_prefix(project_id, table.name))
+            if key not in {item.key for item in stored}:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Gold v{version} is not in object storage.",
+                )
     else:
         if source_id is not None:
             # Confirm the source belongs to this project before reading its

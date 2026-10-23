@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import type { MountedInput, NotebookCell, Pipeline, PipelineInputState } from '../../types';
+import type { MountedInput, Pipeline, PipelineInputState } from '../../types';
+import CodeEditor from './CodeEditor';
 import { STATUS_STYLES } from './Nodes';
 import { latestPhases, mountedOf, type PhaseCard } from './phases';
 
@@ -10,13 +11,6 @@ import { latestPhases, mountedOf, type PhaseCard } from './phases';
  * The code is the run's own copy when there is a run, so it is what executed
  * rather than what the branch says today.
  */
-
-const CELL_STATUS: Record<NotebookCell['status'], string> = {
-  pending: 'text-slate-500',
-  running: 'text-blue-300',
-  completed: 'text-emerald-300',
-  failed: 'text-red-300',
-};
 
 function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
@@ -33,7 +27,17 @@ function Panel({ title, subtitle, children }: { title: string; subtitle?: string
   );
 }
 
-export function PhaseDetail({ card, fromRun }: { card: PhaseCard; fromRun: boolean }) {
+export function PhaseDetail({
+  card,
+  fromRun,
+  notebookPath,
+  branch,
+}: {
+  card: PhaseCard;
+  fromRun: boolean;
+  notebookPath: string;
+  branch: string;
+}) {
   if (card.status === 'missing') {
     return (
       <Panel title={card.label}>
@@ -46,37 +50,18 @@ export function PhaseDetail({ card, fromRun }: { card: PhaseCard; fromRun: boole
   }
 
   return (
-    <Panel
+    <CodeEditor
       title={card.label}
-      subtitle={`${card.caption} · ${STATUS_STYLES[card.status].label} · ${
-        fromRun ? 'the code this run executed' : 'the code on the branch now'
-      }`}
-    >
-      {card.cells.map((cell) => (
-        <article key={cell.index} className="overflow-hidden rounded-lg border border-slate-800">
-          <header className="flex items-center justify-between bg-slate-950/60 px-3 py-1.5 text-[11px]">
-            <span className="font-mono text-slate-500">
-              cell {cell.index + 1}
-              {cell.tags.filter((tag) => !tag.startsWith('mlops:')).map((tag) => ` · ${tag}`)}
-            </span>
-            {fromRun && <span className={CELL_STATUS[cell.status]}>{cell.status}</span>}
-          </header>
-          <pre className="max-h-80 overflow-auto bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-200">
-            {cell.source || ' '}
-          </pre>
-          {cell.output && (
-            <pre className="max-h-48 overflow-auto border-t border-slate-800 bg-black/40 px-3 py-2 font-mono text-[11px] text-slate-400">
-              {cell.output}
-            </pre>
-          )}
-          {cell.error && (
-            <p className="border-t border-red-900/60 bg-red-950/40 px-3 py-2 font-mono text-[11px] text-red-300">
-              {cell.error}
-            </p>
-          )}
-        </article>
-      ))}
-    </Panel>
+      notebookPath={notebookPath}
+      branch={branch}
+      cells={card.cells}
+      fromRun={fromRun}
+      status={
+        fromRun
+          ? `${STATUS_STYLES[card.status].label} · the code this run executed`
+          : 'the code on the branch now'
+      }
+    />
   );
 }
 

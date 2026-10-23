@@ -509,13 +509,14 @@ export async function getMedallion(projectId: number): Promise<Medallion> {
 export async function previewLayer(
   projectId: number,
   layer: Layer,
-  options: { sourceId?: number | null; limit?: number } = {},
+  options: { sourceId?: number | null; version?: number | null; limit?: number } = {},
 ): Promise<LayerPreview> {
   const { data } = await apiClient.get<LayerPreview>(
     `/projects/${projectId}/medallion/${layer}/preview`,
     {
       params: {
         ...(options.sourceId ? { source_id: options.sourceId } : {}),
+        ...(options.version ? { version: options.version } : {}),
         ...(options.limit ? { limit: options.limit } : {}),
       },
     },
