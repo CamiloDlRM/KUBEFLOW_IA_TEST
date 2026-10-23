@@ -111,6 +111,22 @@ class AppSettings(BaseSettings):
             "Empty turns the feature off rather than failing per request."
         ),
     )
+    dashboard_agent_provider: Literal["gemini", "openai"] = Field(
+        default="gemini",
+        description=(
+            "Which API shape the KPI maker speaks. 'openai' covers everything "
+            "serving the OpenAI chat API — Groq, OpenRouter and most of the "
+            "rest — so moving between them is a base URL and a model name."
+        ),
+    )
+    dashboard_agent_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        description="Where to send them (provider=openai). No trailing path.",
+    )
+    dashboard_agent_api_key: str = Field(
+        default="",
+        description="Bearer token for that endpoint (provider=openai).",
+    )
     dashboard_agent_model: str = Field(
         default="gemini-pro-latest",
         description=(

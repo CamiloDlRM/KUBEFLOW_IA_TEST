@@ -374,3 +374,269 @@ class TestWhenTheModelApiRefuses:
         message = str(caught.value)
         assert "404" in message
         assert "not found for API version" in message
+
+
+class TestTheOpenAiCompatibleBackend:
+    """Groq, OpenRouter and the rest: one dialect, translated at the edges.
+
+    The loop speaks Gemini's shape and keeps doing so, so what is worth
+    pinning is the translation — it is the part that fails silently. A result
+    attached to the wrong call, or arguments arriving as a JSON string the
+    loop never parses, produce a model that is merely confused rather than an
+    error anyone can see.
+    """
+
+    def _settings(self):
+        return AppSettings(
+            dashboard_agent_provider="openai",
+            dashboard_agent_api_key="gsk-for-tests",
+            dashboard_agent_base_url="https://api.groq.com/openai/v1",
+            dashboard_agent_model="openai/gpt-oss-120b",
+        )
+
+    def _reply(self, monkeypatch, message):
+        import httpx
+
+        from core import superset_agent
+
+        sent = {}
+
+        def post(url, **kwargs):
+            sent["url"] = url
+            sent["headers"] = kwargs.get("headers", {})
+            sent["json"] = kwargs.get("json", {})
+            return httpx.Response(200, json={"choices": [{"message": message}]})
+
+        monkeypatch.setattr(httpx, "post", post)
+        return superset_agent, sent
+
+    def test_it_posts_where_the_openai_dialect_lives(self, monkeypatch):
+        agent, sent = self._reply(monkeypatch, {"content": "hola"})
+        agent._openai_compatible(self._settings(), "m", [], [], sleep=lambda _: None)
+
+        assert sent["url"] == "https://api.groq.com/openai/v1/chat/completions"
+        assert sent["headers"]["Authorization"] == "Bearer gsk-for-tests"
+
+    def test_the_schemas_travel_whole(self, monkeypatch):
+        """The point of coming this way: no OpenAPI subset to trim down to."""
+        agent, sent = self._reply(monkeypatch, {"content": "ok"})
+        tools = [
+            {
+                "name": "create_chart",
+                "description": "Make one",
+                "parameters": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"title": {"type": "string"}},
+                },
+            }
+        ]
+        agent._openai_compatible(self._settings(), "m", [], tools, sleep=lambda _: None)
+
+        sent_tool = sent["json"]["tools"][0]
+        assert sent_tool["type"] == "function"
+        assert sent_tool["function"]["parameters"]["$schema"], "not trimmed"
+        assert sent_tool["function"]["parameters"]["additionalProperties"] is False
+
+    def test_a_tool_call_comes_back_as_the_loop_expects(self, monkeypatch):
+        agent, _ = self._reply(
+            monkeypatch,
+            {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {
+                            "name": "create_chart",
+                            "arguments": '{"title": "By class"}',
+                        },
+                    }
+                ],
+            },
+        )
+
+        content = agent._openai_compatible(
+            self._settings(), "m", [], [], sleep=lambda _: None
+        )
+
+        # Parsed, not handed over as the JSON string the API sends.
+        assert content["parts"] == [
+            {"functionCall": {"name": "create_chart", "args": {"title": "By class"}}}
+        ]
+
+    def test_unparseable_arguments_do_not_end_the_run(self, monkeypatch):
+        """A model that emits broken JSON has made a mistake it can recover
+        from: the tool refuses the empty call and says why."""
+        agent, _ = self._reply(
+            monkeypatch,
+            {
+                "tool_calls": [
+                    {"function": {"name": "create_chart", "arguments": "{oops"}}
+                ]
+            },
+        )
+
+        content = agent._openai_compatible(
+            self._settings(), "m", [], [], sleep=lambda _: None
+        )
+        assert content["parts"][0]["functionCall"]["args"] == {}
+
+    def test_a_result_names_the_call_it_answers(self, monkeypatch):
+        """OpenAI pairs a result to its call by id and Gemini's shape has
+        none. Mismatch them and the model is told the answer to a question it
+        did not ask."""
+        agent, sent = self._reply(monkeypatch, {"content": "done"})
+        contents = [
+            {"role": "user", "parts": [{"text": "build it"}]},
+            {
+                "role": "model",
+                "parts": [
+                    {"functionCall": {"name": "a", "args": {}}},
+                    {"functionCall": {"name": "b", "args": {}}},
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {"functionResponse": {"name": "a", "response": {"result": "ra"}}},
+                    {"functionResponse": {"name": "b", "response": {"result": "rb"}}},
+                ],
+            },
+        ]
+
+        agent._openai_compatible(self._settings(), "m", contents, [], sleep=lambda _: None)
+
+        messages = sent["json"]["messages"]
+        assistant = next(m for m in messages if m.get("tool_calls"))
+        results = [m for m in messages if m.get("role") == "tool"]
+
+        assert [c["id"] for c in assistant["tool_calls"]] == [
+            r["tool_call_id"] for r in results
+        ], "each result carries the id of the call it answers"
+        assert [r["content"] for r in results] == ["ra", "rb"]
+
+    def test_the_system_prompt_leads_the_conversation(self, monkeypatch):
+        agent, sent = self._reply(monkeypatch, {"content": "ok"})
+        agent._openai_compatible(
+            self._settings(),
+            "m",
+            [{"role": "user", "parts": [{"text": "hola"}]}],
+            [],
+            sleep=lambda _: None,
+        )
+
+        messages = sent["json"]["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1] == {"role": "user", "content": "hola"}
+
+    def test_the_provider_decides_which_backend_runs(self, monkeypatch):
+        """End to end through build_dashboard, with only the HTTP faked."""
+        agent, sent = self._reply(monkeypatch, {"content": "Built it."})
+
+        result = build_dashboard(
+            "a dashboard",
+            schema="gold(a TEXT)",
+            mcp_url="http://superset-mcp:5008/mcp",
+            client=FakeMCP(),
+            settings=self._settings(),
+        )
+
+        assert result.summary == "Built it."
+        assert sent["json"]["model"] == "openai/gpt-oss-120b"
+
+    def test_without_a_token_it_says_which_one(self):
+        settings = self._settings()
+        settings.dashboard_agent_api_key = ""
+
+        with pytest.raises(DashboardRequestError, match="DASHBOARD_AGENT_API_KEY"):
+            build_dashboard(
+                "x", schema="y", mcp_url="z", client=FakeMCP(), settings=settings
+            )
+
+
+class TestRidingOutADemandSpike:
+    """A 503 means "ask again", and a run makes up to MAX_TURNS model calls.
+
+    Without retries the chance of finishing a dashboard on a busy free tier is
+    the chance of not meeting one spike a dozen times in a row.
+    """
+
+    def _answers(self, monkeypatch, *responses):
+        import httpx
+
+        queue = iter(responses)
+        calls = []
+
+        def post(url, **kwargs):
+            calls.append(url)
+            return next(queue)
+
+        monkeypatch.setattr(httpx, "post", post)
+        return calls
+
+    @staticmethod
+    def _busy(headers=None):
+        import httpx
+
+        return httpx.Response(
+            503, json={"error": {"code": 503, "message": "high demand"}}, headers=headers or {}
+        )
+
+    @staticmethod
+    def _ok():
+        import httpx
+
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "done"}]}}]}
+        )
+
+    def test_a_spike_is_ridden_out_rather_than_failing_the_run(self, monkeypatch, settings):
+        from core import superset_agent
+
+        calls = self._answers(monkeypatch, self._busy(), self._busy(), self._ok())
+        slept = []
+
+        content = superset_agent._gemini(settings, "m", [], [], sleep=slept.append)
+
+        assert content["parts"][0]["text"] == "done"
+        assert len(calls) == 3
+        assert slept == [2.0, 4.0], "backs off rather than hammering"
+
+    def test_it_gives_up_eventually_and_says_how_hard_it_tried(self, monkeypatch, settings):
+        from core import superset_agent
+
+        calls = self._answers(monkeypatch, *[self._busy() for _ in range(superset_agent._ATTEMPTS)])
+
+        with pytest.raises(DashboardRequestError) as caught:
+            superset_agent._gemini(settings, "m", [], [], sleep=lambda _: None)
+
+        assert len(calls) == superset_agent._ATTEMPTS
+        assert "attempts" in str(caught.value)
+        assert "high demand" in str(caught.value)
+
+    def test_a_refusal_that_will_not_change_is_not_retried(self, monkeypatch, settings):
+        """A 404 is the wrong model name. Asking again more slowly does not
+        make it the right one."""
+        import httpx
+
+        from core import superset_agent
+
+        calls = self._answers(monkeypatch, httpx.Response(404, json={"error": {}}))
+
+        with pytest.raises(DashboardRequestError) as caught:
+            superset_agent._gemini(settings, "m", [], [], sleep=lambda _: None)
+
+        assert len(calls) == 1
+        assert "attempts" not in str(caught.value)
+
+    def test_the_server_decides_the_wait_when_it_says_so(self, monkeypatch, settings):
+        from core import superset_agent
+
+        self._answers(monkeypatch, self._busy({"Retry-After": "7"}), self._ok())
+        slept = []
+
+        superset_agent._gemini(settings, "m", [], [], sleep=slept.append)
+
+        assert slept == [7.0]
