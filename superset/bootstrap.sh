@@ -36,6 +36,13 @@ case "$ROLE" in
     echo "superset/web: initialising roles and permissions"
     superset init
 
+    # The gold connection. Not fatal: Superset is still worth having up if
+    # this fails, but the agent will have nothing to chart, so it is said.
+    if ! python /app/provision.py; then
+      echo "superset/web: WARNING could not register the gold database;" >&2
+      echo "superset/web: the KPI maker will find nothing to build on." >&2
+    fi
+
     exec gunicorn \
       --bind "0.0.0.0:8088" \
       --workers 4 \

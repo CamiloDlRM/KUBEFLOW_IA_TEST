@@ -74,37 +74,29 @@ The first start migrates Superset's metadata database, seeds the admin user
 from `SUPERSET_ADMIN_*`, and runs `superset init`; expect it to take a minute
 or two. Then <http://localhost:8088>.
 
+### The gold connection is made for you
+
+`bootstrap.sh web` runs `provision.py` on every start, which registers a
+database called **Gold (DuckDB)** — or updates it, if it is already there. It
+has to be done at startup because there is no MCP tool for creating a
+connection: the agent can build datasets on a database, not make one, so
+without this it meets a Superset with nothing to chart.
+
+It is DuckDB in memory, with `httpfs` reaching MinIO, configured from the
+container's own MinIO credentials. It holds no data and no views. A dataset on
+it is `SELECT * FROM read_parquet('s3://gold/...')`, which reads the built gold
+object directly — the agent is told the exact path with the schema.
+
+`extension_directory` in its settings is not optional. `httpfs` is baked into
+the image at `/app/duckdb_extensions` rather than under `$HOME`, because
+`$HOME` is `/app/superset_home` and compose mounts a volume there — anything
+baked underneath it would be hidden the moment the container starts.
+
 ### Verify it can read gold
 
-This is the step worth doing before anything is built on top, because it
-exercises the one part that is new: DuckDB reaching MinIO over `httpfs`.
-
-In **SQL Lab**, add a database with URI `duckdb:///:memory:` and these engine
-parameters:
-
-```json
-{
-  "connect_args": {
-    "preload_extensions": ["httpfs"],
-    "config": {
-      "extension_directory": "/app/duckdb_extensions",
-      "s3_endpoint": "minio:9000",
-      "s3_access_key_id": "minioadmin",
-      "s3_secret_access_key": "minioadmin",
-      "s3_use_ssl": false,
-      "s3_url_style": "path"
-    }
-  }
-}
-```
-
-`extension_directory` is not optional. `httpfs` is baked into the image at that
-path rather than under `$HOME`, because `$HOME` is `/app/superset_home` and
-compose mounts a volume there — anything baked underneath it would be hidden
-the moment the container starts. A connection that does not name the directory
-looks in the empty default and tries to download the extension instead.
-
-Then run, against a project that has a gold build:
+Worth doing before blaming the agent, because it exercises the one part that is
+new: DuckDB reaching MinIO. In **SQL Lab**, pick **Gold (DuckDB)** and run,
+against a project that has a gold build:
 
 ```sql
 SELECT count(*) FROM read_parquet('s3://gold/project-4/gold/v0002.parquet');
