@@ -338,3 +338,80 @@ class TestStructuredAnswers:
         answer = server(handler).call("create_virtual_dataset", {})
         assert answer.startswith("The tool reported an error")
         assert "no such table" in answer
+
+
+class TestAStreamWithMoreThanTheAnswer:
+    """The server may log and report progress on the stream before answering.
+
+    Reading the first message returned a log line as if it were the result —
+    `{}` once unwrapped — for every Superset tool that logs while it works,
+    which is all the listings. The model asked for the gold database a dozen
+    times and was answered each time with a log line.
+    """
+
+    @staticmethod
+    def _stream(*messages: dict) -> httpx.Response:
+        body = "".join(f"event: message\ndata: {json.dumps(m)}\n\n" for m in messages)
+        return httpx.Response(
+            200, text=body, headers={"content-type": "text/event-stream"}
+        )
+
+    def test_the_answer_is_found_behind_the_notifications(self):
+        def handler(request):
+            body = json.loads(request.content)
+            return self._stream(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/message",
+                    "params": {"level": "info", "data": "Listing databases"},
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {"progress": 1, "total": 2},
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "content": [{"type": "text", "text": "Gold (DuckDB)"}]
+                    },
+                },
+            )
+
+        assert server(handler).call("list_databases", {"request": {}}) == "Gold (DuckDB)"
+
+    def test_the_answer_is_the_one_carrying_our_id(self):
+        def handler(request):
+            body = json.loads(request.content)
+            return self._stream(
+                {"jsonrpc": "2.0", "id": 999, "result": {"content": [{"type": "text", "text": "not ours"}]}},
+                {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": "ours"}]}},
+            )
+
+        assert server(handler).call("x", {}) == "ours"
+
+    def test_an_event_whose_data_spans_several_lines_is_read_whole(self):
+        def handler(request):
+            body = json.loads(request.content)
+            message = json.dumps(
+                {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": "whole"}]}},
+                indent=1,
+            )
+            data = "\n".join(f"data: {line}" for line in message.split("\n"))
+            return httpx.Response(
+                200,
+                text=f"event: message\n{data}\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+
+        assert server(handler).call("x", {}) == "whole"
+
+    def test_a_stream_of_only_notifications_says_so(self):
+        def handler(request):
+            return self._stream(
+                {"jsonrpc": "2.0", "method": "notifications/message", "params": {}}
+            )
+
+        with pytest.raises(MCPError, match="no response, only 1 notification"):
+            server(handler).call("x", {})
