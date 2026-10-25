@@ -70,6 +70,32 @@ def uses_project_dataset(notebook: dict[str, Any]) -> bool:
     return False
 
 
+_READERS = {
+    "csv": re.compile(r"\bread_csv\s*\("),
+    "parquet": re.compile(r"\bread_parquet\s*\("),
+}
+
+
+def dataset_format(notebook: dict[str, Any]) -> str | None:
+    """The file format the notebook's code reads its data with.
+
+    ``"csv"`` or ``"parquet"`` when the code calls only that reader; ``None``
+    when it calls both (it handles either, so the file is left as it is) or
+    neither (nothing to go on).
+    """
+    found = set()
+    for cell in notebook.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        source = cell.get("source", "")
+        if isinstance(source, list):
+            source = "".join(source)
+        # A commented-out alternative is not a reader the code calls.
+        source = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+        found.update(name for name, pattern in _READERS.items() if pattern.search(source))
+    return found.pop() if len(found) == 1 else None
+
+
 def validate_required_tags(notebook: dict[str, Any]) -> None:
     """Validate that the notebook contains all required MLOps tags.
 

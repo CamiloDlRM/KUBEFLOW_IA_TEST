@@ -55,6 +55,8 @@ export interface PipelineMetrics {
 export interface Pipeline {
   id: string;
   repo_id: number;
+  /** `null` for runs older than projects, which have no pipeline canvas. */
+  project_id?: number | null;
   status: PipelineStatus;
   commit_sha: string;
   branch: string;

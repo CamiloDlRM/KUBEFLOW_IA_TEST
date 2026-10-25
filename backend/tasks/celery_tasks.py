@@ -508,6 +508,7 @@ def run_pipeline(
     from models.schemas import Dataset, Pipeline, Project, Repository, ModelDeployment
     from core.notebook_parser import (
         extract_config,
+        dataset_format,
         notebook_cells,
         uses_project_dataset,
         validate_required_tags,
@@ -792,6 +793,31 @@ def run_pipeline(
                     "and DATASET_PATH was not injected.",
                 )
                 log.info("pipeline.phase.dataset.skipped", repo_id=repo_id)
+
+            if dataset_path:
+                wanted = dataset_format(notebook)
+                try:
+                    converted = pipeline_input.match_reader(Path(dataset_path), wanted)
+                except Exception as exc:
+                    message = f"Failed to convert the dataset to {wanted} for the notebook: {exc}"
+                    _phase("dataset", "failed", message)
+                    raise ValueError(message) from exc
+                if str(converted) != dataset_path:
+                    dataset_path = str(converted)
+                    _phase(
+                        "dataset",
+                        "success",
+                        f"Converted to {wanted.upper()} because the notebook reads it with "
+                        f"read_{wanted}. DATASET_PATH is now {dataset_path}."
+                        + (
+                            " CSV keeps no column types (dates, codes with leading zeros, "
+                            "nullable integers come back as text or floats); read it with "
+                            "read_parquet to keep them."
+                            if wanted == "csv"
+                            else ""
+                        ),
+                    )
+                    log.info("pipeline.phase.dataset.converted", format=wanted)
 
             # Start the MLflow run BEFORE papermill so the notebook logs
             # metrics into this same run (avoids the 0.0 accuracy bug).

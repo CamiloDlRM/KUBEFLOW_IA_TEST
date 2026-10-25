@@ -8,6 +8,7 @@ import pytest
 
 from core.notebook_parser import (
     REQUIRED_TAGS,
+    dataset_format,
     extract_config,
     uses_project_dataset,
     get_cells_by_tag,
@@ -256,3 +257,33 @@ class TestUsesProjectDataset:
         load = lambda name: json.loads((root / name).read_text(encoding="utf-8"))  # noqa: E731
         assert uses_project_dataset(load("example_dataset_notebook.ipynb"))
         assert not uses_project_dataset(load("example_notebook.ipynb"))
+
+
+class TestDatasetFormat:
+    """dataset_format(): which reader the notebook's code calls."""
+
+    @staticmethod
+    def _nb(*sources, cell_type="code"):
+        return {"cells": [{"cell_type": cell_type, "metadata": {}, "source": s} for s in sources]}
+
+    def test_read_csv_alone_wants_csv(self):
+        assert dataset_format(self._nb("df = pd.read_csv(DATASET_PATH)")) == "csv"
+
+    def test_read_parquet_alone_wants_parquet(self):
+        assert dataset_format(self._nb(["import pandas as pd\n", "df = pd.read_parquet(p)"])) == "parquet"
+
+    def test_both_readers_leave_the_file_as_it_is(self):
+        """A notebook that branches on the extension handles either."""
+        nb = self._nb("df = pd.read_parquet(p) if p.endswith('.parquet') else pd.read_csv(p)")
+        assert dataset_format(nb) is None
+
+    def test_a_commented_out_reader_does_not_count(self):
+        nb = self._nb("df = pd.read_csv(DATASET_PATH)\n# df = pd.read_parquet(DATASET_PATH)")
+        assert dataset_format(nb) == "csv"
+
+    def test_no_reader_is_nothing_to_go_on(self):
+        assert dataset_format(self._nb("df = load(DATASET_PATH)")) is None
+
+    def test_markdown_does_not_count(self):
+        assert dataset_format(self._nb("Use `pd.read_csv(...)` locally", cell_type="markdown")) is None
+

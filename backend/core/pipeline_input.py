@@ -214,6 +214,29 @@ def mount(resolved: ResolvedInput, directory: Path) -> Path:
     return target
 
 
+def match_reader(path: Path, wanted: str | None) -> Path:
+    """Convert the mounted file to the format the notebook reads, if it differs.
+
+    The platform stores layers as Parquet, but a notebook written against a
+    local CSV file calls ``read_csv``; handing it Parquet fails on bytes it
+    cannot decode. Only CSV and Parquet are converted; anything else, or a
+    file already in the wanted format, is returned untouched.
+    """
+    current = path.suffix.lower().lstrip(".")
+    if wanted not in ("csv", "parquet") or current not in ("csv", "parquet") or current == wanted:
+        return path
+
+    import pandas as pd
+
+    target = path.with_suffix(f".{wanted}")
+    if wanted == "csv":
+        pd.read_parquet(path).to_csv(target, index=False)
+    else:
+        pd.read_csv(path).to_parquet(target, index=False)
+    path.unlink()
+    return target
+
+
 # ---------------------------------------------------------------------------
 # What can be chosen
 # ---------------------------------------------------------------------------
