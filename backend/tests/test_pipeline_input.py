@@ -18,7 +18,7 @@ import pytest
 from core import medallion
 from core.medallion import write_typed
 from core.notebook_parser import notebook_cells
-from core.pipeline_input import InputChoice, InputError, mount, options, resolve
+from core.pipeline_input import InputChoice, InputError, match_reader, mount, options, resolve
 from models.schemas import DataSource, GoldTable
 from tests.conftest import OTHER_USER_ID, seed_pipeline, seed_project, seed_repo
 from tests.test_ingestion_task import FakeObjectStore
@@ -217,6 +217,43 @@ class TestMount:
         rows = sorted(zip(stacked["patient_id"], stacked["age"], stacked["ward"]))
         assert rows == [("p1", 44, None), ("p2", 39, None), ("p3", 71, "B")]
         assert not (tmp_path / "mounted" / "parts").exists()
+
+
+class TestMatchReader:
+    """The mounted file follows the reader the notebook calls."""
+
+    def test_parquet_becomes_csv_for_a_read_csv_notebook(self, tmp_path):
+        import pandas as pd
+
+        source = tmp_path / "gold-v0001.parquet"
+        pd.DataFrame({"alcohol": [14.2, 13.1], "target": [0, 1]}).to_parquet(source, index=False)
+
+        path = match_reader(source, "csv")
+
+        assert path.name == "gold-v0001.csv"
+        assert not source.exists()
+        assert pd.read_csv(path).to_dict("list") == {"alcohol": [14.2, 13.1], "target": [0, 1]}
+
+    def test_csv_becomes_parquet_for_a_read_parquet_notebook(self, tmp_path):
+        source = tmp_path / "wine.csv"
+        source.write_text("alcohol,target\n14.2,0\n")
+
+        path = match_reader(source, "parquet")
+
+        assert path.suffix == ".parquet"
+        assert pq.read_table(path).to_pydict() == {"alcohol": [14.2], "target": [0]}
+
+    @pytest.mark.parametrize("name, wanted", [
+        ("gold.parquet", "parquet"),  # already right
+        ("gold.parquet", None),       # the notebook reads both, or neither
+        ("data.xlsx", "csv"),         # not a format this converts
+    ])
+    def test_otherwise_the_file_is_left_alone(self, tmp_path, name, wanted):
+        source = tmp_path / name
+        source.write_bytes(b"untouched")
+
+        assert match_reader(source, wanted) == source
+        assert source.read_bytes() == b"untouched"
 
 
 # ---------------------------------------------------------------------------
