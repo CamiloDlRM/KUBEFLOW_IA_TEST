@@ -70,7 +70,9 @@ def test_the_schema_ends_up_with_the_columns_the_models_expect(migrated, monkeyp
     _upgrade(config, url, "head", monkeypatch)
 
     assert {"bronze_key", "silver_key", "quality_report"} <= _columns(engine, "ingestion_runs")
-    assert "project_id" in _columns(engine, "repositories")
+    assert {"repo_id", "branch", "notebook_path"} <= _columns(engine, "projects")
+    assert {"project_id", "notebook_path"} <= _columns(engine, "pipelines")
+    assert not {"project_id", "branch", "notebook_path"} & _columns(engine, "repositories")
 
 
 def test_a_repository_that_already_existed_is_adopted_into_a_project(
@@ -108,8 +110,7 @@ def test_a_repository_that_already_existed_is_adopted_into_a_project(
     with engine.connect() as connection:
         row = connection.execute(
             sa.text(
-                "SELECT p.id, p.name, p.owner_id FROM projects p "
-                "JOIN repositories r ON r.project_id = p.id WHERE r.id = 1"
+                "SELECT p.id, p.name, p.owner_id FROM projects p WHERE p.repo_id = 1"
             )
         ).fetchone()
 
@@ -149,7 +150,7 @@ def test_two_repositories_get_a_project_each(migrated, monkeypatch):
             sa.text("SELECT count(*) FROM projects")
         ).scalar()
         distinct = connection.execute(
-            sa.text("SELECT count(DISTINCT project_id) FROM repositories")
+            sa.text("SELECT count(DISTINCT repo_id) FROM projects")
         ).scalar()
 
     assert projects == 2
@@ -198,13 +199,57 @@ def test_a_source_follows_its_repository_into_the_project(migrated, monkeypatch)
     with engine.connect() as connection:
         row = connection.execute(
             sa.text(
-                "SELECT s.project_id, r.project_id FROM data_sources s "
-                "JOIN repositories r ON r.id = 2 WHERE s.id = 1"
+                "SELECT s.project_id, p.id FROM data_sources s "
+                "JOIN projects p ON p.repo_id = 2 WHERE s.id = 1"
             )
         ).fetchone()
 
     assert row[0] is not None, "the source lost its owner"
     assert row[0] == row[1], "the source must land on its own repository's project"
+
+
+def test_the_link_moves_from_the_repository_to_the_project(migrated, monkeypatch):
+    """0019: the notebook a project runs, and the one each old run ran, must
+    survive the move off the repository."""
+    config, engine, url = migrated
+    _upgrade(config, url, "0018", monkeypatch)
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO projects (id, name, description, owner_id, created_at, is_active) "
+                "VALUES (5, 'P', '', NULL, :now, 1)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO repositories (id, project_id, github_url, branch, notebook_path, "
+                "github_token_masked, github_token_encrypted, created_at, is_active) VALUES "
+                "(1, 5, 'https://github.com/a/b', 'dev', 'nb/train.ipynb', '', '', :now, 1)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO pipelines (id, repo_id, status, commit_sha, branch, phases, metrics) "
+                "VALUES ('run-1', 1, 'success', 'abc', 'dev', '[]', '{}')"
+            )
+        )
+
+    _upgrade(config, url, "head", monkeypatch)
+
+    with engine.connect() as connection:
+        project = connection.execute(
+            sa.text("SELECT repo_id, branch, notebook_path FROM projects WHERE id = 5")
+        ).fetchone()
+        run = connection.execute(
+            sa.text("SELECT project_id, notebook_path FROM pipelines WHERE id = 'run-1'")
+        ).fetchone()
+
+    assert tuple(project) == (1, "dev", "nb/train.ipynb")
+    assert tuple(run) == (5, "nb/train.ipynb")
 
 
 def test_the_old_column_is_gone_so_it_cannot_diverge(migrated, monkeypatch):

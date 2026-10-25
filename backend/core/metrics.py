@@ -203,6 +203,43 @@ AI_ADVISOR_DURATION_SECONDS = Histogram(
     buckets=(1, 2.5, 5, 10, 20, 30, 60, 120, 300),
 )
 
+# ---------------------------------------------------------------------------
+# Model serving metrics (backend predict proxy)
+# ---------------------------------------------------------------------------
+# ``model_name`` / ``version`` are only ever taken from a ``ModelDeployment``
+# row, never from the raw URL, so the label set is bounded by the database.
+
+MODEL_PREDICTIONS_TOTAL = Counter(
+    "mlops_model_predictions_total",
+    "Prediction requests proxied to the model-server.",
+    labelnames=("model_name", "version", "status"),
+)
+
+MODEL_PREDICTION_DURATION_SECONDS = Histogram(
+    "mlops_model_prediction_duration_seconds",
+    "Prediction latency in seconds, measured at the backend proxy.",
+    labelnames=("model_name", "version"),
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
+MODEL_PREDICTED_ROWS_TOTAL = Counter(
+    "mlops_model_predicted_rows_total",
+    "Feature rows sent for prediction (successful requests only).",
+    labelnames=("model_name", "version"),
+)
+
+MODEL_RELOADS_TOTAL = Counter(
+    "mlops_model_reloads_total",
+    "Times a model was reloaded from MLflow after the model-server lost it.",
+    labelnames=("model_name",),
+)
+
+MODEL_ROLLBACKS_TOTAL = Counter(
+    "mlops_model_rollbacks_total",
+    "Rollbacks of a model to a previous version.",
+    labelnames=("model_name", "to_version"),
+)
+
 
 # ---------------------------------------------------------------------------
 # Best-effort recorders (safe to call from anywhere)
@@ -270,6 +307,46 @@ def record_advisor_analysis(
         AI_ADVISOR_DURATION_SECONDS.labels(provider=provider_label).observe(
             max(0.0, float(duration_seconds))
         )
+
+
+@_safe
+def record_model_prediction(
+    model_name: str,
+    version: str,
+    status: str,
+    duration_seconds: float,
+    rows: int = 0,
+) -> None:
+    """Record one proxied prediction.
+
+    Args:
+        model_name: Deployment's model name (from the database).
+        version: Deployment's version (from the database).
+        status: ``success`` or ``error``.
+        duration_seconds: Time spent in the proxy, reload included.
+        rows: Number of feature rows predicted (counted on success only).
+    """
+    status_label = "success" if status == "success" else "error"
+    MODEL_PREDICTIONS_TOTAL.labels(
+        model_name=model_name, version=version, status=status_label
+    ).inc()
+    MODEL_PREDICTION_DURATION_SECONDS.labels(
+        model_name=model_name, version=version
+    ).observe(max(0.0, float(duration_seconds)))
+    if status_label == "success" and rows > 0:
+        MODEL_PREDICTED_ROWS_TOTAL.labels(model_name=model_name, version=version).inc(rows)
+
+
+@_safe
+def record_model_reload(model_name: str) -> None:
+    """Record an automatic reload of ``model_name`` from MLflow."""
+    MODEL_RELOADS_TOTAL.labels(model_name=model_name).inc()
+
+
+@_safe
+def record_model_rollback(model_name: str, to_version: str) -> None:
+    """Record a rollback of ``model_name`` to ``to_version``."""
+    MODEL_ROLLBACKS_TOTAL.labels(model_name=model_name, to_version=to_version).inc()
 
 
 @_safe

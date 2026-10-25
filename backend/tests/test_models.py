@@ -317,3 +317,105 @@ class TestDeleteModel:
             resp = admin_app.delete("/models/nonexistent")
 
         assert resp.status_code == 200
+
+
+class TestModelMetrics:
+    """Prometheus series recorded by the predict proxy, reloads and rollbacks."""
+
+    @staticmethod
+    def _sample(name, **labels):
+        from prometheus_client import REGISTRY
+
+        return REGISTRY.get_sample_value(name, labels) or 0.0
+
+    def test_predict_success_counts_request_and_rows_by_version(self, admin_app, db_session):
+        seed_model_deployment(db_session, model_name="metrics-ok", version="3", is_active=True)
+        labels = {"model_name": "metrics-ok", "version": "3"}
+        before = self._sample("mlops_model_predictions_total", status="success", **labels)
+        rows_before = self._sample("mlops_model_predicted_rows_total", **labels)
+        mock_client = _mock_async_client(
+            post=AsyncMock(return_value=_resp(200, {
+                "prediction": [0, 1], "model_name": "metrics-ok", "version": "3",
+            })),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            resp = admin_app.post(
+                "/models/metrics-ok/predict", json={"data": [[1.0], [2.0]]}
+            )
+
+        assert resp.status_code == 200
+        assert self._sample("mlops_model_predictions_total", status="success", **labels) == before + 1
+        assert self._sample("mlops_model_predicted_rows_total", **labels) == rows_before + 2
+        assert self._sample("mlops_model_prediction_duration_seconds_count", **labels) >= 1
+
+    def test_predict_failure_counts_an_error(self, admin_app, db_session):
+        seed_model_deployment(db_session, model_name="metrics-err", version="1", is_active=True)
+        labels = {"model_name": "metrics-err", "version": "1", "status": "error"}
+        before = self._sample("mlops_model_predictions_total", **labels)
+        mock_client = _mock_async_client(
+            post=AsyncMock(return_value=_resp(422, text="bad shape")),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            resp = admin_app.post("/models/metrics-err/predict", json={"data": [[1.0]]})
+
+        assert resp.status_code == 422
+        assert self._sample("mlops_model_predictions_total", **labels) == before + 1
+
+    def test_predict_for_an_unknown_model_records_nothing(self, admin_app):
+        mock_client = _mock_async_client(
+            post=AsyncMock(return_value=_resp(422, text="nope")),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            admin_app.post("/models/never-deployed/predict", json={"data": [[1.0]]})
+
+        from prometheus_client import REGISTRY
+
+        assert not any(
+            sample.labels.get("model_name") == "never-deployed"
+            for metric in REGISTRY.collect()
+            for sample in metric.samples
+        )
+
+    def test_reload_after_restart_is_counted(self, admin_app, db_session):
+        seed_model_deployment(
+            db_session, model_name="metrics-reload", version="1",
+            is_active=True, mlflow_run_id="run-r",
+        )
+        before = self._sample("mlops_model_reloads_total", model_name="metrics-reload")
+        mock_client = _mock_async_client(
+            post=AsyncMock(side_effect=[
+                _resp(404, {"detail": "not loaded"}),
+                _resp(200, {"status": "loaded"}),
+                _resp(200, {"prediction": [0], "model_name": "metrics-reload", "version": "1"}),
+            ]),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            resp = admin_app.post("/models/metrics-reload/predict", json={"data": [[1.0]]})
+
+        assert resp.status_code == 200
+        assert self._sample("mlops_model_reloads_total", model_name="metrics-reload") == before + 1
+
+    def test_rollback_is_counted(self, admin_app, db_session):
+        seed_model_deployment(
+            db_session, model_name="metrics-rb", version="1",
+            is_active=False, mlflow_run_id="run-1",
+        )
+        seed_model_deployment(
+            db_session, model_name="metrics-rb", version="2",
+            is_active=True, mlflow_run_id="run-2",
+        )
+        labels = {"model_name": "metrics-rb", "to_version": "1"}
+        before = self._sample("mlops_model_rollbacks_total", **labels)
+        mock_client = _mock_async_client(
+            post=AsyncMock(return_value=_resp(200, {"status": "loaded"})),
+        )
+
+        with patch("routers.models.httpx.AsyncClient", return_value=mock_client):
+            resp = admin_app.post("/models/metrics-rb/rollback", json={"version": "1"})
+
+        assert resp.status_code == 200
+        assert self._sample("mlops_model_rollbacks_total", **labels) == before + 1

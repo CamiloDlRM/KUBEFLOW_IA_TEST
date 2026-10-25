@@ -137,6 +137,75 @@ describe('AddRepository', () => {
     });
   });
 
+  function mockLinkedRepo(link: Record<string, unknown>, ...others: Record<string, unknown>[]) {
+    server.use(
+      http.get('http://localhost:8000/repos', () =>
+        HttpResponse.json([
+          {
+            id: 1,
+            github_url: 'https://github.com/testuser/ml-project',
+            notebooks: [
+              {
+                project_id: 7,
+                project_name: 'Demo',
+                branch: 'main',
+                notebook_path: 'notebooks/train.ipynb',
+                active_pipeline_id: 'pipe-1',
+                ...link,
+              },
+              ...others,
+            ],
+          },
+        ]),
+      ),
+      http.get('http://localhost:8000/repos/1/branches', () =>
+        HttpResponse.json([{ name: 'main', commit_sha: 'abc' }]),
+      ),
+      http.get('http://localhost:8000/repos/1/notebooks', () =>
+        HttpResponse.json(['notebooks/eda.ipynb', 'notebooks/train.ipynb']),
+      ),
+    );
+  }
+
+  it('the green dot of the linked notebook opens its active pipeline', async () => {
+    mockLinkedRepo({});
+    renderWithProviders();
+
+    const dot = await screen.findByRole('link', { name: /active pipeline of notebooks\/train/i });
+    expect(dot).toHaveAttribute('href', '/pipelines/pipe-1');
+    expect(screen.getAllByRole('link', { name: /active pipeline/i })).toHaveLength(1);
+    // The name still opens the notebook on GitHub.
+    expect(screen.getByRole('link', { name: 'notebooks/train.ipynb' })).toHaveAttribute(
+      'href',
+      'https://github.com/testuser/ml-project/blob/main/notebooks/train.ipynb',
+    );
+    expect(screen.getByText('webhook active')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Demo' })).toHaveAttribute('href', '/projects/7');
+  });
+
+  it('a linked notebook with nothing running gets a grey dot and no link', async () => {
+    mockLinkedRepo({ active_pipeline_id: null });
+    renderWithProviders();
+
+    expect(await screen.findByRole('img', { name: /linked to demo/i })).toBeInTheDocument();
+    expect(screen.getByText('webhook inactive')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /active pipeline/i })).not.toBeInTheDocument();
+  });
+
+  it('marks only the notebooks linked on the branch being explored', async () => {
+    // The card opens on main, where eda is linked; train is linked on develop.
+    mockLinkedRepo(
+      { notebook_path: 'notebooks/eda.ipynb', active_pipeline_id: 'pipe-eda' },
+      { project_id: 8, project_name: 'Other', branch: 'develop',
+        notebook_path: 'notebooks/train.ipynb', active_pipeline_id: 'pipe-train' },
+    );
+    renderWithProviders();
+
+    const dot = await screen.findByRole('link', { name: /active pipeline/i });
+    expect(dot).toHaveAttribute('href', '/pipelines/pipe-eda');
+    expect(screen.getAllByRole('link', { name: /active pipeline/i })).toHaveLength(1);
+  });
+
   it('disables submit button during submission', async () => {
     // The response is held open until this test lets it go, rather than for a
     // fixed 200ms. A timed handler leaves the request in flight when the file

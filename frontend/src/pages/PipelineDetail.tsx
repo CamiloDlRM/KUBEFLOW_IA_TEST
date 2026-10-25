@@ -11,6 +11,7 @@ import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, truncate, repoNameFromUrl } from '../utils/format';
 import type { PhaseStatus, WebSocketLogMessage, ConnectionStatus } from '../types';
 import { getPipelines } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 const PHASE_ORDER = ['download', 'validate', 'execute', 'register', 'deploy'];
 
@@ -25,6 +26,7 @@ export default function PipelineDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: pipeline, isLoading, error } = usePipeline(id);
   const { data: repos } = useRepos();
+  const { isAdmin } = useAuth();
 
   // WebSocket for live logs - only connect when pipeline is running/queued
   const shouldStream = pipeline?.status === 'running' || pipeline?.status === 'queued';
@@ -107,10 +109,13 @@ export default function PipelineDetail() {
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-slate-400">
               <span>Repo: <span className="text-slate-200">{repoName}</span></span>
+              {isAdmin && (
+                <span>User: <span className="text-slate-200">{pipeline.owner_username ?? '--'}</span></span>
+              )}
               <span>
                 Branch:{' '}
                 <span className={pipeline.branch === 'testing-ia-agent' ? 'text-fuchsia-300' : 'text-slate-200'}>
-                  {pipeline.branch || repo?.branch || '--'}
+                  {pipeline.branch || '--'}
                   {pipeline.branch === 'testing-ia-agent' && ' 🤖'}
                 </span>
               </span>

@@ -6,12 +6,22 @@ export interface Repository {
   id: number;
   github_url: string;
   github_token_masked: string;
-  branch: string;
-  notebook_path: string;
   webhook_id: number | null;
   webhook_url: string | null;
   created_at: string;
   is_active: boolean;
+  /** Notebooks active projects have linked; empty means pushes are ignored. */
+  notebooks: LinkedNotebook[];
+}
+
+/** One notebook of a repository, linked by one project. */
+export interface LinkedNotebook {
+  project_id: number;
+  project_name: string;
+  branch: string;
+  notebook_path: string;
+  /** Newest run in flight, else the newest behind a deployed model; null when neither. */
+  active_pipeline_id: string | null;
 }
 
 export interface CreateRepoPayload {
@@ -52,6 +62,8 @@ export interface Pipeline {
   finished_at: string | null;
   phases: PipelinePhase[];
   metrics: PipelineMetrics;
+  /** Owner of the run's project; shown to admins, who see everyone's. */
+  owner_username: string | null;
   /** What was mounted as DATASET_PATH. Empty for runs older than the record. */
   mounted_input?: MountedInput | Record<string, never>;
   /** The code this run executed. Only on the detail, never on the list. */
@@ -164,6 +176,8 @@ export interface ModelDeployment {
   deployed_at: string;
   is_active: boolean;
   pipeline_id: string;
+  /** Owner of the pipeline that trained it; shown to admins. */
+  owner_username: string | null;
 }
 
 export interface PredictionResult {
@@ -380,6 +394,8 @@ export interface Project {
   repository: ProjectRepository | null;
   sources: number;
   gold_rows: number;
+  /** The gold build a pipeline is handed; `null` until the gold layer is built. */
+  active_dataset: { id: number; name: string; size_bytes: number } | null;
 }
 
 export type Layer = 'bronze' | 'silver' | 'gold';

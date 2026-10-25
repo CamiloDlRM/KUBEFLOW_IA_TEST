@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.conftest import seed_pipeline, seed_repo
+from tests.conftest import seed_pipeline, seed_project, seed_repo, seed_repo_in_project
 from tests.test_insights import seed_insight
 
 
@@ -37,7 +37,7 @@ class TestTriggerPipeline:
         return runner
 
     def test_trigger_from_default_branch(self, test_app, db_session):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
         runner = self._mock_runner()
         with (
             patch(
@@ -59,7 +59,7 @@ class TestTriggerPipeline:
         assert pipeline.commit_sha == "abc123"
 
     def test_trigger_from_other_branch(self, test_app, db_session):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
         runner = self._mock_runner()
         with (
             patch(
@@ -86,7 +86,7 @@ class TestTriggerPipeline:
         assert pipeline.commit_sha == "def456"
 
     def test_trigger_unknown_branch(self, test_app, db_session):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
         with patch(
             "core.github.list_branches",
             new=AsyncMock(return_value=[{"name": "main", "commit_sha": "abc123"}]),
@@ -95,7 +95,7 @@ class TestTriggerPipeline:
         assert resp.status_code == 404
 
     def test_trigger_dedupes_running_commit(self, test_app, db_session):
-        repo = seed_repo(db_session)
+        repo = seed_repo_in_project(db_session)
         existing = seed_pipeline(
             db_session, repo.id, status="running", commit_sha="abc123"
         )
@@ -109,6 +109,32 @@ class TestTriggerPipeline:
         body = resp.json()
         assert body["status"] == "already_queued"
         assert body["pipeline_id"] == existing.id
+
+
+    def test_trigger_without_a_project_is_refused(self, test_app, db_session):
+        repo = seed_repo(db_session)
+        runner = self._mock_runner()
+        with patch("core.pipeline.get_pipeline_runner", return_value=runner):
+            resp = test_app.post(f"/repos/{repo.id}/trigger", json={"branch": ""})
+
+        assert resp.status_code == 409
+        assert "project" in resp.json()["detail"]
+        runner.run.assert_not_called()
+
+    def test_trigger_does_not_guess_between_linked_notebooks(self, test_app, db_session):
+        repo = seed_repo_in_project(db_session)
+        other = seed_project(db_session, name="Other")
+        other.repo_id = repo.id
+        other.notebook_path = "notebooks/eval.ipynb"
+        db_session.add(other)
+        db_session.commit()
+        runner = self._mock_runner()
+        with patch("core.pipeline.get_pipeline_runner", return_value=runner):
+            resp = test_app.post(f"/repos/{repo.id}/trigger", json={"branch": ""})
+
+        assert resp.status_code == 409
+        assert "Several projects" in resp.json()["detail"]
+        runner.run.assert_not_called()
 
 
 class TestApplyInsight:

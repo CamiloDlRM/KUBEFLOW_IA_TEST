@@ -178,25 +178,25 @@ export async function triggerPipeline(
 }
 
 /** The notebook as `branch` has it now, by phase. Defaults to the repo's branch. */
-export async function getRepoNotebook(repoId: number, branch = ''): Promise<RepoNotebook> {
-  const { data } = await apiClient.get<RepoNotebook>(`/repos/${repoId}/notebook`, {
+export async function getProjectNotebook(projectId: number, branch = ''): Promise<RepoNotebook> {
+  const { data } = await apiClient.get<RepoNotebook>(`/projects/${projectId}/notebook`, {
     params: branch ? { branch } : {},
   });
   return data;
 }
 
-export async function getPipelineInput(repoId: number): Promise<PipelineInputState> {
-  const { data } = await apiClient.get<PipelineInputState>(`/repos/${repoId}/pipeline-input`);
+export async function getPipelineInput(projectId: number): Promise<PipelineInputState> {
+  const { data } = await apiClient.get<PipelineInputState>(`/projects/${projectId}/pipeline-input`);
   return data;
 }
 
 /** Point the pipeline at a layer. An empty choice goes back to the active dataset. */
 export async function setPipelineInput(
-  repoId: number,
+  projectId: number,
   choice: PipelineInputChoice,
 ): Promise<PipelineInputState> {
   const { data } = await apiClient.put<PipelineInputState>(
-    `/repos/${repoId}/pipeline-input`,
+    `/projects/${projectId}/pipeline-input`,
     choice,
   );
   return data;
@@ -215,6 +215,16 @@ export async function getPipelineInputOptions(projectId: number): Promise<Pipeli
 
 export async function getProjects(): Promise<Project[]> {
   const { data } = await apiClient.get<Project[]>('/projects');
+  return data;
+}
+
+export async function runProject(
+  projectId: number,
+  modelName: string,
+): Promise<TriggerAccepted> {
+  const { data } = await apiClient.post<TriggerAccepted>(`/projects/${projectId}/run`, {
+    model_name: modelName,
+  });
   return data;
 }
 
@@ -325,10 +335,10 @@ export async function getDatasetPreview(datasetId: number): Promise<DatasetPrevi
 export async function getPipelines(
   page = 1,
   size = 20,
-  repoId?: number,
+  projectId?: number,
 ): Promise<PaginatedPipelines> {
   const { data } = await apiClient.get<PaginatedPipelines>('/pipelines', {
-    params: repoId === undefined ? { page, size } : { page, size, repo_id: repoId },
+    params: projectId === undefined ? { page, size } : { page, size, project_id: projectId },
   });
   return data;
 }

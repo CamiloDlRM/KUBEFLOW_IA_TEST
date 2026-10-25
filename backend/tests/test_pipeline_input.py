@@ -304,64 +304,81 @@ class TestNotebookCells:
 # ---------------------------------------------------------------------------
 
 
+def _choose(session, project, choice):
+    project.pipeline_input = choice
+    session.add(project)
+    session.commit()
+
+
 class TestApi:
     def test_choosing_gold_is_stored_and_described(
         self, test_app, db_session, project, storage_patched
     ):
-        repo = seed_repo(db_session, project_id=project.id)
         seed_gold(db_session, project.id, version=2)
 
-        response = test_app.put(f"/repos/{repo.id}/pipeline-input", json={"layer": "gold"})
+        response = test_app.put(f"/projects/{project.id}/pipeline-input", json={"layer": "gold"})
 
         assert response.status_code == 200
         body = response.json()
         assert body["choice"] == {"layer": "gold"}
         assert body["resolved"]["label"] == "gold v2"
-        db_session.refresh(repo)
-        assert repo.pipeline_input == {"layer": "gold"}
+        db_session.refresh(project)
+        assert project.pipeline_input == {"layer": "gold"}
 
     def test_a_choice_that_names_nothing_is_refused_and_not_stored(
         self, test_app, db_session, project, storage_patched
     ):
         """Refused while someone is looking, not at the start of an unwatched run."""
-        repo = seed_repo(db_session, project_id=project.id)
-
-        response = test_app.put(f"/repos/{repo.id}/pipeline-input", json={"layer": "gold"})
+        response = test_app.put(f"/projects/{project.id}/pipeline-input", json={"layer": "gold"})
 
         assert response.status_code == 422
         assert "not been built" in response.json()["detail"]
-        db_session.refresh(repo)
-        assert repo.pipeline_input == {}
+        db_session.refresh(project)
+        assert project.pipeline_input == {}
 
     def test_an_empty_layer_goes_back_to_the_active_dataset(
         self, test_app, db_session, project, storage_patched
     ):
-        repo = seed_repo(db_session, project_id=project.id, pipeline_input={"layer": "gold"})
+        _choose(db_session, project, {"layer": "gold"})
 
-        body = test_app.put(f"/repos/{repo.id}/pipeline-input", json={"layer": ""}).json()
+        body = test_app.put(f"/projects/{project.id}/pipeline-input", json={"layer": ""}).json()
 
         assert body == {"choice": {}, "resolved": None, "error": ""}
 
     def test_a_choice_that_went_stale_is_reported_not_failed(
         self, test_app, db_session, project, storage_patched
     ):
-        repo = seed_repo(db_session, project_id=project.id, pipeline_input={"layer": "gold"})
+        _choose(db_session, project, {"layer": "gold"})
 
-        response = test_app.get(f"/repos/{repo.id}/pipeline-input")
+        response = test_app.get(f"/projects/{project.id}/pipeline-input")
 
         assert response.status_code == 200
         assert response.json()["resolved"] is None
         assert "not been built" in response.json()["error"]
 
-    def test_another_members_repository_is_not_found(
+    def test_another_members_project_is_not_found(
         self, other_member_app, db_session, project, storage_patched
     ):
-        repo = seed_repo(db_session, project_id=project.id)
-
-        assert other_member_app.get(f"/repos/{repo.id}/pipeline-input").status_code == 404
+        assert other_member_app.get(f"/projects/{project.id}/pipeline-input").status_code == 404
         assert other_member_app.put(
-            f"/repos/{repo.id}/pipeline-input", json={"layer": ""}
+            f"/projects/{project.id}/pipeline-input", json={"layer": ""}
         ).status_code == 404
+
+    def test_two_projects_on_one_repository_choose_apart(
+        self, test_app, db_session, project, storage_patched
+    ):
+        """The reason the choice lives on the project: a shared repository."""
+        repo = seed_repo(db_session, project_id=project.id)
+        other = seed_project(db_session, name="Other")
+        seed_gold(db_session, project.id, version=1)
+        other.repo_id = repo.id
+        db_session.add(other)
+        db_session.commit()
+
+        test_app.put(f"/projects/{project.id}/pipeline-input", json={"layer": "gold"})
+
+        db_session.refresh(other)
+        assert other.pipeline_input == {}
 
     def test_the_palette_lists_what_can_be_dragged(
         self, test_app, db_session, project, storage_patched, tmp_path
@@ -404,7 +421,7 @@ class TestCanvasApi:
         repo = seed_repo(db_session, project_id=project.id, branch="main")
 
         with patch("core.github.download_notebook", return_value=self.NOTEBOOK) as download:
-            body = test_app.get(f"/repos/{repo.id}/notebook", params={"branch": "dev"}).json()
+            body = test_app.get(f"/projects/{project.id}/notebook", params={"branch": "dev"}).json()
 
         assert download.call_args.args[2:] == ("dev", "notebooks/train.ipynb")
         assert body["branch"] == "dev"
@@ -420,10 +437,22 @@ class TestCanvasApi:
         )
 
         with patch("core.github.download_notebook", side_effect=missing):
-            response = test_app.get(f"/repos/{repo.id}/notebook")
+            response = test_app.get(f"/projects/{project.id}/notebook")
 
         assert response.status_code == 404
         assert "notebooks/train.ipynb" in response.json()["detail"]
+
+    def test_runs_can_be_narrowed_to_one_project(self, test_app, db_session, project):
+        """Two projects on one repository: each canvas shows only its own runs."""
+        repo = seed_repo(db_session, project_id=project.id)
+        other = seed_project(db_session, name="Other")
+        seed_pipeline(db_session, repo.id, project_id=project.id)
+        seed_pipeline(db_session, repo.id, project_id=other.id)
+
+        body = test_app.get("/pipelines", params={"project_id": project.id}).json()
+
+        assert body["total"] == 1
+        assert body["items"][0]["repo_id"] == repo.id
 
     def test_runs_can_be_narrowed_to_one_repository(self, test_app, db_session, project):
         mine = seed_repo(db_session, project_id=project.id)
