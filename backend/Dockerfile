@@ -14,8 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code
 COPY . .
 
-# Create model artifacts directory and make entrypoint executable
-RUN mkdir -p /app/model_artifacts && chmod +x /app/entrypoint.sh
+# Normalize Windows CRLF line endings and make entrypoint executable
+RUN sed -i 's/\r$//' /app/entrypoint.sh && \
+    mkdir -p /app/model_artifacts && \
+    chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
