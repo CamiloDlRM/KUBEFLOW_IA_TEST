@@ -65,17 +65,19 @@ async def create_webhook(
     token: str,
     webhook_url: str,
     secret: str,
+    active: bool = True,
 ) -> dict[str, Any]:
     """Create a push-event webhook on the repository.
 
-    If a webhook for ``webhook_url`` already exists, returns it without error.
+    If a webhook for ``webhook_url`` already exists, returns it without error
+    (its ``active`` flag is left as GitHub has it).
     Returns the GitHub API response body (includes ``id``).
     """
     owner, repo = parse_repo_url(repo_url)
     url = f"{_GITHUB_API}/repos/{owner}/{repo}/hooks"
     payload = {
         "name": "web",
-        "active": True,
+        "active": active,
         "events": ["push"],
         "config": {
             "url": webhook_url,
@@ -142,6 +144,27 @@ async def delete_webhook(
             owner=owner,
             repo=repo,
             hook_id=webhook_id,
+        )
+
+
+async def set_webhook_active(
+    repo_url: str,
+    token: str,
+    webhook_id: int,
+    active: bool,
+) -> None:
+    """Enable or disable a webhook without deleting it."""
+    owner, repo = parse_repo_url(repo_url)
+    url = f"{_GITHUB_API}/repos/{owner}/{repo}/hooks/{webhook_id}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(url, json={"active": active}, headers=_headers(token))
+        resp.raise_for_status()
+        logger.info(
+            "github.webhook_toggled",
+            owner=owner,
+            repo=repo,
+            hook_id=webhook_id,
+            active=active,
         )
 
 

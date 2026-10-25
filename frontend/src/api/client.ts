@@ -218,6 +218,16 @@ export async function getProjects(): Promise<Project[]> {
   return data;
 }
 
+export async function runProject(
+  projectId: number,
+  modelName: string,
+): Promise<TriggerAccepted> {
+  const { data } = await apiClient.post<TriggerAccepted>(`/projects/${projectId}/run`, {
+    model_name: modelName,
+  });
+  return data;
+}
+
 export async function getProject(projectId: number): Promise<Project> {
   const { data } = await apiClient.get<Project>(`/projects/${projectId}`);
   return data;

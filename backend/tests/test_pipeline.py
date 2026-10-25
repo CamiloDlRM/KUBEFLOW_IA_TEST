@@ -160,3 +160,22 @@ class TestRunPipeline:
 
         with pytest.raises(ValueError, match="mlops:preprocessing"):
             validate_required_tags(invalid_notebook)
+
+
+class TestNextModelVersion:
+    """Versions are assigned by the platform, never reused."""
+
+    def test_first_version_is_one(self, db_session):
+        from tasks.celery_tasks import next_model_version
+
+        assert next_model_version(db_session, "brand-new") == "1"
+
+    def test_next_is_highest_numeric_plus_one(self, db_session):
+        from tasks.celery_tasks import next_model_version
+        from tests.conftest import seed_model_deployment
+
+        for version in ("1", "3", "legacy-x"):
+            seed_model_deployment(db_session, model_name="iris", version=version)
+        seed_model_deployment(db_session, model_name="other", version="9")
+
+        assert next_model_version(db_session, "iris") == "4"

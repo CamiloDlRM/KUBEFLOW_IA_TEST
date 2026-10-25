@@ -11,6 +11,7 @@ import {
 } from '../api/client';
 import type { Project } from '../types';
 import Spinner from '../components/Spinner';
+import RunPipelineModal from '../components/RunPipelineModal';
 import { repoNameFromUrl } from '../utils/format';
 import { ChevronDown } from 'lucide-react';
 
@@ -31,6 +32,7 @@ export default function ProjectDetail() {
     queryFn: () => getProject(id),
     enabled: Number.isFinite(id),
   });
+  const [runOpen, setRunOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -56,11 +58,18 @@ export default function ProjectDetail() {
         >
           ← All projects
         </Link>
-        <h2 className="mt-2 text-2xl font-bold text-slate-100">{project.name}</h2>
-        {project.description && (
-          <p className="mt-1 max-w-2xl text-sm text-slate-400">{project.description}</p>
-        )}
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-2xl font-bold text-slate-100">{project.name}</h2>
+            {project.description && (
+              <p className="mt-1 max-w-2xl text-sm text-slate-400">{project.description}</p>
+            )}
+          </div>
+          <RunPipelineButton project={project} onClick={() => setRunOpen(true)} />
+        </div>
       </div>
+
+      {runOpen && <RunPipelineModal project={project} onClose={() => setRunOpen(false)} />}
 
       <Link
         to={`/projects/${project.id}/data`}
@@ -92,7 +101,32 @@ export default function ProjectDetail() {
       </Link>
 
       <RepositorySection project={project} />
+
+      <div className="flex justify-end">
+        <RunPipelineButton project={project} onClick={() => setRunOpen(true)} />
+      </div>
     </div>
+  );
+}
+
+/** Enabled only with both halves in place: a linked notebook and gold data. */
+function RunPipelineButton({ project, onClick }: { project: Project; onClick: () => void }) {
+  const missing = !project.repository?.notebook_path
+    ? 'Link a repository and select a notebook first.'
+    : !project.active_dataset
+      ? 'Build the gold layer in the Data Factory first.'
+      : null;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={missing !== null}
+      title={missing ?? 'Train a model with the linked notebook on this project\'s gold data'}
+      className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-brand-600"
+    >
+      Run pipeline
+    </button>
   );
 }
 
@@ -203,7 +237,7 @@ function RepoPicker({
   busy,
   error,
 }: {
-  repos: { id: number; github_url: string; branch: string }[] | undefined;
+  repos: { id: number; github_url: string }[] | undefined;
   onPick: (repoId: number, branch: string, notebookPath: string) => void;
   busy: boolean;
   error: string | null;
@@ -259,19 +293,14 @@ function RepoPicker({
             <button
               onClick={() => {
                 setSelectedId(repo.id);
-                setBranch(repo.branch || 'main');
+                setBranch('main');
                 setNotebookPath('');
               }}
               disabled={busy}
               className="flex w-full items-center justify-between gap-3 rounded border border-slate-700 px-3 py-2 text-left transition hover:border-brand-500/60 hover:bg-slate-800/60 disabled:opacity-40"
             >
-              <span className="min-w-0">
-                <span className="block truncate text-sm text-slate-100">
-                  {repoNameFromUrl(repo.github_url)}
-                </span>
-                <span className="block truncate font-mono text-xs text-slate-500">
-                  {repo.branch}
-                </span>
+              <span className="min-w-0 truncate text-sm text-slate-100">
+                {repoNameFromUrl(repo.github_url)}
               </span>
               <span className="shrink-0 text-xs text-brand-400">
                 {selectedId === repo.id ? 'Selected' : 'Explore'}

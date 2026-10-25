@@ -15,12 +15,11 @@ test.describe('Add Repository and Trigger Pipeline', () => {
               id: 1,
               github_url: 'https://github.com/testuser/ml-project',
               github_token_masked: '****abcd',
-              branch: 'main',
-              notebook_path: 'notebooks/train.ipynb',
               webhook_id: 12345,
               webhook_url: 'http://localhost:3000/api/webhook/github',
               created_at: '2026-02-23T10:00:00Z',
               is_active: true,
+              notebooks: [],
             },
           ]),
         });

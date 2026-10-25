@@ -167,8 +167,8 @@ def _update_pipeline_db(
         session.commit()
 
 
-def _download_notebook_for_analysis(repo: Any, ref: str) -> dict[str, Any]:
-    """Fetch the repo's training notebook from GitHub at a given ref."""
+def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:
+    """Fetch a run's training notebook from GitHub at a given ref."""
     import base64
 
     import httpx
@@ -180,7 +180,7 @@ def _download_notebook_for_analysis(repo: Any, ref: str) -> dict[str, Any]:
         "Authorization": f"Bearer {settings.github_token or ''}",
         "Accept": "application/vnd.github+json",
     }
-    clean_nb_path = repo.notebook_path.strip("/")
+    clean_nb_path = notebook_path.strip("/")
     nb_url = (
         f"https://api.github.com/repos/{owner}/{repo_name}"
         f"/contents/{clean_nb_path}"
@@ -279,6 +279,8 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
                 select(Pipeline)
                 .where(
                     Pipeline.repo_id == pipeline.repo_id,
+                    # The same notebook's runs: another notebook's are no history.
+                    Pipeline.notebook_path == pipeline.notebook_path,
                     Pipeline.id != pipeline_id,
                 )
                 .order_by(Pipeline.started_at.desc())  # type: ignore[union-attr]
@@ -298,10 +300,14 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
                 "metrics": pipeline.metrics,
                 "phases": pipeline.phases,
                 "commit_sha": pipeline.commit_sha,
+                "notebook_path": pipeline.notebook_path,
+                "branch": pipeline.branch,
             }
 
         notebook = _download_notebook_for_analysis(
-            repo, pipeline_data["commit_sha"] or repo.branch
+            repo,
+            pipeline_data["notebook_path"],
+            pipeline_data["commit_sha"] or pipeline_data["branch"],
         )
 
         report = generate_insight(
@@ -395,15 +401,16 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
             if not repo:
                 raise ValueError(f"Repository {pipeline.repo_id} not found.")
             report = insight.content
-            base_branch = pipeline.branch or repo.branch
+            base_branch = pipeline.branch
             commit_ref = pipeline.commit_sha or base_branch
+            notebook_path = pipeline.notebook_path
 
         token = settings.github_token
         if not token:
             raise ValueError("GITHUB_TOKEN is not configured; cannot push.")
 
         # 1. Notebook as it was for this run
-        notebook = _download_notebook_for_analysis(repo, commit_ref)
+        notebook = _download_notebook_for_analysis(repo, notebook_path, commit_ref)
 
         # 2. LLM applies the report's recommendations
         patched, commit_message = generate_improved_notebook(
@@ -417,7 +424,7 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
             repo.github_url,
             token,
             AI_BRANCH_NAME,
-            repo.notebook_path,
+            notebook_path,
             json.dumps(patched, indent=1, ensure_ascii=False).encode("utf-8"),
             f"{commit_message}\n\nGenerado por el AI Training Advisor "
             f"(insight #{insight_id}, pipeline {pipeline_id[:8]})",
@@ -440,6 +447,27 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
 # ---------------------------------------------------------------------------
 # Main pipeline task
 # ---------------------------------------------------------------------------
+
+
+def next_model_version(session: Any, model_name: str) -> str:
+    """Return the next version of ``model_name``: highest numeric version + 1.
+
+    The notebook's ``VERSION`` is ignored so a re-run can never reuse a version
+    (which would merge two deployments' metrics and make rollback ambiguous).
+    Non-numeric legacy versions are skipped.
+
+    shortcut: two concurrent runs of the same model can compute the same
+    number; lock the model's rows if that ever happens in practice.
+    """
+    from sqlmodel import select
+
+    from models.schemas import ModelDeployment
+
+    versions = session.exec(
+        select(ModelDeployment.version).where(ModelDeployment.model_name == model_name)
+    ).all()
+    numbers = [int(v) for v in versions if str(v).isdigit()]
+    return str(max(numbers, default=0) + 1)
 
 @celery_app.task(
     bind=True,
@@ -476,9 +504,14 @@ def run_pipeline(
     import papermill as pm
 
     from sqlmodel import Session, select
-    from models.schemas import Dataset, Pipeline, Repository, ModelDeployment
     from core import pipeline_input
-    from core.notebook_parser import extract_config, notebook_cells, validate_required_tags
+    from models.schemas import Dataset, Pipeline, Repository, ModelDeployment
+    from core.notebook_parser import (
+        extract_config,
+        notebook_cells,
+        uses_project_dataset,
+        validate_required_tags,
+    )
     from db import engine
 
     log = logger.bind(pipeline_id=pipeline_id, repo_id=repo_id, commit_sha=commit_sha)
@@ -529,7 +562,12 @@ def run_pipeline(
             if not repo:
                 raise ValueError(f"Repository {repo_id} not found.")
             pipeline_row = session.get(Pipeline, pipeline_id)
-            run_branch = (pipeline_row.branch if pipeline_row else "") or repo.branch
+            if not pipeline_row:
+                raise ValueError(f"Pipeline {pipeline_id} not found.")
+            run_branch = pipeline_row.branch
+            requested_model_name = pipeline_row.requested_model_name
+            notebook_path = pipeline_row.notebook_path
+            project_id = pipeline_row.project_id
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
@@ -543,10 +581,10 @@ def run_pipeline(
         }
         # Sanitise notebook_path: strip leading/trailing slashes to avoid
         # double-slash in the URL (e.g. /contents//?ref=main).
-        clean_nb_path = repo.notebook_path.strip("/")
+        clean_nb_path = notebook_path.strip("/")
         if not clean_nb_path:
             raise ValueError(
-                f"Repository {repo_id} has an empty notebook_path. "
+                f"Pipeline {pipeline_id} has an empty notebook_path. "
                 "A valid notebook_path is required (e.g. 'train.ipynb' or 'notebooks/train.ipynb')."
             )
         nb_url = (
@@ -567,7 +605,7 @@ def run_pipeline(
                 raise ValueError(
                     f"Notebook not found at '{clean_nb_path}' in repo "
                     f"{owner}/{repo_name} (branch: {run_branch}). "
-                    f"Check the notebook_path setting for repository {repo_id}."
+                    f"Check the notebook linked to project {project_id}."
                 ) from exc
             raise
         nb_content = base64.b64decode(resp.json()["content"])
@@ -586,9 +624,21 @@ def run_pipeline(
         log.info("pipeline.phase.validate.start")
         validate_required_tags(notebook)
         config = extract_config(notebook)
-        model_name = config["model_name"]
-        model_version = config["version"]
-        _phase("validate", "success", f"Notebook validated. Model: {model_name} v{model_version}")
+        # "Run pipeline" names the model; a webhook run keeps the notebook's.
+        model_name = requested_model_name or config["model_name"]
+        uses_data = uses_project_dataset(notebook)
+        with Session(engine) as session:
+            model_version = next_model_version(session, model_name)
+        _phase(
+            "validate",
+            "success",
+            f"Notebook validated. Model: {model_name} v{model_version}. "
+            + (
+                "It reads the project's gold data (DATASET_PATH)."
+                if uses_data
+                else "It brings its own data; nothing will be downloaded from MinIO."
+            ),
+        )
         log.info("pipeline.phase.validate.done", model_name=model_name)
 
         if _shutting_down:
@@ -609,6 +659,7 @@ def run_pipeline(
             with open(input_path, "w") as f:
                 json.dump(notebook, f)
 
+            # Phase 3a: Mount the project's active dataset, only for a notebook
             # Phase 3a: Mount what the repository trains on.
             # Downloaded from MinIO into this same temporary directory and its
             # local path injected as DATASET_PATH, so the notebook never
@@ -617,49 +668,50 @@ def run_pipeline(
             # existed. Either way the run records what it mounted.
             dataset_path: str | None = None
             _phase("dataset", "running", "Resolving what this pipeline trains on...")
-
-            with Session(engine) as session:
-                repo_row = session.get(Repository, repo_id)
-                project_id = repo_row.project_id if repo_row else None
-                try:
-                    choice = pipeline_input.InputChoice.parse(
-                        repo_row.pipeline_input if repo_row else {}
+            resolved = None
+            dataset_info: dict[str, Any] | None = None
+            if uses_data:
+                with Session(engine) as session:
+                    repo_row = session.get(Repository, repo_id)
+                    current_project_id = (
+                        repo_row.project_id if repo_row and repo_row.project_id is not None else project_id
                     )
-                    resolved = (
-                        pipeline_input.resolve(session, project_id, choice)
-                        if project_id is not None
+                    try:
+                        choice = pipeline_input.InputChoice.parse(
+                            repo_row.pipeline_input if repo_row else {}
+                        )
+                        resolved = (
+                            pipeline_input.resolve(session, current_project_id, choice)
+                            if current_project_id is not None
+                            else None
+                        )
+                    except pipeline_input.InputError as exc:
+                        message = f"The chosen input cannot be mounted: {exc}"
+                        _phase("dataset", "failed", message)
+                        raise ValueError(message) from exc
+
+                    # Without a choice, the project's active dataset.
+                    active_dataset = None
+                    if resolved is None:
+                        active_dataset = session.exec(
+                            select(Dataset)
+                            .where(
+                                Dataset.project_id == (current_project_id if current_project_id is not None else -1),
+                                Dataset.is_active == True,  # noqa: E712
+                            )
+                            .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
+                        ).first()
+                    dataset_info = (
+                        {
+                            "id": active_dataset.id,
+                            "name": active_dataset.name,
+                            "bucket": active_dataset.bucket,
+                            "object_key": active_dataset.object_key,
+                            "size_bytes": active_dataset.size_bytes,
+                        }
+                        if active_dataset
                         else None
                     )
-                except pipeline_input.InputError as exc:
-                    message = f"The chosen input cannot be mounted: {exc}"
-                    _phase("dataset", "failed", message)
-                    raise ValueError(message) from exc
-
-                # Without a choice, the project's active dataset. It belongs
-                # to the repository's *project*: the code and the data are
-                # separate things that a project brings together, so the
-                # notebook is handed whatever its project currently publishes.
-                active_dataset = None
-                if resolved is None:
-                    active_dataset = session.exec(
-                        select(Dataset)
-                        .where(
-                            Dataset.project_id == (project_id if project_id is not None else -1),
-                            Dataset.is_active == True,  # noqa: E712
-                        )
-                        .order_by(Dataset.created_at.desc())  # type: ignore[union-attr]
-                    ).first()
-                dataset_info: dict[str, Any] | None = (
-                    {
-                        "id": active_dataset.id,
-                        "name": active_dataset.name,
-                        "bucket": active_dataset.bucket,
-                        "object_key": active_dataset.object_key,
-                        "size_bytes": active_dataset.size_bytes,
-                    }
-                    if active_dataset
-                    else None
-                )
 
             if resolved is not None:
                 try:
@@ -726,14 +778,22 @@ def run_pipeline(
                     dataset_id=dataset_info["id"],
                     dataset_path=dataset_path,
                 )
+            elif uses_data:
+                message = (
+                    "This notebook reads DATASET_PATH but the project has no gold "
+                    "data yet. Build the gold layer in the Data Factory and run again."
+                )
+                _phase("dataset", "failed", message)
+                log.error("pipeline.phase.dataset.missing", repo_id=repo_id)
+                raise ValueError(message)
             else:
                 _phase(
                     "dataset",
                     "success",
-                    "No active dataset for this repository; "
-                    "DATASET_PATH was not injected.",
+                    "The notebook brings its own data; nothing downloaded from MinIO "
+                    "and DATASET_PATH was not injected.",
                 )
-                log.info("pipeline.phase.dataset.none", repo_id=repo_id)
+                log.info("pipeline.phase.dataset.skipped", repo_id=repo_id)
 
             # Start the MLflow run BEFORE papermill so the notebook logs
             # metrics into this same run (avoids the 0.0 accuracy bug).

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { useRepos, usePipelines, useServiceHealth } from '../hooks/usePipelines';
 import PipelineStatus from '../components/PipelineStatus';
 import MetricsPanels from '../components/MetricsPanels';
@@ -31,6 +32,8 @@ export default function Dashboard() {
   const { data: repos } = useRepos();
   const { data: pipelinesPage, isLoading: pipelinesLoading, error: pipelinesError } = usePipelines(1, 5);
   const { data: health } = useServiceHealth();
+  // Members only ever see their own runs, so the column would say nothing.
+  const { isAdmin } = useAuth();
 
   const pipelines = pipelinesPage?.items ?? [];
 
@@ -98,6 +101,7 @@ export default function Dashboard() {
                 <tr className="border-b border-slate-700 bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
                   <th className="px-4 py-3">Pipeline</th>
                   <th className="px-4 py-3">Repository</th>
+                  {isAdmin && <th className="px-4 py-3">User</th>}
                   <th className="px-4 py-3">Commit</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Started</th>
@@ -123,6 +127,9 @@ export default function Dashboard() {
                         ? repoNameFromUrl(repos.find((r) => r.id === p.repo_id)!.github_url)
                         : `repo #${p.repo_id}`}
                     </td>
+                    {isAdmin && (
+                      <td className="px-4 py-3 text-slate-300">{p.owner_username ?? '--'}</td>
+                    )}
                     <td className="px-4 py-3 font-mono text-xs text-slate-400">
                       {truncate(p.commit_sha)}
                     </td>
