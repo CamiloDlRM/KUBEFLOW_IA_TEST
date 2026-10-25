@@ -7,12 +7,12 @@ import {
   getPipelineInputOptions,
   getPipelines,
   getProject,
-  getRepoNotebook,
+  getProjectNotebook,
   setPipelineInput,
-  triggerPipeline,
 } from '../api/client';
 import { usePipeline } from '../hooks/usePipelines';
 import Spinner from '../components/Spinner';
+import RunPipelineModal from '../components/RunPipelineModal';
 import InputPalette from '../components/canvas/InputPalette';
 import RunList, { BRANCH_CODE } from '../components/canvas/RunList';
 import { Connector, InputNode, ModelNode, PhaseNode, cardStatusOfPhase } from '../components/canvas/Nodes';
@@ -90,8 +90,8 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
   const [peek, setPeek] = useState<{ choice: PipelineInputChoice; label: string } | null>(null);
 
   const runsQuery = useQuery({
-    queryKey: ['repo-runs', repo.id],
-    queryFn: () => getPipelines(1, 15, repo.id),
+    queryKey: ['project-runs', project.id],
+    queryFn: () => getPipelines(1, 15, project.id),
     refetchInterval: (query) =>
       query.state.data?.items.some((run) => ACTIVE.has(run.status)) ? 5_000 : 15_000,
   });
@@ -106,15 +106,15 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
   // The branch's notebook: what the next run executes, and the only code there
   // is to show before a first run or for a run older than code capture.
   const head = useQuery({
-    queryKey: ['repo-notebook', repo.id, repo.branch],
-    queryFn: () => getRepoNotebook(repo.id),
+    queryKey: ['project-notebook', project.id, repo.branch],
+    queryFn: () => getProjectNotebook(project.id),
     enabled: runId === BRANCH_CODE || (shownRun !== undefined && !fromRun),
     staleTime: 60_000,
   });
 
   const inputState = useQuery({
-    queryKey: ['pipeline-input', repo.id],
-    queryFn: () => getPipelineInput(repo.id),
+    queryKey: ['pipeline-input', project.id],
+    queryFn: () => getPipelineInput(project.id),
   });
   const options = useQuery({
     queryKey: ['pipeline-input-options', project.id],
@@ -122,17 +122,16 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
   });
 
   const choose = useMutation({
-    mutationFn: (choice: PipelineInputChoice) => setPipelineInput(repo.id, choice),
-    onSuccess: (state) => queryClient.setQueryData(['pipeline-input', repo.id], state),
+    mutationFn: (choice: PipelineInputChoice) => setPipelineInput(project.id, choice),
+    onSuccess: (state) => queryClient.setQueryData(['pipeline-input', project.id], state),
   });
 
-  const start = useMutation({
-    mutationFn: () => triggerPipeline(repo.id),
-    onSuccess: (accepted) => {
-      setSelection(accepted.pipeline_id);
-      queryClient.invalidateQueries({ queryKey: ['repo-runs', repo.id] });
-    },
-  });
+  const [runOpen, setRunOpen] = useState(false);
+  const started = (pipelineId: string) => {
+    setRunOpen(false);
+    setSelection(pipelineId);
+    queryClient.invalidateQueries({ queryKey: ['project-runs', project.id] });
+  };
 
   // No cards until the code is known. With no cells, every required phase
   // would read as missing — a red row that is only a request still in flight.
@@ -168,18 +167,16 @@ function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }
         </div>
         <button
           type="button"
-          onClick={() => start.mutate()}
-          disabled={busy || start.isPending || !repo.notebook_path}
+          onClick={() => setRunOpen(true)}
+          disabled={busy || !repo.notebook_path}
           title={busy ? 'A run of this pipeline is already queued or running' : undefined}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Play size={14} aria-hidden="true" />
-          {start.isPending ? 'Starting…' : busy ? 'Running…' : 'Run pipeline'}
+          {busy ? 'Running…' : 'Run pipeline'}
         </button>
       </header>
-      {start.isError && (
-        <p className="text-sm text-red-300">Could not start a run: {(start.error as Error).message}</p>
-      )}
+      {runOpen && <RunPipelineModal project={project} onClose={() => setRunOpen(false)} onStarted={started} />}
 
       <div className="grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
         <aside className="space-y-6">

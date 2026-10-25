@@ -107,6 +107,11 @@ class Project(SQLModel, table=True):
     repo_id: int | None = SQLField(default=None, foreign_key="repositories.id", index=True)
     branch: str = SQLField(default="main")
     notebook_path: str = SQLField(default="")
+    #: What the pipeline trains on: ``{"layer": "gold"}`` for the newest gold
+    #: build, ``{"layer": "gold", "version": 3}`` for a particular one,
+    #: ``{"layer": "silver", "source_id": 2}`` for one source's silver. Empty
+    #: means the project's active dataset. See :mod:`core.pipeline_input`.
+    pipeline_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class Repository(SQLModel, table=True):
@@ -125,15 +130,6 @@ class Repository(SQLModel, table=True):
         default="",
         description="Masked token stored for display only (last 4 chars).",
     )
-    branch: str = SQLField(default="main")
-    # Selected when the repository is associated with a project. An
-    # unassociated repository is intentionally allowed to have no notebook.
-    notebook_path: str = SQLField(default="")
-    #: What the pipeline trains on: ``{"layer": "gold"}`` for the newest gold
-    #: build, ``{"layer": "gold", "version": 3}`` for a particular one,
-    #: ``{"layer": "silver", "source_id": 2}`` for one source's silver. Empty
-    #: means the project's active dataset. See :mod:`core.pipeline_input`.
-    pipeline_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
     github_token_encrypted: str = SQLField(default="")
     webhook_id: int | None = SQLField(default=None)
     webhook_url: str | None = SQLField(default=None)
@@ -619,7 +615,6 @@ class PipelineDetailResponse(PipelineResponse):
     """One run, with the code it ran. Kept off the list, where it would be
     every notebook of every run on the page."""
     cells: list[dict[str, Any]] = Field(default_factory=list)
-    cells: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PipelineListResponse(BaseModel):
@@ -659,7 +654,7 @@ class PipelineInputRequest(BaseModel):
 
 
 class PipelineInputResponse(BaseModel):
-    """A repository's choice, and what it resolves to right now.
+    """A project's choice, and what it resolves to right now.
 
     ``error`` is set when the choice no longer resolves — a source deleted,
     a pinned build removed — so the view can say so before a run fails on it.

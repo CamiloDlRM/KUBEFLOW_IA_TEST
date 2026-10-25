@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  getPipelineInput,
   getProject,
   getRepos,
   getRepoBranches,
@@ -109,12 +110,18 @@ export default function ProjectDetail() {
   );
 }
 
-/** Enabled only with both halves in place: a linked notebook and gold data. */
+/** Enabled only with both halves in place: a linked notebook, and data to
+ *  train on — a layer chosen in the pipeline view, or the active gold build. */
 function RunPipelineButton({ project, onClick }: { project: Project; onClick: () => void }) {
+  const { data: input } = useQuery({
+    queryKey: ['pipeline-input', project.id],
+    queryFn: () => getPipelineInput(project.id),
+    enabled: Boolean(project.repository?.notebook_path),
+  });
   const missing = !project.repository?.notebook_path
     ? 'Link a repository and select a notebook first.'
-    : !project.active_dataset
-      ? 'Build the gold layer in the Data Factory first.'
+    : !project.active_dataset && !input?.choice.layer
+      ? 'Build the gold layer in the Data Factory, or choose a layer in the pipeline view.'
       : null;
 
   return (

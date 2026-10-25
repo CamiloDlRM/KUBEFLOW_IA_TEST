@@ -505,7 +505,7 @@ def run_pipeline(
 
     from sqlmodel import Session, select
     from core import pipeline_input
-    from models.schemas import Dataset, Pipeline, Repository, ModelDeployment
+    from models.schemas import Dataset, Pipeline, Project, Repository, ModelDeployment
     from core.notebook_parser import (
         extract_config,
         notebook_cells,
@@ -663,7 +663,7 @@ def run_pipeline(
             # Phase 3a: Mount what the repository trains on.
             # Downloaded from MinIO into this same temporary directory and its
             # local path injected as DATASET_PATH, so the notebook never
-            # handles S3 credentials. The repository's choice of layer wins;
+            # handles S3 credentials. The project's choice of layer wins;
             # without one, the project's active dataset, as before choices
             # existed. Either way the run records what it mounted.
             dataset_path: str | None = None
@@ -672,13 +672,11 @@ def run_pipeline(
             dataset_info: dict[str, Any] | None = None
             if uses_data:
                 with Session(engine) as session:
-                    repo_row = session.get(Repository, repo_id)
-                    current_project_id = (
-                        repo_row.project_id if repo_row and repo_row.project_id is not None else project_id
-                    )
+                    project_row = session.get(Project, project_id) if project_id is not None else None
+                    current_project_id = project_id
                     try:
                         choice = pipeline_input.InputChoice.parse(
-                            repo_row.pipeline_input if repo_row else {}
+                            project_row.pipeline_input if project_row else {}
                         )
                         resolved = (
                             pipeline_input.resolve(session, current_project_id, choice)

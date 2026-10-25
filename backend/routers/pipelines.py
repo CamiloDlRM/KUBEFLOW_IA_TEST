@@ -35,6 +35,7 @@ async def list_pipelines(
     page: int = Query(default=1, ge=1, description="Page number."),
     size: int = Query(default=20, ge=1, le=100, description="Page size."),
     repo_id: int | None = Query(default=None, description="Only this repository's runs."),
+    project_id: int | None = Query(default=None, description="Only this project's runs."),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> PipelineListResponse:
@@ -57,6 +58,10 @@ async def list_pipelines(
     if repo_id is not None:
         total_stmt = total_stmt.where(Pipeline.repo_id == repo_id)
         list_stmt = list_stmt.where(Pipeline.repo_id == repo_id)
+    # Several projects may share a repository, so its runs are not one project's.
+    if project_id is not None:
+        total_stmt = total_stmt.where(Pipeline.project_id == project_id)
+        list_stmt = list_stmt.where(Pipeline.project_id == project_id)
     total: int = session.exec(total_stmt).one()
 
     offset = (page - 1) * size

@@ -35,6 +35,9 @@ from models.schemas import (
     Dataset,
     GoldTable,
     MessageResponse,
+    NotebookCellsResponse,
+    PipelineInputRequest,
+    PipelineInputResponse,
     Project,
     ProjectCreateRequest,
     ProjectDatasetResponse,
@@ -305,7 +308,8 @@ async def run_project(
             status_code=status.HTTP_409_CONFLICT,
             detail="Link a repository and select a notebook before running a pipeline.",
         )
-    if _active_dataset(session, project.id) is None:
+    # A chosen layer is checked by the worker when it resolves it.
+    if not (project.pipeline_input or {}).get("layer") and _active_dataset(session, project.id) is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Build the gold layer in the Data Factory before running a pipeline.",
@@ -370,3 +374,130 @@ async def delete_project(
     logger.info("project.archived", project_id=project_id)
     await _sync_webhook(session, _linked_repo(session, project), settings)
     return MessageResponse(message=f"Project {project_id} archived.")
+
+
+@router.get(
+    "/{project_id}/notebook",
+    response_model=NotebookCellsResponse,
+    summary="The linked notebook's code by phase, as its branch has it now",
+)
+async def get_project_notebook(
+    project_id: int,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    branch: str = "",
+) -> NotebookCellsResponse:
+    """Read the project's notebook from GitHub and split it by phase.
+
+    A run records the code it executed; this is the code the *next* run will
+    execute, which is what there is to show before the first one.
+    """
+    import httpx
+
+    from core.github import download_notebook
+    from core.notebook_parser import notebook_cells
+
+    project = get_visible_project_or_404(session, project_id, current_user)
+    repo = _linked_repo(session, project)
+    path = project.notebook_path.strip("/")
+    if repo is None or not path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This project has no notebook selected.",
+        )
+    ref = branch.strip() or project.branch
+    try:
+        notebook = await download_notebook(repo.github_url, repo_token(repo, settings), ref, path)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No notebook at '{path}' on branch '{ref}'.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GitHub refused the notebook: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.error("project.notebook_failed", project_id=project_id, branch=ref, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read the notebook from GitHub: {exc}",
+        ) from exc
+    return NotebookCellsResponse(branch=ref, notebook_path=path, cells=notebook_cells(notebook))
+
+
+def _describe_input(session: Session, project: Project) -> PipelineInputResponse:
+    """The project's choice and what it resolves to, or why it does not."""
+    from core import medallion, pipeline_input
+
+    response = PipelineInputResponse(choice=dict(project.pipeline_input or {}))
+    try:
+        choice = pipeline_input.InputChoice.parse(project.pipeline_input)
+        if choice.layer:
+            resolved = pipeline_input.resolve(session, project.id, choice)
+            response.resolved = resolved.as_dict() if resolved else None
+    except (pipeline_input.InputError, medallion.MedallionError) as exc:
+        response.error = str(exc)
+    return response
+
+
+@router.get(
+    "/{project_id}/pipeline-input",
+    response_model=PipelineInputResponse,
+    summary="What this project's pipeline trains on",
+)
+def get_pipeline_input(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PipelineInputResponse:
+    """Return the choice, and what it would mount if a run started now.
+
+    A choice that no longer resolves is reported in ``error`` rather than as a
+    failed request: the project still exists and so does its choice, and the
+    view needs both to show what went stale.
+    """
+    project = get_visible_project_or_404(session, project_id, current_user)
+    return _describe_input(session, project)
+
+
+@router.put(
+    "/{project_id}/pipeline-input",
+    response_model=PipelineInputResponse,
+    summary="Choose what this project's pipeline trains on",
+)
+def set_pipeline_input(
+    project_id: int,
+    body: PipelineInputRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PipelineInputResponse:
+    """Point the pipeline at a layer: gold, or one source's silver or bronze.
+
+    The choice is resolved before it is stored, so one that names nothing is
+    refused here, when someone is looking, rather than at the start of a run
+    nobody is watching. An empty layer goes back to the active dataset.
+    """
+    from core import medallion, pipeline_input
+
+    project = get_visible_project_or_404(session, project_id, current_user)
+    try:
+        choice = pipeline_input.InputChoice.parse(body.model_dump())
+        if choice.layer:
+            pipeline_input.resolve(session, project.id, choice)
+    except pipeline_input.InputError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except medallion.MedallionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Object storage could not be read: {exc}",
+        )
+
+    project.pipeline_input = choice.as_dict()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    logger.info("project.pipeline_input.set", project_id=project_id, choice=project.pipeline_input)
+    return _describe_input(session, project)

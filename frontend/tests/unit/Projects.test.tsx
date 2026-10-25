@@ -15,6 +15,8 @@ const getRepoBranches = vi.fn();
 const getRepoNotebooks = vi.fn();
 const linkRepository = vi.fn();
 const unlinkRepository = vi.fn();
+const getPipelineInput = vi.fn();
+const runProject = vi.fn();
 
 vi.mock('../../src/api/client', () => ({
   getProjects: (...args: unknown[]) => getProjects(...args),
@@ -25,6 +27,8 @@ vi.mock('../../src/api/client', () => ({
   getRepoNotebooks: (...args: unknown[]) => getRepoNotebooks(...args),
   linkRepository: (...args: unknown[]) => linkRepository(...args),
   unlinkRepository: (...args: unknown[]) => unlinkRepository(...args),
+  getPipelineInput: (...args: unknown[]) => getPipelineInput(...args),
+  runProject: (...args: unknown[]) => runProject(...args),
 }));
 
 /**
@@ -155,6 +159,7 @@ describe('ProjectDetail', () => {
     getRepoNotebooks.mockResolvedValue(['notebooks/train.ipynb']);
     linkRepository.mockResolvedValue(project());
     unlinkRepository.mockResolvedValue(project());
+    getPipelineInput.mockResolvedValue({ choice: {}, resolved: null, error: '' });
   });
 
   it('leads to the data factory with what it currently holds', async () => {
@@ -221,5 +226,41 @@ describe('ProjectDetail', () => {
     await linkFirstNotebook();
 
     expect(await screen.findByText(/not found/)).toBeInTheDocument();
+  });
+
+  describe('running', () => {
+    const linked = {
+      repository: { id: 1, github_url: 'https://github.com/a/first.git', branch: 'main', notebook_path: 'train.ipynb' },
+      active_dataset: null,
+    };
+    const silver = {
+      choice: { layer: 'silver' as const, source_id: 2 },
+      resolved: { label: 'silver · Hospital HIS' },
+      error: '',
+    };
+
+    it('asks for data when there is neither gold nor a chosen layer', async () => {
+      getProject.mockResolvedValue(project(linked));
+      renderDetail();
+
+      const [run] = await screen.findAllByRole('button', { name: /run pipeline/i });
+      await waitFor(() => expect(getPipelineInput).toHaveBeenCalledWith(4));
+      expect(run).toBeDisabled();
+      expect(run).toHaveAttribute('title', expect.stringMatching(/choose a layer/));
+    });
+
+    it('runs on a chosen layer without gold, and says which in the summary', async () => {
+      getProject.mockResolvedValue(project(linked));
+      getPipelineInput.mockResolvedValue(silver);
+      renderDetail();
+
+      const [run] = await screen.findAllByRole('button', { name: /run pipeline/i });
+      await waitFor(() => expect(run).toBeEnabled());
+      await userEvent.click(run);
+
+      const dialog = await screen.findByRole('dialog');
+      expect(await within(dialog).findByText('silver · Hospital HIS')).toBeInTheDocument();
+      expect(within(dialog).queryByText('Gold data')).not.toBeInTheDocument();
+    });
   });
 });

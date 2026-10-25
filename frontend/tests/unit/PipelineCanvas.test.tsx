@@ -16,11 +16,11 @@ const api = {
   getProject: vi.fn(),
   getPipelines: vi.fn(),
   getPipeline: vi.fn(),
-  getRepoNotebook: vi.fn(),
+  getProjectNotebook: vi.fn(),
   getPipelineInput: vi.fn(),
   getPipelineInputOptions: vi.fn(),
   setPipelineInput: vi.fn(),
-  triggerPipeline: vi.fn(),
+  runProject: vi.fn(),
   previewLayer: vi.fn(),
 };
 
@@ -28,11 +28,11 @@ vi.mock('../../src/api/client', () => ({
   getProject: (...args: unknown[]) => api.getProject(...args),
   getPipelines: (...args: unknown[]) => api.getPipelines(...args),
   getPipeline: (...args: unknown[]) => api.getPipeline(...args),
-  getRepoNotebook: (...args: unknown[]) => api.getRepoNotebook(...args),
+  getProjectNotebook: (...args: unknown[]) => api.getProjectNotebook(...args),
   getPipelineInput: (...args: unknown[]) => api.getPipelineInput(...args),
   getPipelineInputOptions: (...args: unknown[]) => api.getPipelineInputOptions(...args),
   setPipelineInput: (...args: unknown[]) => api.setPipelineInput(...args),
-  triggerPipeline: (...args: unknown[]) => api.triggerPipeline(...args),
+  runProject: (...args: unknown[]) => api.runProject(...args),
   previewLayer: (...args: unknown[]) => api.previewLayer(...args),
 }));
 
@@ -110,7 +110,7 @@ describe('PipelineCanvas', () => {
     vi.clearAllMocks();
     api.getProject.mockResolvedValue(PROJECT);
     api.getPipelines.mockResolvedValue({ items: [], total: 0, page: 1, size: 15 });
-    api.getRepoNotebook.mockResolvedValue({ branch: 'main', notebook_path: 'train.ipynb', cells: BRANCH_CELLS });
+    api.getProjectNotebook.mockResolvedValue({ branch: 'main', notebook_path: 'train.ipynb', cells: BRANCH_CELLS });
     api.getPipelineInput.mockResolvedValue(NO_CHOICE);
     api.getPipelineInputOptions.mockResolvedValue(OPTIONS);
     api.setPipelineInput.mockResolvedValue({
@@ -118,7 +118,7 @@ describe('PipelineCanvas', () => {
       resolved: { layer: 'gold', label: 'gold v2', bucket: 'gold', keys: [] },
       error: '',
     });
-    api.triggerPipeline.mockResolvedValue({ status: 'queued', pipeline_id: 'run-new' });
+    api.runProject.mockResolvedValue({ status: 'queued', pipeline_id: 'run-new' });
     api.previewLayer.mockResolvedValue({
       layer: 'silver',
       key: 'project-4/source-2/run-b.parquet',
@@ -134,7 +134,7 @@ describe('PipelineCanvas', () => {
 
     const row = await screen.findByRole('list', { name: 'Pipeline' });
     await within(row).findByRole('button', { name: 'Training' });
-    expect(api.getRepoNotebook).toHaveBeenCalledWith(9);
+    expect(api.getProjectNotebook).toHaveBeenCalledWith(4);
     expect(screen.getByRole('button', { name: /Code on main/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
@@ -160,7 +160,7 @@ describe('PipelineCanvas', () => {
       },
     });
 
-    await waitFor(() => expect(api.setPipelineInput).toHaveBeenCalledWith(9, { layer: 'gold' }));
+    await waitFor(() => expect(api.setPipelineInput).toHaveBeenCalledWith(4, { layer: 'gold' }));
     const input = screen.getByRole('button', { name: 'Input' });
     expect(await within(input).findByText('gold v2')).toBeInTheDocument();
   });
@@ -206,7 +206,7 @@ describe('PipelineCanvas', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Use as input' }));
 
     await waitFor(() =>
-      expect(api.setPipelineInput).toHaveBeenCalledWith(9, { layer: 'silver', source_id: 2 }),
+      expect(api.setPipelineInput).toHaveBeenCalledWith(4, { layer: 'silver', source_id: 2 }),
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -231,13 +231,17 @@ describe('PipelineCanvas', () => {
     expect(await screen.findByText(/gold has not been built/)).toBeInTheDocument();
   });
 
-  it('starts a run and shows it', async () => {
+  it('starts a run through the project, named, and shows it', async () => {
     api.getPipeline.mockResolvedValue(pipeline({ id: 'run-new', status: 'queued', cells: [] }));
     renderCanvas();
 
     await userEvent.click(await screen.findByRole('button', { name: /Run pipeline/ }));
+    const name = screen.getByLabelText('Model name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'readmit');
+    await userEvent.click(screen.getByRole('button', { name: 'Run' }));
 
-    await waitFor(() => expect(api.triggerPipeline).toHaveBeenCalledWith(9));
+    await waitFor(() => expect(api.runProject).toHaveBeenCalledWith(4, 'readmit'));
     await waitFor(() => expect(api.getPipeline).toHaveBeenCalledWith('run-new'));
   });
 
@@ -264,7 +268,7 @@ describe('PipelineCanvas', () => {
     expect(within(training).getByText('never ran')).toBeInTheDocument();
     expect(within(screen.getByRole('button', { name: 'Preprocessing' })).getByText('failed')).toBeInTheDocument();
     // The code shown is the run's own copy, so the branch is not read.
-    expect(api.getRepoNotebook).not.toHaveBeenCalled();
+    expect(api.getProjectNotebook).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole('button', { name: 'Preprocessing' }));
     expect(screen.getByText("KeyError: 'age'")).toBeInTheDocument();

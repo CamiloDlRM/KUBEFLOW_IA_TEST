@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
-import { runProject } from '../api/client';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { getPipelineInput, runProject } from '../api/client';
 import type { Project } from '../types';
 import { formatBytes, repoNameFromUrl } from '../utils/format';
 import Spinner from './Spinner';
@@ -25,20 +25,23 @@ interface RunPipelineModalProps {
   /** Only opened when the project has a linked notebook and an active dataset. */
   project: Project;
   onClose: () => void;
+  /** Called with the new run instead of navigating to its page. */
+  onStarted?: (pipelineId: string) => void;
 }
 
 /**
  * Confirms a run of the project's notebook on its gold data and names the
  * model it will produce. The version is assigned by the worker.
  */
-export default function RunPipelineModal({ project, onClose }: RunPipelineModalProps) {
+export default function RunPipelineModal({ project, onClose, onStarted }: RunPipelineModalProps) {
   const navigate = useNavigate();
   const [modelName, setModelName] = useState(() => suggestedModelName(project.name));
   const nameValid = MODEL_NAME_PATTERN.test(modelName.trim());
 
   const mutation = useMutation({
     mutationFn: () => runProject(project.id, modelName.trim()),
-    onSuccess: ({ pipeline_id }) => navigate(`/pipelines/${pipeline_id}`),
+    onSuccess: ({ pipeline_id }) =>
+      onStarted ? onStarted(pipeline_id) : navigate(`/pipelines/${pipeline_id}`),
   });
 
   useEffect(() => {
@@ -56,6 +59,12 @@ export default function RunPipelineModal({ project, onClose }: RunPipelineModalP
 
   const repository = project.repository;
   const dataset = project.active_dataset;
+  // What the run will mount: the chosen layer, else the active gold build.
+  const { data: input } = useQuery({
+    queryKey: ['pipeline-input', project.id],
+    queryFn: () => getPipelineInput(project.id),
+  });
+  const chosen = input?.choice.layer ? input.resolved?.label : undefined;
 
   return (
     <div
@@ -112,8 +121,8 @@ export default function RunPipelineModal({ project, onClose }: RunPipelineModalP
             <SummaryRow label="Notebook">
               <span className="font-mono">{repository?.notebook_path || '--'}</span>
             </SummaryRow>
-            <SummaryRow label="Gold data">
-              {dataset ? `${dataset.name} (${formatBytes(dataset.size_bytes)})` : '--'}
+            <SummaryRow label="Data">
+              {chosen ?? (dataset ? `${dataset.name} (${formatBytes(dataset.size_bytes)})` : '--')}
             </SummaryRow>
           </dl>
 
