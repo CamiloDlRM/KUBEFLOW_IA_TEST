@@ -58,9 +58,6 @@ export default function PipelineDetail() {
         <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
           Failed to load pipeline: {(error as Error).message}
         </div>
-        <Link to="/" className="mt-4 inline-block text-sm text-brand-400 hover:underline">
-          Back to Dashboard
-        </Link>
       </div>
     );
   }
@@ -95,10 +92,15 @@ export default function PipelineDetail() {
 
   return (
     <div className="space-y-8">
-      {/* Back link */}
-      <Link to="/" className="text-sm text-brand-400 hover:underline">
-        &larr; Back to Dashboard
-      </Link>
+      {/* The same run on its project's canvas: the code and data of each phase */}
+      {pipeline.project_id != null && (
+        <Link
+          to={`/projects/${pipeline.project_id}/pipeline?run=${pipeline.id}`}
+          className="text-sm text-brand-400 hover:underline"
+        >
+          &larr; Code and data of this run
+        </Link>
+      )}
 
       {/* Header */}
       <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5">

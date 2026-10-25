@@ -92,11 +92,11 @@ function pipeline(overrides: Partial<Pipeline> = {}): Pipeline {
   };
 }
 
-function renderCanvas() {
+function renderCanvas(entry = '/projects/4/pipeline') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/projects/4/pipeline']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/projects/:projectId/pipeline" element={<PipelineCanvas />} />
         </Routes>
@@ -251,6 +251,17 @@ describe('PipelineCanvas', () => {
     renderCanvas();
 
     expect(await screen.findByRole('button', { name: /Running/ })).toBeDisabled();
+  });
+
+  it('opens on the run named in the URL, as a run detail page links to it', async () => {
+    api.getPipelines.mockResolvedValue({
+      items: [pipeline({ id: 'run-2' }), pipeline({ id: 'run-1' })], total: 2, page: 1, size: 15,
+    });
+    api.getPipeline.mockResolvedValue(pipeline({ id: 'run-1', cells: [cell(0, 'config')] }));
+    renderCanvas('/projects/4/pipeline?run=run-1');
+
+    await waitFor(() => expect(api.getPipeline).toHaveBeenCalledWith('run-1'));
+    expect(api.getPipeline).not.toHaveBeenCalledWith('run-2');
   });
 
   it('shows the latest run as it left the code, failure included', async () => {

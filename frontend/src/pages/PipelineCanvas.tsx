@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import {
@@ -85,7 +85,9 @@ const ACTIVE = new Set(['queued', 'running']);
 
 function Canvas({ project, repo }: { project: Project; repo: ProjectRepository }) {
   const queryClient = useQueryClient();
-  const [selection, setSelection] = useState<string | null>(null);
+  // `?run=` comes from a run's detail page, so it opens on that run.
+  const [searchParams] = useSearchParams();
+  const [selection, setSelection] = useState<string | null>(searchParams.get('run'));
   const [focus, setFocus] = useState<string | null>(null);
   const [peek, setPeek] = useState<{ choice: PipelineInputChoice; label: string } | null>(null);
 

@@ -808,7 +808,14 @@ def run_pipeline(
                         "dataset",
                         "success",
                         f"Converted to {wanted.upper()} because the notebook reads it with "
-                        f"read_{wanted}. DATASET_PATH is now {dataset_path}.",
+                        f"read_{wanted}. DATASET_PATH is now {dataset_path}."
+                        + (
+                            " CSV keeps no column types (dates, codes with leading zeros, "
+                            "nullable integers come back as text or floats); read it with "
+                            "read_parquet to keep them."
+                            if wanted == "csv"
+                            else ""
+                        ),
                     )
                     log.info("pipeline.phase.dataset.converted", format=wanted)
 
