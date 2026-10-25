@@ -47,11 +47,49 @@ __all__ = [
     "build_dashboard",
 ]
 
-#: How many times the model may go round the loop. Each turn is one call to
-#: Gemini plus however many tools it asked for. Enough for "look at what is
-#: there, make a dataset, make four charts, make a dashboard", not enough to
-#: spin.
-MAX_TURNS = 12
+#: How many times the model may go round the loop, unless
+#: DASHBOARD_AGENT_MAX_TURNS says otherwise. Each turn is one model call plus
+#: however many tools it asked for. The first real run used all twelve of the
+#: old limit and needed more: a dataset, a chart schema, two charts and a
+#: dashboard is already eight calls before anything goes wrong once.
+MAX_TURNS = 20
+
+#: The tools a dashboard is built from. Superset offers ~45, and every one
+#: travels with every model call: on Groq's free tier that alone came to 10,303
+#: tokens against a limit of 8,000 a minute, before the model had read a word
+#: of the request. These are what the job uses — find the gold database, make
+#: or reuse a dataset on it, chart it, put the charts in one dashboard — and a
+#: narrower set is also a model with fewer wrong turns available to it.
+#:
+#: Overridable with DASHBOARD_AGENT_TOOLS: a comma list, or `*` for all of them.
+DEFAULT_TOOLS = (
+    "list_databases",
+    "list_datasets",
+    "get_dataset_info",
+    "create_virtual_dataset",
+    "list_charts",
+    "generate_chart",
+    "update_chart",
+    "get_chart_type_schema",
+    "list_dashboards",
+    "get_dashboard_info",
+    "generate_dashboard",
+    "add_chart_to_existing_dashboard",
+)
+
+#: How much of a *listing* the model is shown. A listing comes back as JSON
+#: that can run to thousands of tokens, the conversation carries every answer
+#: into every later call, and a listing is paged: "ask for a narrower page" is
+#: a real thing to do. The full answer is still kept in the run.
+#:
+#: Only listings. Cutting everything was a mistake that cost a whole run: a
+#: chart-type schema cut at 2,500 characters is a schema whose end the model
+#: never sees, so it asked for it again — seven of twelve calls in the first
+#: run that reached Superset were get_chart_type_schema, each answered with the
+#: same truncated half and the advice to ask for something narrower, when there
+#: is nothing narrower to ask for.
+MAX_RESULT_CHARS = 2500
+TRUNCATED_PREFIX = "list_"
 
 SYSTEM_PROMPT = """You build dashboards in Apache Superset by calling the \
 tools you have been given.
@@ -62,6 +100,16 @@ already cleaned, typed and joined — one built, versioned object. Do not try to
 clean it, and do not invent columns: use only the ones named in the schema below.
 - Build the dashboard out of the tools. Never answer with instructions for a \
 human to follow by hand.
+
+How to reach the gold table:
+- It lives in Superset's database named "Gold (DuckDB)". Find its id with \
+list_databases.
+- It is a Parquet object, read with DuckDB's read_parquet. The object's path is \
+given with the schema below. Build a virtual dataset on that database whose SQL \
+is: SELECT * FROM read_parquet('<that path>')
+- Before creating that dataset, check list_datasets: if one already reads the \
+same path, reuse it.
+- Then build charts on the dataset, and put them in one dashboard.
 
 How to work:
 - Look before you build. List what already exists rather than assuming.
@@ -179,12 +227,56 @@ def to_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _select(tools: list[MCPTool], spec: str) -> list[MCPTool]:
+    """The tools the model is offered: the default set, a configured one, or all.
+
+    A configured name that Superset does not offer is skipped. If none of them
+    match — Superset renamed its tools, say — every tool is offered instead of
+    none: a model with too many tools is slow, one with none can only apologise.
+    """
+    spec = spec.strip()
+    if spec == "*":
+        return tools
+    wanted = (
+        {name.strip() for name in spec.split(",") if name.strip()}
+        if spec
+        else set(DEFAULT_TOOLS)
+    )
+    chosen = [tool for tool in tools if tool.name in wanted]
+    if not chosen:
+        logger.warning(
+            "superset_agent.no_tools_matched",
+            wanted=sorted(wanted),
+            offered=[tool.name for tool in tools][:60],
+        )
+        return tools
+    return chosen
+
+
+def _for_the_model(tool: str, result: str) -> str:
+    """One tool answer as the model rereads it: whole, unless it is a long listing."""
+    if not tool.startswith(TRUNCATED_PREFIX) or len(result) <= MAX_RESULT_CHARS:
+        return result
+    return (
+        result[:MAX_RESULT_CHARS]
+        + f"\n...[{len(result) - MAX_RESULT_CHARS} more characters cut. "
+        "Ask for something narrower if you need them.]"
+    )
+
+
 def _declarations(tools: list[MCPTool]) -> list[dict[str, Any]]:
+    """The tools as the MCP server describes them: plain JSON Schema.
+
+    Narrowing happens in the backend that needs it. Gemini takes an OpenAPI
+    subset and must have the schema trimmed; everything speaking the OpenAI
+    shape takes JSON Schema as it stands. Trimming here would quietly impose
+    Gemini's limits on providers that do not have them.
+    """
     return [
         {
             "name": tool.name,
             "description": tool.description[:1024],
-            "parameters": to_gemini_schema(tool.schema),
+            "parameters": tool.schema or {"type": "object", "properties": {}},
         }
         for tool in tools
     ]
@@ -195,28 +287,86 @@ def _declarations(tools: list[MCPTool]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _gemini(
-    settings: AppSettings, model: str, contents: list[dict[str, Any]], tools: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """One turn: the conversation so far plus the tools, in; a candidate, out."""
+#: Statuses that mean "ask again", not "you asked wrong". 503 is the one that
+#: matters in practice: a free tier meets "this model is currently
+#: experiencing high demand" often, and a run makes up to MAX_TURNS model
+#: calls — so without retries the chance of finishing a dashboard is the
+#: chance of winning that coin toss a dozen times in a row.
+_RETRYABLE = frozenset({429, 500, 502, 503, 504})
+_ATTEMPTS = 4
+
+
+def _wait_for(response: Any, attempt: int) -> float:
+    """How long to hold off. The server's own answer wins if it gave one."""
+    header = response.headers.get("retry-after", "")
+    if header.isdigit():
+        # Up to a minute: tokens-per-minute limits reset on a minute's window.
+        return min(float(header), 60.0)
+    # 2, 4, 8 seconds. Long enough for a demand spike to pass, short enough
+    # that four attempts do not outlast the caller's patience.
+    return float(2**attempt)
+
+
+def _post(url: str, headers: dict[str, str], payload: dict[str, Any], model: str, sleep: Any) -> Any:
+    """POST, riding out what is transient. Shared by both backends."""
     import httpx
 
+    for attempt in range(1, _ATTEMPTS + 1):
+        response = httpx.post(url, headers=headers, json=payload, timeout=300)
+        if response.status_code not in _RETRYABLE or attempt == _ATTEMPTS:
+            return response
+        delay = _wait_for(response, attempt)
+        logger.info(
+            "superset_agent.retrying",
+            status=response.status_code,
+            attempt=attempt,
+            waiting=delay,
+            model=model,
+        )
+        sleep(delay)
+    return response
+
+
+def _refusal(response: Any, model: str) -> DashboardRequestError:
+    """The provider said no. Its body goes up whole, because it is the useful part."""
+    tried = f" after {_ATTEMPTS} attempts" if response.status_code in _RETRYABLE else ""
+    return DashboardRequestError(
+        f"The model API refused the request{tried}: HTTP "
+        f"{response.status_code} for model {model!r}. {response.text[:400]}"
+    )
+
+
+def _gemini(
+    settings: AppSettings,
+    model: str,
+    contents: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    sleep: Any = None,
+) -> dict[str, Any]:
+    """One turn: the conversation so far plus the tools, in; a candidate, out."""
+    import time
+
+    sleep = sleep or time.sleep
     url = (
         "https://generativelanguage.googleapis.com/v1beta/"
         f"models/{model}:generateContent"
     )
-    response = httpx.post(
-        url,
-        headers={"x-goog-api-key": settings.gemini_api_key},
-        json={
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-            "contents": contents,
-            "tools": [{"functionDeclarations": tools}],
-            "generationConfig": {"maxOutputTokens": 8000},
-        },
-        timeout=300,
-    )
-    response.raise_for_status()
+    narrowed = [dict(tool, parameters=to_gemini_schema(tool["parameters"])) for tool in tools]
+    payload = {
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": contents,
+        "tools": [{"functionDeclarations": narrowed}],
+        "generationConfig": {"maxOutputTokens": 8000},
+    }
+
+    response = _post(url, {"x-goog-api-key": settings.gemini_api_key}, payload, model, sleep)
+    if response.status_code >= 400:
+        # Google's body says which model names it would have accepted, and a
+        # 404 here is almost always a model name this key cannot use rather
+        # than anything wrong with the request. Raised as our own error so it
+        # reaches the user as a message instead of as a 500 with a trace.
+        raise _refusal(response, model)
     data = response.json()
 
     candidates = data.get("candidates") or []
@@ -227,6 +377,194 @@ def _gemini(
     return candidates[0].get("content") or {}
 
 
+# ---------------------------------------------------------------------------
+# The OpenAI-compatible backend: Groq, OpenRouter, and most of the rest
+# ---------------------------------------------------------------------------
+#
+# One backend covers the family because they all speak the same dialect:
+# /chat/completions, a bearer token, `messages`, and `tools` carrying plain
+# JSON Schema. Switching between them is a base URL and a model name, not code.
+#
+# The loop above speaks Gemini's shape, and keeps doing so. This translates at
+# the edges instead — in on the way to the provider, out on the way back — so
+# the loop, and every test of it, stays as it is. The alternative was a third
+# neutral shape that nothing speaks natively, converted twice.
+
+
+def _tool_call_id(message: int, index: int) -> str:
+    """A name for one call, derived rather than remembered.
+
+    The OpenAI shape pairs a result with the call it answers by id; Gemini's
+    has no id at all. Deriving it from position works because the loop answers
+    every call of a turn, in order, in the one message that follows it — so
+    the Nth result belongs to the Nth call, and both sides can compute the
+    same name without anything being carried between them.
+    """
+    return f"call_{message}_{index}"
+
+
+def _as_messages(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Gemini's `contents` as OpenAI's `messages`."""
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    #: Which message the calls being answered came from, so a result can name
+    #: the call it belongs to.
+    answering = 0
+
+    for position, entry in enumerate(contents):
+        parts = entry.get("parts") or []
+        calls = [part["functionCall"] for part in parts if "functionCall" in part]
+        results = [part["functionResponse"] for part in parts if "functionResponse" in part]
+        text = "".join(part.get("text", "") for part in parts)
+
+        if calls:
+            answering = position
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": text or None,
+                    "tool_calls": [
+                        {
+                            "id": _tool_call_id(position, index),
+                            "type": "function",
+                            "function": {
+                                "name": call.get("name", ""),
+                                "arguments": json.dumps(call.get("args") or {}),
+                            },
+                        }
+                        for index, call in enumerate(calls)
+                    ],
+                }
+            )
+        elif results:
+            for index, result in enumerate(results):
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": _tool_call_id(answering, index),
+                        "content": str((result.get("response") or {}).get("result", "")),
+                    }
+                )
+        else:
+            messages.append(
+                {
+                    "role": "assistant" if entry.get("role") == "model" else "user",
+                    "content": text,
+                }
+            )
+    return messages
+
+
+def _as_parts(message: dict[str, Any]) -> dict[str, Any]:
+    """One OpenAI message as the Gemini-shaped content the loop reads."""
+    parts: list[dict[str, Any]] = []
+
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") or {}
+        raw = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw) if isinstance(raw, str) else raw
+        except json.JSONDecodeError:
+            # A model that emits unparseable arguments has made a mistake it
+            # can recover from, so it is passed along as an empty call rather
+            # than crashing the run: the tool will refuse it and say why.
+            logger.info("superset_agent.bad_arguments", tool=function.get("name"), raw=raw[:200])
+            arguments = {}
+        parts.append({"functionCall": {"name": function.get("name", ""), "args": arguments}})
+
+    text = message.get("content")
+    if text:
+        parts.append({"text": text})
+
+    return {"parts": parts}
+
+
+def _openai_compatible(
+    settings: AppSettings,
+    model: str,
+    contents: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    sleep: Any = None,
+) -> dict[str, Any]:
+    """One turn against any provider speaking the OpenAI chat API."""
+    import time
+
+    sleep = sleep or time.sleep
+    url = f"{settings.dashboard_agent_base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": _as_messages(contents),
+        # Plain JSON Schema, which is the point of coming this way.
+        "tools": [{"type": "function", "function": tool} for tool in tools],
+        "tool_choice": "auto",
+    }
+
+    headers = {"Authorization": f"Bearer {settings.dashboard_agent_api_key}"}
+
+    # Groq checks every tool call against its schema before handing it back,
+    # and when the model gets one wrong it refuses the whole request with a
+    # 400 rather than passing the bad call through. That is a mistake the
+    # model can correct, not a reason to end the run: it is told what it
+    # sent and why that was rejected, and asked again. The correction lives
+    # only in this request — once the model produces a valid call, that call
+    # is what the conversation records.
+    for correction in range(_CORRECTIONS + 1):
+        response = _post(url, headers, payload, model, sleep)
+        rejected = _rejected_tool_call(response)
+        if rejected is None or correction == _CORRECTIONS:
+            break
+        reason, attempted = rejected
+        logger.info(
+            "superset_agent.correcting",
+            attempt=correction + 1,
+            reason=reason[:200],
+            attempted=attempted[:200],
+        )
+        payload["messages"] = payload["messages"] + [
+            {
+                "role": "user",
+                "content": (
+                    "Your last tool call was rejected before it ran.\n"
+                    f"You sent: {attempted}\n"
+                    f"Reason: {reason}\n"
+                    "Call the tool again with arguments that match its schema "
+                    "exactly — every required property, nested where the "
+                    "schema nests it."
+                ),
+            }
+        ]
+
+    if response.status_code >= 400:
+        raise _refusal(response, model)
+
+    choices = response.json().get("choices") or []
+    if not choices:
+        raise DashboardRequestError("The model returned no choices.")
+    return _as_parts(choices[0].get("message") or {})
+
+
+#: How many times a model may be told its tool call was malformed before the
+#: run gives up. Two is enough for a slip; a model that cannot produce a valid
+#: call three times running is not going to on the fourth.
+_CORRECTIONS = 2
+
+
+def _rejected_tool_call(response: Any) -> tuple[str, str] | None:
+    """The reason and the attempted call, if the provider refused a tool call."""
+    if response.status_code != 400:
+        return None
+    try:
+        error = response.json().get("error") or {}
+    except ValueError:
+        return None
+    if error.get("code") != "tool_use_failed":
+        return None
+    return str(error.get("message", "")), str(error.get("failed_generation", ""))
+
+
+_BACKENDS: dict[str, Any] = {"gemini": _gemini, "openai": _openai_compatible}
+
+
 def build_dashboard(
     request: str,
     *,
@@ -234,7 +572,7 @@ def build_dashboard(
     mcp_url: str,
     history: list[tuple[str, str]] | None = None,
     settings: AppSettings | None = None,
-    model: str = "gemini-2.5-pro",
+    model: str = "",
     generate: Callable[..., dict[str, Any]] | None = None,
     client: MCPClient | None = None,
 ) -> DashboardRun:
@@ -246,6 +584,10 @@ def build_dashboard(
             what exists rather than left to discover it, because discovery
             costs a tool call per guess and the platform already knows.
         mcp_url: Where Superset's MCP server is listening.
+        model: Which Gemini model to drive. Empty takes
+            ``settings.dashboard_agent_model``, which is settable in the
+            environment — a model name that a particular API key cannot use is
+            a configuration problem, and fixing it should not need a rebuild.
         history: Earlier exchanges, oldest first, as ``(request, summary)``.
             This is what makes "move that chart" mean anything: without it the
             model meets each prompt as its first, and builds a second dashboard
@@ -258,10 +600,16 @@ def build_dashboard(
         client: Seam for tests. Defaults to opening one against ``mcp_url``.
     """
     settings = settings or get_settings()
-    if not settings.gemini_api_key:
+    provider = settings.dashboard_agent_provider
+    # Checked whatever the caller injects: a missing credential is a fact
+    # about the configuration, not about who is making the call.
+    if provider == "gemini" and not settings.gemini_api_key:
         raise DashboardRequestError("GEMINI_API_KEY is not set.")
+    if provider == "openai" and not settings.dashboard_agent_api_key:
+        raise DashboardRequestError("DASHBOARD_AGENT_API_KEY is not set.")
+    model = model or settings.dashboard_agent_model
 
-    call_model = generate or _gemini
+    call_model = generate or _BACKENDS[provider]
     opened = client is None
     connection = client or MCPClient(mcp_url)
 
@@ -282,7 +630,7 @@ def build_dashboard(
                 "Superset's MCP server offered no tools, so there is nothing "
                 "the model can do with it."
             )
-        declarations = _declarations(tools)
+        declarations = _declarations(_select(tools, settings.dashboard_agent_tools))
 
         contents: list[dict[str, Any]] = []
         for earlier, answer in history or []:
@@ -305,7 +653,8 @@ def build_dashboard(
         )
 
         run = DashboardRun(summary="")
-        for turn in range(1, MAX_TURNS + 1):
+        max_turns = settings.dashboard_agent_max_turns or MAX_TURNS
+        for turn in range(1, max_turns + 1):
             run.turns = turn
             content = call_model(settings, model, contents, declarations)
             parts = content.get("parts") or []
@@ -339,7 +688,7 @@ def build_dashboard(
                     {
                         "functionResponse": {
                             "name": name,
-                            "response": {"result": result},
+                            "response": {"result": _for_the_model(name, result)},
                         }
                     }
                 )
@@ -348,7 +697,7 @@ def build_dashboard(
         run.exhausted = True
         run.summary = (
             run.summary
-            or f"Stopped after {MAX_TURNS} turns without the model finishing."
+            or f"Stopped after {max_turns} turns without the model finishing."
         )
         logger.warning("superset_agent.exhausted", calls=len(run.calls))
         return run

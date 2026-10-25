@@ -74,37 +74,29 @@ The first start migrates Superset's metadata database, seeds the admin user
 from `SUPERSET_ADMIN_*`, and runs `superset init`; expect it to take a minute
 or two. Then <http://localhost:8088>.
 
+### The gold connection is made for you
+
+`bootstrap.sh web` runs `provision.py` on every start, which registers a
+database called **Gold (DuckDB)** — or updates it, if it is already there. It
+has to be done at startup because there is no MCP tool for creating a
+connection: the agent can build datasets on a database, not make one, so
+without this it meets a Superset with nothing to chart.
+
+It is DuckDB in memory, with `httpfs` reaching MinIO, configured from the
+container's own MinIO credentials. It holds no data and no views. A dataset on
+it is `SELECT * FROM read_parquet('s3://gold/...')`, which reads the built gold
+object directly — the agent is told the exact path with the schema.
+
+`extension_directory` in its settings is not optional. `httpfs` is baked into
+the image at `/app/duckdb_extensions` rather than under `$HOME`, because
+`$HOME` is `/app/superset_home` and compose mounts a volume there — anything
+baked underneath it would be hidden the moment the container starts.
+
 ### Verify it can read gold
 
-This is the step worth doing before anything is built on top, because it
-exercises the one part that is new: DuckDB reaching MinIO over `httpfs`.
-
-In **SQL Lab**, add a database with URI `duckdb:///:memory:` and these engine
-parameters:
-
-```json
-{
-  "connect_args": {
-    "preload_extensions": ["httpfs"],
-    "config": {
-      "extension_directory": "/app/duckdb_extensions",
-      "s3_endpoint": "minio:9000",
-      "s3_access_key_id": "minioadmin",
-      "s3_secret_access_key": "minioadmin",
-      "s3_use_ssl": false,
-      "s3_url_style": "path"
-    }
-  }
-}
-```
-
-`extension_directory` is not optional. `httpfs` is baked into the image at that
-path rather than under `$HOME`, because `$HOME` is `/app/superset_home` and
-compose mounts a volume there — anything baked underneath it would be hidden
-the moment the container starts. A connection that does not name the directory
-looks in the empty default and tries to download the extension instead.
-
-Then run, against a project that has a gold build:
+Worth doing before blaming the agent, because it exercises the one part that is
+new: DuckDB reaching MinIO. In **SQL Lab**, pick **Gold (DuckDB)** and run,
+against a project that has a gold build:
 
 ```sql
 SELECT count(*) FROM read_parquet('s3://gold/project-4/gold/v0002.parquet');
@@ -125,12 +117,22 @@ is a wrapper that creates the app and pushes its context before starting the
 server. `bootstrap.sh` runs the documented command first; if you see that
 error, that is what it is, and it is a small wrapper rather than a redesign.
 
-**The image ships no database drivers at all.** They were dropped in 4.1.0 to
-keep it lean, so every one is the operator's to add — including `psycopg2`,
-which Superset needs for *its own* metadata database. Without it the container
-does not reach the point of serving anything: `superset db upgrade` cannot open
-the connection and the startup dies on `ModuleNotFoundError: No module named
-'psycopg2'`. The Dockerfile installs `psycopg2-binary` alongside DuckDB.
+**The image ships almost nothing optional.** Three things had to be added, and
+each one failed in a different place:
+
+| Missing | Where it showed up |
+|---|---|
+| `psycopg2` | `superset db upgrade` cannot open Superset's *own* metadata database. Drivers were dropped from the image in 4.1.0. |
+| `duckdb`, `duckdb-engine` | No way to read the gold Parquet. |
+| the `fastmcp` extra | `superset mcp run` prints *"fastmcp is not installed, skipping MCP initialization"* and exits — so the MCP container dies instantly and the agent meets a refused connection. |
+
+The `fastmcp` extra is asked for as `apache-superset[fastmcp]==<installed
+version>`, not as a bare `fastmcp`. The extra carries Superset's own constraint
+on which fastmcp its MCP code was written against; a bare install takes the
+newest, which is how you get a server that starts and then disagrees with its
+own host about a schema. Naming the version already installed means the
+resolver treats apache-superset as satisfied and adds only what the extra pulls
+in.
 
 **The driver versions are unpinned.** `duckdb` and `duckdb-engine` have never
 been resolved against this base image here. A pin invented without running it
@@ -172,6 +174,49 @@ Three pieces, all in the backend:
 It runs synchronously and can take minutes. That is the wrong shape for an HTTP
 request and it should move onto the Celery queue the way the pipeline analysis
 did; that is a change to how it is called, not to what it does.
+
+## Seeing the dashboard inside the platform
+
+The KPI maker shows the dashboard it built above the conversation, through
+Superset's own embedding SDK rather than a bare iframe. A bare iframe would
+need the user signed in to Superset in the same browser, and would hand them
+all of Superset rather than one dashboard.
+
+```
+KPI maker ──GET /projects/{id}/dashboard/embed──▶ backend
+                                                  ├ the dashboard id, read from the agent's tool calls
+                                                  ├ embedding switched on in Superset → its UUID
+                                                  └ a guest token signed for that one dashboard
+          ◀── { uuid, token, superset_domain } ──
+          └ embedDashboard() → iframe
+```
+
+The guest token is signed by the backend with `SUPERSET_GUEST_TOKEN_SECRET`,
+which Superset verifies against the same variable. It names one dashboard and
+lives five minutes; the SDK asks for a fresh one before it runs out. No
+Superset credential ever reaches the browser. The backend does hold the admin
+login, inside the compose network, and uses it for one thing: switching
+embedding on for a dashboard, once.
+
+**In production `SUPERSET_PUBLIC_URL` has to be a real address.** The iframe
+loads from the user's browser, so `http://localhost:8088` only works on the
+machine running compose. And the app is served over HTTPS, which a browser
+will not let frame a page served over HTTP — so Superset needs its own route
+through the reverse proxy, behind TLS, before this works for anyone else.
+
+Left at the default, the KPI maker says so instead of showing a blank frame.
+On the production server, behind the Cloudflare tunnel:
+
+1. Add a public hostname to the tunnel: `superset.kubeflowia.site` →
+   `http://localhost:8088` (or `http://superset:8088` if `cloudflared` runs
+   inside the compose network).
+2. In the server's `.env`: `SUPERSET_PUBLIC_URL=https://superset.kubeflowia.site`.
+3. `docker compose up -d backend superset` — the backend to read the new
+   address, Superset for `ENABLE_PROXY_FIX`, which makes it trust the
+   `X-Forwarded-Proto` Cloudflare sends instead of building `http://` links.
+
+That publishes Superset's login page to the internet, so the admin password
+in `SUPERSET_ADMIN_PASSWORD` has to be a real one first.
 
 ## What is not here
 

@@ -136,10 +136,23 @@ class MCPClient:
         """
         result = self._rpc("tools/call", {"name": name, "arguments": arguments})
         text = _as_text(result.get("content") or [])
+
+        # A tool with an output schema answers in `structuredContent`, and the
+        # text block that is supposed to mirror it is a SHOULD, not a MUST.
+        # Reading only `content` turned every listing into an empty string: the
+        # model asked for the gold database ten different ways, heard nothing
+        # each time, and spent its whole run asking.
+        structured = result.get("structuredContent")
+        if not text and structured is not None:
+            text = json.dumps(structured, default=str, ensure_ascii=False)
+
         if result.get("isError"):
             logger.info("mcp.tool_failed", tool=name, detail=text[:200])
             return f"The tool reported an error: {text}"
-        return text
+
+        # Said, rather than passed on as nothing. An empty answer reads to a
+        # model as "ask again"; this one reads as an answer.
+        return text or "(The tool returned no content.)"
 
     # ------------------------------------------------------------------- rpc
     def _rpc(
@@ -190,7 +203,7 @@ class MCPClient:
         if notify:
             return {}
 
-        message = _parse(response)
+        message = _parse(response, body.get("id"))
         if "error" in message:
             error = message["error"]
             raise MCPError(
@@ -200,8 +213,20 @@ class MCPClient:
         return message.get("result") or {}
 
 
-def _parse(response: Any) -> dict[str, Any]:
-    """The JSON-RPC message, from JSON or from an event stream."""
+def _parse(response: Any, expected_id: int | None = None) -> dict[str, Any]:
+    """The JSON-RPC response to our request, from JSON or from an event stream.
+
+    An event stream can carry several messages before the one we asked for:
+    the server is allowed to send log lines and progress notifications on the
+    same stream, and then the response. This used to return the *first*
+    message, which was fine for tools that say nothing while they work and
+    returned `{}` for the ones that log first — every listing Superset has.
+    The model asked for the gold database a dozen times and was answered
+    each time with a log line it never saw.
+
+    So every message on the stream is read, and the one carrying our id is
+    the answer. Notifications have no id and are not answers.
+    """
     content_type = response.headers.get("content-type", "")
     if "text/event-stream" not in content_type:
         try:
@@ -209,13 +234,35 @@ def _parse(response: Any) -> dict[str, Any]:
         except ValueError as exc:  # pragma: no cover - server contract break
             raise MCPError(f"Expected JSON, got {response.text[:200]!r}") from exc
 
-    # Only the data lines carry the message; everything else is framing.
-    for line in response.text.splitlines():
-        if line.startswith("data:"):
-            payload = line[len("data:") :].strip()
-            if payload:
-                return json.loads(payload)
-    raise MCPError("The event stream carried no message.")
+    messages: list[dict[str, Any]] = []
+    # Events are separated by a blank line. One event's data may span several
+    # `data:` lines, which join with newlines; everything else is framing.
+    for event in response.text.replace("\r\n", "\n").split("\n\n"):
+        data = "\n".join(
+            line[len("data:") :].removeprefix(" ")
+            for line in event.split("\n")
+            if line.startswith("data:")
+        ).strip()
+        if not data:
+            continue
+        try:
+            messages.append(json.loads(data))
+        except json.JSONDecodeError:
+            logger.info("mcp.unreadable_event", data=data[:200])
+
+    if expected_id is not None:
+        for message in messages:
+            if message.get("id") == expected_id:
+                return message
+    # No id to match against, or a server that answered under another: the
+    # last thing that is a response rather than a notification.
+    for message in reversed(messages):
+        if "result" in message or "error" in message:
+            return message
+    raise MCPError(
+        f"The event stream carried no response, only {len(messages)} "
+        "notification(s)."
+    )
 
 
 def _as_text(content: list[dict[str, Any]]) -> str:

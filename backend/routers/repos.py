@@ -20,7 +20,10 @@ from models.schemas import (
     LinkedNotebookResponse,
     MessageResponse,
     ModelDeployment,
+    NotebookCellsResponse,
     Pipeline,
+    PipelineInputRequest,
+    PipelineInputResponse,
     Project,
     RepoCreateRequest,
     RepoCreatedResponse,
@@ -357,6 +360,57 @@ async def launch_pipeline(
     return WebhookAccepted(pipeline_id=pipeline.id)
 
 
+@router.get(
+    "/{repo_id}/notebook",
+    response_model=NotebookCellsResponse,
+    summary="The notebook's code by phase, as a branch has it now",
+)
+async def get_repo_notebook(
+    repo_id: int,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    branch: str = "",
+) -> NotebookCellsResponse:
+    """Read the repository's notebook from GitHub and split it by phase.
+
+    A run records the code it executed; this is the code the *next* run will
+    execute, which is what there is to show before the first one.
+    """
+    import httpx
+
+    from core.github import download_notebook
+    from core.notebook_parser import notebook_cells
+
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    ref = branch.strip() or repo.branch
+    path = repo.notebook_path.strip("/")
+    if not path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This repository has no notebook selected.",
+        )
+    try:
+        notebook = await download_notebook(repo.github_url, repo_token(repo, settings), ref, path)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No notebook at '{path}' on branch '{ref}'.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GitHub refused the notebook: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.error("repo.notebook_failed", repo_id=repo_id, branch=ref, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to read the notebook from GitHub: {exc}",
+        ) from exc
+    return NotebookCellsResponse(branch=ref, notebook_path=path, cells=notebook_cells(notebook))
+
+
 @router.post(
     "/{repo_id}/trigger",
     response_model=WebhookAccepted,
@@ -398,3 +452,80 @@ async def trigger_pipeline(
         repo, project, body.branch.strip() or project.branch, settings, session
     )
 
+def _describe_input(session: Session, repo: Repository) -> PipelineInputResponse:
+    """The repository's choice and what it resolves to, or why it does not."""
+    from core import medallion, pipeline_input
+
+    response = PipelineInputResponse(choice=dict(repo.pipeline_input or {}))
+    try:
+        choice = pipeline_input.InputChoice.parse(repo.pipeline_input)
+        if choice.layer and repo.project_id is not None:
+            resolved = pipeline_input.resolve(session, repo.project_id, choice)
+            response.resolved = resolved.as_dict() if resolved else None
+    except (pipeline_input.InputError, medallion.MedallionError) as exc:
+        response.error = str(exc)
+    return response
+
+
+@router.get(
+    "/{repo_id}/pipeline-input",
+    response_model=PipelineInputResponse,
+    summary="What this repository's pipeline trains on",
+)
+def get_pipeline_input(
+    repo_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PipelineInputResponse:
+    """Return the choice, and what it would mount if a run started now.
+
+    A choice that no longer resolves is reported in ``error`` rather than as a
+    failed request: the repository still exists and so does its choice, and
+    the view needs both to show what went stale.
+    """
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    return _describe_input(session, repo)
+
+
+@router.put(
+    "/{repo_id}/pipeline-input",
+    response_model=PipelineInputResponse,
+    summary="Choose what this repository's pipeline trains on",
+)
+def set_pipeline_input(
+    repo_id: int,
+    body: PipelineInputRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PipelineInputResponse:
+    """Point the pipeline at a layer: gold, or one source's silver or bronze.
+
+    The choice is resolved before it is stored, so one that names nothing is
+    refused here, when someone is looking, rather than at the start of a run
+    nobody is watching. An empty layer goes back to the active dataset.
+    """
+    from core import medallion, pipeline_input
+
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    try:
+        choice = pipeline_input.InputChoice.parse(body.model_dump())
+        if choice.layer:
+            if repo.project_id is None:
+                raise pipeline_input.InputError(
+                    "this repository is not in a project, so it has no layers to train on"
+                )
+            pipeline_input.resolve(session, repo.project_id, choice)
+    except pipeline_input.InputError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except medallion.MedallionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Object storage could not be read: {exc}",
+        )
+
+    repo.pipeline_input = choice.as_dict()
+    session.add(repo)
+    session.commit()
+    session.refresh(repo)
+    logger.info("repo.pipeline_input.set", repo_id=repo_id, choice=repo.pipeline_input)
+    return _describe_input(session, repo)

@@ -279,3 +279,139 @@ class TestTheServerNotBeingThere:
         client = server(slow)
         with pytest.raises(MCPError, match="Could not reach"):
             client.tools()
+
+
+class TestStructuredAnswers:
+    """A tool with an output schema answers in `structuredContent`.
+
+    The text block mirroring it is a SHOULD in the spec, not a MUST, and
+    Superset's listing tools leave it out. Reading only `content` turned every
+    listing into an empty string, and the model spent a whole run asking for
+    the gold database ten different ways and hearing nothing each time.
+    """
+
+    def test_a_structured_answer_reaches_the_caller(self):
+        def handler(request):
+            return ok(
+                request,
+                {
+                    "content": [],
+                    "structuredContent": {
+                        "databases": [{"id": 3, "database_name": "Gold (DuckDB)"}],
+                        "count": 1,
+                    },
+                },
+            )
+
+        answer = server(handler).call("list_databases", {"request": {}})
+
+        assert "Gold (DuckDB)" in answer
+        assert json.loads(answer)["count"] == 1
+
+    def test_text_wins_when_the_server_sends_both(self):
+        """They are meant to say the same thing; reading one avoids sending
+        the model the same listing twice."""
+
+        def handler(request):
+            return ok(
+                request,
+                {
+                    "content": [{"type": "text", "text": "two databases"}],
+                    "structuredContent": {"count": 2},
+                },
+            )
+
+        assert server(handler).call("list_databases", {}) == "two databases"
+
+    def test_nothing_at_all_is_said_rather_than_passed_on_as_nothing(self):
+        """An empty answer reads to a model as "ask again"."""
+        answer = server(lambda request: ok(request, {"content": []})).call("x", {})
+        assert answer == "(The tool returned no content.)"
+
+    def test_a_structured_error_is_still_reported_as_an_error(self):
+        def handler(request):
+            return ok(
+                request,
+                {"content": [], "structuredContent": {"error": "no such table"}, "isError": True},
+            )
+
+        answer = server(handler).call("create_virtual_dataset", {})
+        assert answer.startswith("The tool reported an error")
+        assert "no such table" in answer
+
+
+class TestAStreamWithMoreThanTheAnswer:
+    """The server may log and report progress on the stream before answering.
+
+    Reading the first message returned a log line as if it were the result —
+    `{}` once unwrapped — for every Superset tool that logs while it works,
+    which is all the listings. The model asked for the gold database a dozen
+    times and was answered each time with a log line.
+    """
+
+    @staticmethod
+    def _stream(*messages: dict) -> httpx.Response:
+        body = "".join(f"event: message\ndata: {json.dumps(m)}\n\n" for m in messages)
+        return httpx.Response(
+            200, text=body, headers={"content-type": "text/event-stream"}
+        )
+
+    def test_the_answer_is_found_behind_the_notifications(self):
+        def handler(request):
+            body = json.loads(request.content)
+            return self._stream(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/message",
+                    "params": {"level": "info", "data": "Listing databases"},
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {"progress": 1, "total": 2},
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "content": [{"type": "text", "text": "Gold (DuckDB)"}]
+                    },
+                },
+            )
+
+        assert server(handler).call("list_databases", {"request": {}}) == "Gold (DuckDB)"
+
+    def test_the_answer_is_the_one_carrying_our_id(self):
+        def handler(request):
+            body = json.loads(request.content)
+            return self._stream(
+                {"jsonrpc": "2.0", "id": 999, "result": {"content": [{"type": "text", "text": "not ours"}]}},
+                {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": "ours"}]}},
+            )
+
+        assert server(handler).call("x", {}) == "ours"
+
+    def test_an_event_whose_data_spans_several_lines_is_read_whole(self):
+        def handler(request):
+            body = json.loads(request.content)
+            message = json.dumps(
+                {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": "whole"}]}},
+                indent=1,
+            )
+            data = "\n".join(f"data: {line}" for line in message.split("\n"))
+            return httpx.Response(
+                200,
+                text=f"event: message\n{data}\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+
+        assert server(handler).call("x", {}) == "whole"
+
+    def test_a_stream_of_only_notifications_says_so(self):
+        def handler(request):
+            return self._stream(
+                {"jsonrpc": "2.0", "method": "notifications/message", "params": {}}
+            )
+
+        with pytest.raises(MCPError, match="no response, only 1 notification"):
+            server(handler).call("x", {})

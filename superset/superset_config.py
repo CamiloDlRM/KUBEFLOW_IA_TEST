@@ -37,6 +37,21 @@ ENABLE_MCP_SERVICE = True
 #: value turns the shortcut off.
 MCP_DEV_USERNAME = os.environ.get("SUPERSET_MCP_DEV_USERNAME") or None
 
+#: Every tool under its real name, rather than behind a search.
+#:
+#: The default "compatibility mode" lists four tools — health_check,
+#: get_instance_info, search_tools, call_tool — and hides the ~45 real ones
+#: behind the search. That is built for chat clients juggling many servers in
+#: a small context. Our agent is the opposite case: one server, and a model
+#: that has to see `generate_chart` to think of calling it. In compatibility
+#: mode the first model to try this read the four names, concluded nothing
+#: could build a chart, and said so politely instead of searching.
+MCP_TOOL_SEARCH_CONFIG = {"enabled": False}
+
+#: Every tool's schema goes into every model call, a dozen calls per prompt.
+#: Compact keeps that affordable on a free tier's tokens-per-minute.
+MCP_NATIVE_TOOL_LIST_CONFIG = {"compact": True, "max_description_length": 300}
+
 # ---------------------------------------------------------------------------
 # Connecting to gold
 # ---------------------------------------------------------------------------
@@ -51,7 +66,30 @@ FEATURE_FLAGS = {
     # Lets a dataset be defined as SQL with parameters, which is how a chart
     # points at one project's gold object without a dataset per project.
     "ENABLE_TEMPLATE_PROCESSING": True,
+    # Lets the KPI maker show a dashboard inside the platform instead of
+    # sending the user to Superset to look at it.
+    "EMBEDDED_SUPERSET": True,
 }
+
+# ---------------------------------------------------------------------------
+# Embedded dashboards
+# ---------------------------------------------------------------------------
+#
+# The platform signs a guest token for one dashboard and the browser hands it
+# to the embedded iframe. Superset never sees the platform's users and the
+# platform never holds a Superset login in the browser: the token is the whole
+# grant, scoped to the dashboards it names.
+
+#: Shared with the backend, which signs with it. Read from the environment,
+#: where compose gives both containers the same variable.
+GUEST_TOKEN_JWT_SECRET = os.environ["SUPERSET_GUEST_TOKEN_SECRET"]
+GUEST_TOKEN_JWT_AUDIENCE = "superset"
+
+#: What a guest may do inside the dashboards its token names. Gamma is
+#: Superset's read-only role; access to the datasets behind an embedded
+#: dashboard is granted by the token's resources, not by this role, so it does
+#: not reach any other dashboard or dataset.
+GUEST_ROLE_NAME = "Gamma"
 
 # ---------------------------------------------------------------------------
 # Serving
@@ -61,6 +99,13 @@ FEATURE_FLAGS = {
 #: container is reached over plain HTTP inside the compose network. Turning it
 #: on here makes Superset issue https-only cookies that never come back.
 TALISMAN_ENABLED = False
+
+#: Superset is published behind a proxy that terminates TLS (Cloudflare, in
+#: production), so it receives plain HTTP and would otherwise build its own
+#: redirects as http:// — which a dashboard framed in an HTTPS page then
+#: follows straight into a mixed-content block. This makes it believe the
+#: X-Forwarded-Proto/Host the proxy sends. Harmless where nothing sends them.
+ENABLE_PROXY_FIX = True
 
 SUPERSET_WEBSERVER_TIMEOUT = 120
 ROW_LIMIT = 50_000

@@ -38,6 +38,11 @@ import type {
   Project,
   CleaningSteps,
   DashboardConversation,
+  DashboardEmbed,
+  PipelineInputChoice,
+  PipelineInputOptions,
+  PipelineInputState,
+  RepoNotebook,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -172,6 +177,38 @@ export async function triggerPipeline(
   return data;
 }
 
+/** The notebook as `branch` has it now, by phase. Defaults to the repo's branch. */
+export async function getRepoNotebook(repoId: number, branch = ''): Promise<RepoNotebook> {
+  const { data } = await apiClient.get<RepoNotebook>(`/repos/${repoId}/notebook`, {
+    params: branch ? { branch } : {},
+  });
+  return data;
+}
+
+export async function getPipelineInput(repoId: number): Promise<PipelineInputState> {
+  const { data } = await apiClient.get<PipelineInputState>(`/repos/${repoId}/pipeline-input`);
+  return data;
+}
+
+/** Point the pipeline at a layer. An empty choice goes back to the active dataset. */
+export async function setPipelineInput(
+  repoId: number,
+  choice: PipelineInputChoice,
+): Promise<PipelineInputState> {
+  const { data } = await apiClient.put<PipelineInputState>(
+    `/repos/${repoId}/pipeline-input`,
+    choice,
+  );
+  return data;
+}
+
+export async function getPipelineInputOptions(projectId: number): Promise<PipelineInputOptions> {
+  const { data } = await apiClient.get<PipelineInputOptions>(
+    `/projects/${projectId}/medallion/inputs`,
+  );
+  return data;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Projects                                                           */
 /* ------------------------------------------------------------------ */
@@ -298,9 +335,10 @@ export async function getDatasetPreview(datasetId: number): Promise<DatasetPrevi
 export async function getPipelines(
   page = 1,
   size = 20,
+  repoId?: number,
 ): Promise<PaginatedPipelines> {
   const { data } = await apiClient.get<PaginatedPipelines>('/pipelines', {
-    params: { page, size },
+    params: repoId === undefined ? { page, size } : { page, size, repo_id: repoId },
   });
   return data;
 }
@@ -481,13 +519,14 @@ export async function getMedallion(projectId: number): Promise<Medallion> {
 export async function previewLayer(
   projectId: number,
   layer: Layer,
-  options: { sourceId?: number | null; limit?: number } = {},
+  options: { sourceId?: number | null; version?: number | null; limit?: number } = {},
 ): Promise<LayerPreview> {
   const { data } = await apiClient.get<LayerPreview>(
     `/projects/${projectId}/medallion/${layer}/preview`,
     {
       params: {
         ...(options.sourceId ? { source_id: options.sourceId } : {}),
+        ...(options.version ? { version: options.version } : {}),
         ...(options.limit ? { limit: options.limit } : {}),
       },
     },
@@ -615,5 +654,12 @@ export async function askForDashboard(
     { prompt },
     { timeout: AGENT_TIMEOUT },
   );
+  return data;
+}
+
+/** The embedded dashboard's coordinates and a fresh guest token. Also called
+ *  by the embedding SDK each time the token is about to expire. */
+export async function getDashboardEmbed(projectId: number): Promise<DashboardEmbed> {
+  const { data } = await apiClient.get<DashboardEmbed>(`/projects/${projectId}/dashboard/embed`);
   return data;
 }

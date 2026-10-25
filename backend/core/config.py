@@ -89,7 +89,7 @@ class AppSettings(BaseSettings):
         default="",
         description=(
             "Model used to generate training feedback. Leave empty to use the "
-            "provider default (claude-opus-4-8 / gemini-2.5-pro / llama3.1)."
+            "provider default (claude-opus-4-8 / gemini-pro-latest / llama3.1)."
         ),
     )
     anthropic_api_key: str = Field(
@@ -109,6 +109,76 @@ class AppSettings(BaseSettings):
         description=(
             "Superset's MCP server, which is what the dashboard agent drives. "
             "Empty turns the feature off rather than failing per request."
+        ),
+    )
+    dashboard_agent_provider: Literal["gemini", "openai"] = Field(
+        default="gemini",
+        description=(
+            "Which API shape the KPI maker speaks. 'openai' covers everything "
+            "serving the OpenAI chat API — Groq, OpenRouter and most of the "
+            "rest — so moving between them is a base URL and a model name."
+        ),
+    )
+    dashboard_agent_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        description="Where to send them (provider=openai). No trailing path.",
+    )
+    dashboard_agent_api_key: str = Field(
+        default="",
+        description="Bearer token for that endpoint (provider=openai).",
+    )
+    dashboard_agent_tools: str = Field(
+        default="",
+        description=(
+            "Which Superset tools the KPI maker is offered. Empty takes the "
+            "agent's own set; `*` offers all of them; otherwise a comma list. "
+            "Every offered tool travels with every model call, so on a "
+            "tokens-per-minute budget fewer is the difference between running "
+            "and a 413."
+        ),
+    )
+    dashboard_agent_max_turns: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many model calls the KPI maker may make for one prompt. "
+            "0 takes the agent's own limit."
+        ),
+    )
+    dashboard_agent_model: str = Field(
+        default="gemini-pro-latest",
+        description=(
+            "Which Gemini model the KPI maker drives. An alias rather than a "
+            "pinned version: gemini-2.5-pro was pinned here until Google "
+            "closed it to new accounts and began answering 404. Settable "
+            "because which names a key may use is an account fact, not a code "
+            "fact: `curl .../v1beta/models` lists the ones it has."
+        ),
+    )
+    superset_internal_url: str = Field(
+        default="http://superset:8088",
+        description=(
+            "Where the backend reaches Superset's REST API, inside the compose "
+            "network. Used only to switch embedding on for a dashboard."
+        ),
+    )
+    superset_admin_username: str = Field(default="admin")
+    superset_admin_password: str = Field(default="admin")
+    superset_guest_token_secret: str = Field(
+        default="change-me-guest-token-secret",
+        description=(
+            "Signs the guest tokens that let the browser show one embedded "
+            "dashboard. Must equal Superset's GUEST_TOKEN_JWT_SECRET; compose "
+            "gives both containers the same variable so they cannot drift."
+        ),
+    )
+    superset_embed_allowed_domains: str = Field(
+        default="",
+        description=(
+            "Origins allowed to frame an embedded dashboard, comma separated. "
+            "Empty allows any: the guest token is the grant, and this is "
+            "defence against clickjacking on top of it — worth setting to the "
+            "app's own origin in production."
         ),
     )
     superset_public_url: str = Field(

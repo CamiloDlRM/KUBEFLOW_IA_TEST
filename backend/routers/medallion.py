@@ -39,6 +39,7 @@ from models.schemas import (
     CleaningStepResponse,
     CleaningStepsResponse,
     DashboardRequest,
+    DashboardEmbedResponse,
     DashboardResponse,
     DashboardToolCallResponse,
     DashboardTurnResponse,
@@ -52,12 +53,15 @@ from models.schemas import (
     GoldSuggestResponse,
     GoldTable,
     IngestionRun,
+    InputGoldVersionResponse,
+    InputStreamResponse,
     KpiTurn,
     LayerDiffResponse,
     LayerPreviewResponse,
     LayerStreamResponse,
     LayerSummaryResponse,
     MedallionResponse,
+    PipelineInputOptionsResponse,
     User,
 )
 
@@ -244,6 +248,38 @@ async def get_medallion(
 
 
 @router.get(
+    "/{project_id}/medallion/inputs",
+    response_model=PipelineInputOptionsResponse,
+    summary="What a pipeline in this project can train on",
+)
+def get_pipeline_inputs(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PipelineInputOptionsResponse:
+    """Every source's bronze and silver, and every gold build still stored.
+
+    This is the palette the pipeline view drags from. It lists what is in
+    object storage, because that is what a run can actually mount.
+    """
+    from core import pipeline_input
+
+    get_visible_project_or_404(session, project_id, current_user)
+    try:
+        found = pipeline_input.options(session, project_id)
+    except medallion.MedallionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Object storage could not be read: {exc}",
+        )
+    return PipelineInputOptionsResponse(
+        bronze=[InputStreamResponse(**vars(option)) for option in found.bronze],
+        silver=[InputStreamResponse(**vars(option)) for option in found.silver],
+        gold=[InputGoldVersionResponse(**vars(option)) for option in found.gold],
+    )
+
+
+@router.get(
     "/{project_id}/medallion/{layer}/preview",
     response_model=LayerPreviewResponse,
     summary="Read the first rows of one layer",
@@ -254,12 +290,16 @@ async def preview_layer(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
     source_id: int | None = None,
+    version: int | None = Query(default=None, ge=1, description="A gold build other than the newest."),
     limit: int = Query(default=20, ge=1, le=200),
 ) -> LayerPreviewResponse:
     """Return the newest object of ``layer`` and its first rows.
 
     The same rows appear in bronze and in silver, which is the point: put the
     two side by side and the cleaning is visible rather than asserted.
+
+    Gold takes a ``version``, so a pinned build can be looked at before a
+    pipeline is pointed at it.
     """
     get_visible_project_or_404(session, project_id, current_user)
     if layer not in medallion.LAYERS:
@@ -275,6 +315,14 @@ async def preview_layer(
                 detail="This project has not built a gold table yet.",
             )
         key = table.object_key
+        if version is not None and version != table.version:
+            key = medallion.gold_key(project_id, table.name, version)
+            stored = medallion.list_layer("gold", medallion.gold_prefix(project_id, table.name))
+            if key not in {item.key for item in stored}:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Gold v{version} is not in object storage.",
+                )
     else:
         if source_id is not None:
             # Confirm the source belongs to this project before reading its
@@ -1065,13 +1113,22 @@ async def dashboard_conversation(
     response_model=DashboardResponse,
     summary="Ask the agent to build or change this project's dashboard",
 )
-async def build_dashboard(
+def build_dashboard(
     project_id: int,
     body: DashboardRequest,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> DashboardResponse:
     """Hand the request, the gold schema and the earlier exchanges to the agent.
+
+    Declared ``def`` and not ``async def``, which is load-bearing rather than
+    an oversight. Everything below it is synchronous — the MCP client, the
+    model calls, the object read — and it runs for minutes. On the event loop
+    that blocks the whole server: while one person waits for a dashboard,
+    nobody else can log in. FastAPI runs a plain ``def`` in a threadpool
+    instead, so the agent occupies one thread rather than the process.
+
+    That is a floor, not a fix. See the note at the end about the queue.
 
     The earlier exchanges are what make this editing rather than a series of
     one-shot requests: without them the model meets "move that chart to the
@@ -1124,7 +1181,13 @@ async def build_dashboard(
             body.prompt,
             schema=described,
             mcp_url=settings.superset_mcp_url,
-            history=[(turn.prompt, turn.summary) for turn in earlier],
+            # Only exchanges that built something. History is there so "move
+            # that chart" has a referent, and a turn that made no calls left
+            # none — only its words, which can be wrong: the first turn ever
+            # recorded here was the model explaining that no tool could build a
+            # chart, which stopped being true one config change later and would
+            # have been replayed into every prompt after it.
+            history=[(turn.prompt, turn.summary) for turn in earlier if turn.calls],
             settings=settings,
         )
     except DashboardRequestError as exc:
@@ -1151,3 +1214,63 @@ async def build_dashboard(
     session.refresh(turn)
 
     return _as_response(earlier + [turn], settings)
+
+
+
+@router.get(
+    "/{project_id}/dashboard/embed",
+    response_model=DashboardEmbedResponse,
+    summary="What the browser needs to show this project's dashboard in place",
+)
+def embed_dashboard(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> DashboardEmbedResponse:
+    """The dashboard the agent last built for this project, ready to frame.
+
+    Called again by the embedding SDK whenever its token is about to expire,
+    so it is cheap after the first time: the embedded UUID is created once and
+    read back after that.
+
+    ``def`` and not ``async def``: it calls Superset over blocking HTTP, and on
+    the event loop that would stall every other request while it waited.
+    """
+    get_visible_project_or_404(session, project_id, current_user)
+
+    settings = get_settings()
+    if not settings.superset_mcp_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Superset is not configured for this installation.",
+        )
+
+    from core.superset_embed import EmbedError, SupersetApi, dashboard_id_from, guest_token
+
+    turns = [turn.calls or [] for turn in _conversation(session, project_id)]
+    dashboard_id = dashboard_id_from(turns)
+    if dashboard_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The KPI maker has not built a dashboard for this project yet.",
+        )
+
+    allowed = [
+        domain.strip()
+        for domain in settings.superset_embed_allowed_domains.split(",")
+        if domain.strip()
+    ]
+    api = SupersetApi(settings)
+    try:
+        uuid = api.embedded_uuid(dashboard_id, allowed)
+    except EmbedError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    finally:
+        api.close()
+
+    return DashboardEmbedResponse(
+        dashboard_id=dashboard_id,
+        uuid=uuid,
+        superset_domain=settings.superset_public_url.rstrip("/"),
+        token=guest_token(settings.superset_guest_token_secret, uuid),
+    )

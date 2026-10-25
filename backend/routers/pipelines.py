@@ -15,6 +15,7 @@ from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     Pipeline,
+    PipelineDetailResponse,
     PipelineListResponse,
     PipelineLogsResponse,
     PipelineResponse,
@@ -33,6 +34,7 @@ router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 async def list_pipelines(
     page: int = Query(default=1, ge=1, description="Page number."),
     size: int = Query(default=20, ge=1, le=100, description="Page size."),
+    repo_id: int | None = Query(default=None, description="Only this repository's runs."),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> PipelineListResponse:
@@ -47,12 +49,17 @@ async def list_pipelines(
         session,
         current_user,
     )
-    total: int = session.exec(total_stmt).one()
-
-    offset = (page - 1) * size
     list_stmt = restrict_by_repo(
         select(Pipeline), Pipeline.repo_id, session, current_user
     )
+    # Narrowing only: the ownership filter above has already run, so naming
+    # someone else's repository yields an empty page, not their runs.
+    if repo_id is not None:
+        total_stmt = total_stmt.where(Pipeline.repo_id == repo_id)
+        list_stmt = list_stmt.where(Pipeline.repo_id == repo_id)
+    total: int = session.exec(total_stmt).one()
+
+    offset = (page - 1) * size
     pipelines = session.exec(
         list_stmt.order_by(Pipeline.started_at.desc()).offset(offset).limit(size)  # type: ignore[union-attr]
     ).all()
@@ -67,14 +74,14 @@ async def list_pipelines(
 
 @router.get(
     "/{pipeline_id}",
-    response_model=PipelineResponse,
+    response_model=PipelineDetailResponse,
     summary="Get pipeline details",
 )
 async def get_pipeline(
     pipeline_id: str,
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> PipelineResponse:
+) -> PipelineDetailResponse:
     """Return full status, phases, and metrics for a single pipeline run.
 
     A run whose repository belongs to somebody else is reported as 404.
@@ -83,7 +90,7 @@ async def get_pipeline(
         pipeline_id: UUID of the pipeline.
     """
     pipeline = get_visible_pipeline_or_404(session, pipeline_id, current_user)
-    return PipelineResponse.model_validate(pipeline).model_copy(
+    return PipelineDetailResponse.model_validate(pipeline).model_copy(
         update={"owner_username": pipeline_owners(session, [pipeline.id]).get(pipeline.id)}
     )
 

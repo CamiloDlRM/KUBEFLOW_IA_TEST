@@ -36,6 +36,13 @@ case "$ROLE" in
     echo "superset/web: initialising roles and permissions"
     superset init
 
+    # The gold connection. Not fatal: Superset is still worth having up if
+    # this fails, but the agent will have nothing to chart, so it is said.
+    if ! python /app/provision.py; then
+      echo "superset/web: WARNING could not register the gold database;" >&2
+      echo "superset/web: the KPI maker will find nothing to build on." >&2
+    fi
+
     exec gunicorn \
       --bind "0.0.0.0:8088" \
       --workers 4 \
@@ -48,14 +55,14 @@ case "$ROLE" in
   mcp)
     wait_for_db
 
-    # Said before trying, because the failure otherwise is a container that
-    # exits instantly and a caller that meets a refused connection with no
-    # explanation anywhere.
-    if ! superset --help 2>/dev/null | grep -q '\bmcp\b'; then
-      echo "superset/mcp: this image has no 'superset mcp' command." >&2
-      echo "superset/mcp: the MCP service needs Superset 5.0+ and" >&2
-      echo "superset/mcp: ENABLE_MCP_SERVICE = True in superset_config.py." >&2
-      superset --help 2>/dev/null | sed 's/^/superset\/mcp:   /' >&2
+    # The dependency, not the subcommand. `superset mcp` exists in the CLI
+    # whether or not the service behind it can run: without the `fastmcp`
+    # extra it prints "skipping MCP initialization" and exits 1, which reaches
+    # the caller as nothing but a refused connection.
+    if ! python -c "import fastmcp, uvicorn" 2>/dev/null; then
+      echo "superset/mcp: the fastmcp extra is not installed in this image." >&2
+      echo "superset/mcp: the MCP service cannot start without it — see the" >&2
+      echo "superset/mcp: install line in superset/Dockerfile." >&2
       exit 78
     fi
 

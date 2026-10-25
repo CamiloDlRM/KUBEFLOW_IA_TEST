@@ -39,12 +39,34 @@ RUN uv pip install --no-cache --python /app/.venv/bin/python \
 import duckdb, duckdb_engine, psycopg2; \
 print('duckdb', duckdb.__version__, '| psycopg2', psycopg2.__version__)"
 
+# The MCP service itself, which the image does not ship either: it lives behind
+# an optional extra, and without it `superset mcp run` prints "fastmcp is not
+# installed, skipping MCP initialization" and exits.
+#
+# Asked for as the extra of the version already installed, not as a bare
+# `fastmcp`. The extra carries Superset's own constraint on which fastmcp its
+# MCP code was written against; a bare install takes the newest, which is how
+# you get a server that starts and then disagrees with its own host about a
+# schema. Naming the installed version means the resolver sees apache-superset
+# as already satisfied and adds only what the extra pulls in.
+# The requirement is written to a file rather than interpolated through a
+# shell variable. `VERSION="$(python -c '...')"` needs double quotes inside
+# single quotes inside double quotes, and the layer Docker adds on top makes
+# that a quoting puzzle rather than a command — the first attempt reached
+# Python as `m.version(\"apache-superset\")` and died on the backslash.
+RUN /app/.venv/bin/python -c "import importlib.metadata as m; open('/tmp/mcp-req.txt', 'w').write('apache-superset[fastmcp]==' + m.version('apache-superset'))" \
+ && cat /tmp/mcp-req.txt \
+ && uv pip install --no-cache --python /app/.venv/bin/python -r /tmp/mcp-req.txt \
+ && rm /tmp/mcp-req.txt \
+ && /app/.venv/bin/python -c "import fastmcp, uvicorn; print('fastmcp', fastmcp.__version__, '| uvicorn', uvicorn.__version__)"
+
 # Owned by the user that will write into it during the build and read from it
 # at runtime.
 RUN mkdir -p /app/duckdb_extensions && chown superset:superset /app/duckdb_extensions
 
 COPY bootstrap.sh /app/bootstrap.sh
 COPY install_extensions.py /app/install_extensions.py
+COPY provision.py /app/provision.py
 RUN chmod +x /app/bootstrap.sh
 
 USER superset
