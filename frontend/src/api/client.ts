@@ -459,6 +459,8 @@ export interface CreateSourceRequest {
   database: string;
   username: string;
   password_env: string;
+  /** Sent once, stored encrypted, never returned. */
+  password?: string;
   extraction_sql: string;
   watermark_column: string;
   normalize_text_column?: string;
@@ -498,7 +500,7 @@ export async function getIngestionRuns(sourceId: number): Promise<IngestionRun[]
  * it. Nothing is stored and no watermark moves.
  */
 export async function previewSource(
-  body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number },
+  body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number; source_id?: number },
 ): Promise<SourcePreview> {
   const { data } = await apiClient.post<SourcePreview>('/sources/preview', body);
   return data;

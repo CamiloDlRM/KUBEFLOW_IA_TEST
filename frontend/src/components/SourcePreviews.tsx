@@ -54,6 +54,7 @@ function OneSource({ projectId, source }: { projectId: number; source: DataSourc
         username: source.username,
         password_env: source.password_env,
         extraction_sql: source.extraction_sql,
+        source_id: source.id,
         limit: 8,
       }),
     retry: false,

@@ -280,6 +280,9 @@ class DataSource(SQLModel, table=True):
     #: which is the behaviour you want: registering a source is not the same
     #: authority as minting access to one.
     password_env: str = SQLField(default="")
+    #: Or the password itself, Fernet-encrypted, for a user connecting their
+    #: own database (e.g. Supabase) without an operator. Wins over password_env.
+    password_encrypted: str = SQLField(default="")
 
     # --- Extraction ---
     #: SQL to run, containing the literal token ``:watermark``. It is bound as
@@ -834,6 +837,8 @@ class DataSourceCreateRequest(BaseModel):
     #: The *name* of the environment variable holding the password. Constrained
     #: to the shape of a variable name so it cannot be mistaken for one.
     password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    #: Stored encrypted, never returned. Takes precedence over password_env.
+    password: str = Field(default="", max_length=256)
     extraction_sql: str = Field(..., min_length=1, max_length=20_000)
     watermark_column: str = Field(..., min_length=1, max_length=128)
     #: Set both to have missing codes filled in during extraction. Leaving
@@ -860,8 +865,12 @@ class DataSourcePreviewRequest(BaseModel):
     database: str = Field(..., min_length=1, max_length=128)
     username: str = Field(..., min_length=1, max_length=128)
     password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    #: Stored encrypted, never returned. Takes precedence over password_env.
+    password: str = Field(default="", max_length=256)
     extraction_sql: str = Field(..., min_length=1, max_length=20_000)
     limit: int = Field(default=10, ge=1, le=50)
+    #: Preview a saved source with its stored (encrypted) password.
+    source_id: int | None = None
 
 
 class DataSourcePreviewResponse(BaseModel):

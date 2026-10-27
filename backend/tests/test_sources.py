@@ -65,6 +65,22 @@ class TestCreateSource:
         assert body["password_env"] == "HOSPITAL_DB_PASSWORD"
         assert "password" not in {key.lower() for key in body} - {"password_env"}
 
+    def test_direct_password_is_stored_encrypted_and_never_returned(
+        self, test_app, own_project, db_session
+    ):
+        from core.ingestion import resolve_password
+        from models.schemas import DataSource
+
+        body = create_source(
+            test_app, own_project.id, password_env="", password="s3cret"
+        ).json()
+        assert "s3cret" not in str(body)
+        assert "password_encrypted" not in body
+
+        stored = db_session.get(DataSource, body["id"])
+        assert stored.password_encrypted and "s3cret" not in stored.password_encrypted
+        assert resolve_password(stored) == "s3cret"
+
     def test_create_on_another_members_project_should_return_404(
         self, test_app, other_project
     ):

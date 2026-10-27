@@ -21,6 +21,10 @@ def encrypt_token(token: str, settings: AppSettings) -> str:
     return _fernet(settings).encrypt(token.encode()).decode()
 
 
+def decrypt_token(token: str, settings: AppSettings) -> str:
+    return _fernet(settings).decrypt(token.encode()).decode()
+
+
 def repo_token(repo: Repository, settings: AppSettings) -> str:
     """Return the repository token, falling back to the global token."""
     if repo.github_token_encrypted:
