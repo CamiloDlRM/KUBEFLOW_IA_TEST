@@ -469,6 +469,27 @@ def next_model_version(session: Any, model_name: str) -> str:
     numbers = [int(v) for v in versions if str(v).isdigit()]
     return str(max(numbers, default=0) + 1)
 
+
+def deployed_model_name(session: Any, project_id: int | None, notebook_path: str) -> str | None:
+    """Return the model this project's notebook last deployed, if any.
+
+    A notebook is one model line: once it has deployed, every run of it —
+    button, webhook or trigger — is a new version of that model, whatever name
+    the run asked for or the notebook declares.
+    """
+    from sqlmodel import select
+
+    from models.schemas import ModelDeployment, Pipeline
+
+    if project_id is None or not notebook_path:
+        return None
+    return session.exec(
+        select(ModelDeployment.model_name)
+        .join(Pipeline, ModelDeployment.pipeline_id == Pipeline.id)
+        .where(Pipeline.project_id == project_id, Pipeline.notebook_path == notebook_path)
+        .order_by(ModelDeployment.deployed_at.desc())  # type: ignore[attr-defined]
+    ).first()
+
 @celery_app.task(
     bind=True,
     name="tasks.celery_tasks.run_pipeline",
@@ -625,10 +646,15 @@ def run_pipeline(
         log.info("pipeline.phase.validate.start")
         validate_required_tags(notebook)
         config = extract_config(notebook)
-        # "Run pipeline" names the model; a webhook run keeps the notebook's.
-        model_name = requested_model_name or config["model_name"]
         uses_data = uses_project_dataset(notebook)
         with Session(engine) as session:
+            # A notebook that already deployed keeps its model's name; only the
+            # first deploy is named by "Run pipeline" or the notebook's MODEL_NAME.
+            model_name = (
+                deployed_model_name(session, project_id, notebook_path)
+                or requested_model_name
+                or config["model_name"]
+            )
             model_version = next_model_version(session, model_name)
         _phase(
             "validate",

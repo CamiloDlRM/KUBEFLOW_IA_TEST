@@ -57,6 +57,7 @@ export interface Pipeline {
   repo_id: number;
   /** `null` for runs older than projects, which have no pipeline canvas. */
   project_id?: number | null;
+  notebook_path?: string;
   status: PipelineStatus;
   commit_sha: string;
   branch: string;
@@ -398,6 +399,8 @@ export interface Project {
   gold_rows: number;
   /** The gold build a pipeline is handed; `null` until the gold layer is built. */
   active_dataset: { id: number; name: string; size_bytes: number } | null;
+  /** The model the linked notebook already deployed; runs add versions to it. */
+  deployed_model?: string | null;
 }
 
 export type Layer = 'bronze' | 'silver' | 'gold';

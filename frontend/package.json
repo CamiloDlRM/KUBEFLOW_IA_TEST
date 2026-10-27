@@ -16,6 +16,7 @@
   "dependencies": {
     "@superset-ui/embedded-sdk": "^0.4.0",
     "@tanstack/react-query": "^5.62.0",
+    "@xyflow/react": "^12.12.0",
     "axios": "^1.7.9",
     "lucide-react": "^1.55.0",
     "motion": "^14.1.0",

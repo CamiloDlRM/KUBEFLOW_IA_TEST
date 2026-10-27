@@ -11,7 +11,9 @@ import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import DataFactory from './pages/DataFactory';
 import PipelineDetail from './pages/PipelineDetail';
+import Pipelines from './pages/Pipelines';
 import PipelineCanvas from './pages/PipelineCanvas';
+import PipelineCanva from './pages/PipelineCanva';
 import Models from './pages/Models';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
@@ -52,6 +54,8 @@ export default function App() {
             own route rather than a seventh stage: it is a record of outputs,
             not a step in making them. */}
         <Route path="/projects/:projectId/datasets" element={<Datasets />} />
+        <Route path="/pipelines" element={<Pipelines />} />
+        <Route path="/pipelines/canvas" element={<PipelineCanva />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
         {/* The Grafana panels are a section of the dashboard now. Kept as a

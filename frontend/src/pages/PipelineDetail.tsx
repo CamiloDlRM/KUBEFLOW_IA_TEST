@@ -37,10 +37,11 @@ export default function PipelineDetail() {
   // Fetch historical logs via REST for completed pipelines
   const { data: historicalLogsData, isLoading: isLogsLoading } = usePipelineLogs(id, isFinished);
 
-  // Fetch historical pipelines for the same repo for MetricsChart
+  // Fetch historical pipelines for the same project for MetricsChart: a repo
+  // can hold several projects, each training its own model.
   const { data: historyPage } = useQuery({
-    queryKey: ['pipelines', 'history', pipeline?.repo_id],
-    queryFn: () => getPipelines(1, 10),
+    queryKey: ['pipelines', 'history', pipeline?.project_id ?? pipeline?.repo_id],
+    queryFn: () => getPipelines(1, 10, pipeline?.project_id ?? undefined),
     enabled: Boolean(pipeline?.repo_id),
   });
 
@@ -75,7 +76,14 @@ export default function PipelineDetail() {
 
   // Build metrics chart data from history
   const metricsData = (historyPage?.items ?? [])
-    .filter((p) => p.repo_id === pipeline.repo_id && p.metrics && Object.keys(p.metrics).length > 0)
+    .filter(
+      (p) =>
+        (pipeline.project_id != null
+          ? p.project_id === pipeline.project_id
+          : p.repo_id === pipeline.repo_id) &&
+        p.metrics &&
+        Object.keys(p.metrics).length > 0,
+    )
     .map((p) => ({
       label: truncate(p.id, 6),
       metrics: p.metrics,

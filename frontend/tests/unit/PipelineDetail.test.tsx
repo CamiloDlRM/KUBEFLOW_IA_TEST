@@ -6,6 +6,7 @@ import PipelineDetail from '../../src/pages/PipelineDetail';
 import type { Pipeline } from '../../src/types';
 
 const usePipeline = vi.fn();
+const getPipelines = vi.fn();
 
 vi.mock('../../src/hooks/usePipelines', () => ({
   usePipeline: (...args: unknown[]) => usePipeline(...args),
@@ -18,9 +19,18 @@ vi.mock('../../src/hooks/useWebSocket', () => ({
 vi.mock('../../src/context/AuthContext', () => ({ useAuth: () => ({ isAdmin: false }) }));
 vi.mock('../../src/api/client', () => ({
   getWsUrl: () => '',
-  getPipelines: () => Promise.resolve({ items: [], total: 0, page: 1, size: 10 }),
+  getPipelines: (...args: unknown[]) => getPipelines(...args),
 }));
 vi.mock('../../src/components/AIInsights', () => ({ default: () => null }));
+vi.mock('../../src/components/MetricsChart', () => ({
+  default: ({ dataPoints }: { dataPoints: { label: string }[] }) => (
+    <ul data-testid="metrics">
+      {dataPoints.map((dp) => (
+        <li key={dp.label}>{dp.label}</li>
+      ))}
+    </ul>
+  ),
+}));
 
 function run(overrides: Partial<Pipeline> = {}): Pipeline {
   return {
@@ -53,7 +63,10 @@ function renderDetail() {
 }
 
 describe('PipelineDetail', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getPipelines.mockResolvedValue({ items: [], total: 0, page: 1, size: 10 });
+  });
 
   it('leads to the same run on its project canvas, not back to the dashboard', () => {
     usePipeline.mockReturnValue({ data: run(), isLoading: false, error: null });
@@ -71,5 +84,23 @@ describe('PipelineDetail', () => {
     renderDetail();
 
     expect(screen.queryByRole('link', { name: /code and data of this run/i })).not.toBeInTheDocument();
+  });
+
+  it("charts only this project's runs, not another project's in the same repo", async () => {
+    usePipeline.mockReturnValue({ data: run(), isLoading: false, error: null });
+    getPipelines.mockResolvedValue({
+      items: [
+        run({ id: 'mine-111', metrics: { accuracy: 0.8 } }),
+        run({ id: 'other-222', project_id: 5, metrics: { accuracy: 0.6 } }),
+      ],
+      total: 2,
+      page: 1,
+      size: 10,
+    });
+    renderDetail();
+
+    expect(await screen.findByText(/mine/)).toBeInTheDocument();
+    expect(screen.queryByText(/other/)).not.toBeInTheDocument();
+    expect(getPipelines).toHaveBeenCalledWith(1, 10, 4);
   });
 });

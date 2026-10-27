@@ -7,6 +7,7 @@ const navItems = [
   // now, and burying it under "My Repos" would put the code back in front of
   // the data.
   { to: '/projects', label: 'Projects', icon: ProjectsIcon },
+  { to: '/pipelines', label: 'Pipelines', icon: PipelinesIcon },
   { to: '/models', label: 'Models', icon: ModelsIcon },
   { to: '/repos/new', label: 'My Repos', icon: RepositoriesIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
@@ -127,6 +128,14 @@ function ModelsIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+    </svg>
+  );
+}
+
+function PipelinesIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h4v4H4zM16 14h4v4h-4zM8 8h4a2 2 0 012 2v4a2 2 0 002 2" />
     </svg>
   );
 }

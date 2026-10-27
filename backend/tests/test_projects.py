@@ -364,6 +364,24 @@ class TestWebhookFollowsTheProject:
         assert active() == running.id
 
 
+    def test_a_project_reports_the_model_its_notebook_deployed(self, test_app, db_session, own_project):
+        repo = seed_repo(db_session, owner_id=DEFAULT_USER_ID, project_id=own_project.id)
+
+        def deployed():
+            return test_app.get(f"/projects/{own_project.id}").json()["deployed_model"]
+
+        assert deployed() is None
+
+        pipeline = Pipeline(
+            repo_id=repo.id, project_id=own_project.id, notebook_path="notebooks/train.ipynb", status="success"
+        )
+        db_session.add(pipeline)
+        db_session.commit()
+        db_session.add(ModelDeployment(model_name="churn", pipeline_id=pipeline.id))
+        db_session.commit()
+        assert deployed() == "churn"
+
+
 class TestRunPipeline:
     """POST /projects/{id}/run — the "Run pipeline" button."""
 
