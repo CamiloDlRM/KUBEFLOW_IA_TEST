@@ -65,6 +65,8 @@ def _active_dataset(session: Session, project_id: int | None) -> Dataset | None:
 
 def _render(session: Session, project: Project) -> ProjectResponse:
     """Describe a project with the two counts its card needs."""
+    from tasks.celery_tasks import deployed_model_name
+
     repository = _linked_repo(session, project)
 
     sources = len(
@@ -103,6 +105,7 @@ def _render(session: Session, project: Project) -> ProjectResponse:
             if (dataset := _active_dataset(session, project.id))
             else None
         ),
+        deployed_model=deployed_model_name(session, project.id, project.notebook_path),
     )
 
 def _linked_repo(session: Session, project: Project) -> Repository | None:

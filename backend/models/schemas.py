@@ -513,6 +513,9 @@ class ProjectResponse(BaseModel):
     #: The dataset a pipeline of this project is handed (``None`` until the
     #: gold layer has been built). "Run pipeline" requires it.
     active_dataset: ProjectDatasetResponse | None = None
+    #: The model the linked notebook already deployed. When set, every run is a
+    #: new version of it and "Run pipeline" does not ask for a name.
+    deployed_model: str | None = None
 
 
 class RepoCreateRequest(BaseModel):

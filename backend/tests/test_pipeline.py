@@ -179,3 +179,25 @@ class TestNextModelVersion:
         seed_model_deployment(db_session, model_name="other", version="9")
 
         assert next_model_version(db_session, "iris") == "4"
+
+
+class TestDeployedModelName:
+    """A notebook that has deployed keeps one model line."""
+
+    def test_the_latest_deployment_of_the_notebook_names_the_model(self, db_session):
+        from datetime import datetime, timedelta, timezone
+
+        from tasks.celery_tasks import deployed_model_name
+        from tests.conftest import seed_model_deployment, seed_pipeline, seed_repo_in_project
+
+        repo = seed_repo_in_project(db_session)
+        first, second = seed_pipeline(db_session, repo.id), seed_pipeline(db_session, repo.id)
+        project_id, notebook = first.project_id, first.notebook_path
+        now = datetime.now(timezone.utc)
+        seed_model_deployment(db_session, model_name="old", pipeline_id=first.id, deployed_at=now - timedelta(days=1))
+        seed_model_deployment(db_session, model_name="churn", pipeline_id=second.id, deployed_at=now)
+
+        assert deployed_model_name(db_session, project_id, notebook) == "churn"
+        # Another notebook of the project, or none at all, has no model yet.
+        assert deployed_model_name(db_session, project_id, "other.ipynb") is None
+        assert deployed_model_name(db_session, project_id, "") is None

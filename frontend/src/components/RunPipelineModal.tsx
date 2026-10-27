@@ -35,11 +35,13 @@ interface RunPipelineModalProps {
  */
 export default function RunPipelineModal({ project, onClose, onStarted }: RunPipelineModalProps) {
   const navigate = useNavigate();
+  // Once the notebook has deployed, every run is a new version of that model.
+  const existing = project.deployed_model;
   const [modelName, setModelName] = useState(() => suggestedModelName(project.name));
-  const nameValid = MODEL_NAME_PATTERN.test(modelName.trim());
+  const nameValid = Boolean(existing) || MODEL_NAME_PATTERN.test(modelName.trim());
 
   const mutation = useMutation({
-    mutationFn: () => runProject(project.id, modelName.trim()),
+    mutationFn: () => runProject(project.id, existing || modelName.trim()),
     onSuccess: ({ pipeline_id }) =>
       onStarted ? onStarted(pipeline_id) : navigate(`/pipelines/${pipeline_id}`),
   });
@@ -96,22 +98,29 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
         </div>
 
         <div className="space-y-4 p-5">
-          <div>
-            <label htmlFor="model-name" className="mb-1 block text-xs font-medium text-slate-400">
-              Model name
-            </label>
-            <input
-              id="model-name"
-              value={modelName}
-              onChange={(event) => setModelName(event.target.value)}
-              autoFocus
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            />
-            <p className={`mt-1 text-xs ${nameValid ? 'text-slate-500' : 'text-red-400'}`}>
-              Letters, digits, <code>_</code> <code>.</code> <code>-</code>. Running again with the
-              same name deploys a new version of that model.
+          {existing ? (
+            <p className="text-sm text-slate-300">
+              Model: <span className="font-mono text-slate-100">{existing}</span>. This run deploys a
+              new version of it.
             </p>
-          </div>
+          ) : (
+            <div>
+              <label htmlFor="model-name" className="mb-1 block text-xs font-medium text-slate-400">
+                Model name
+              </label>
+              <input
+                id="model-name"
+                value={modelName}
+                onChange={(event) => setModelName(event.target.value)}
+                autoFocus
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+              <p className={`mt-1 text-xs ${nameValid ? 'text-slate-500' : 'text-red-400'}`}>
+                Letters, digits, <code>_</code> <code>.</code> <code>-</code>. Later runs of this
+                notebook deploy new versions of this model.
+              </p>
+            </div>
+          )}
 
           <dl className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/60 p-3 text-xs">
             <SummaryRow label="Repository">
