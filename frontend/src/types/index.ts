@@ -57,6 +57,7 @@ export interface Pipeline {
   repo_id: number;
   /** `null` for runs older than projects, which have no pipeline canvas. */
   project_id?: number | null;
+  notebook_path?: string;
   status: PipelineStatus;
   commit_sha: string;
   branch: string;

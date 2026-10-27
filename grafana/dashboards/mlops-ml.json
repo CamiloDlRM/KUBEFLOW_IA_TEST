@@ -330,7 +330,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  r.github_url || ' @ ' || COALESCE(NULLIF(p.branch, ''), r.branch) AS metric,\n  (p.metrics->>'accuracy')::float AS accuracy\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(p.finished_at)\nORDER BY 1;"
+          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  r.github_url || ' @ ' || COALESCE(NULLIF(p.branch, ''), pr.branch) AS metric,\n  (p.metrics->>'accuracy')::float AS accuracy\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(p.finished_at)\nORDER BY 1;"
         }
       ]
     },
@@ -414,7 +414,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  COALESCE(NULLIF(p.branch, ''), r.branch) AS \"branch\",\n  ROUND(AVG((p.metrics->>'accuracy')::numeric), 4) AS \"avg_accuracy\",\n  ROUND(MAX((p.metrics->>'accuracy')::numeric), 4) AS \"best_accuracy\",\n  COUNT(*) AS \"runs\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND p.finished_at IS NOT NULL\n  AND $__timeFilter(p.finished_at)\nGROUP BY 1\nORDER BY 2 DESC;"
+          "rawSql": "SELECT\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  ROUND(AVG((p.metrics->>'accuracy')::numeric), 4) AS \"avg_accuracy\",\n  ROUND(MAX((p.metrics->>'accuracy')::numeric), 4) AS \"best_accuracy\",\n  COUNT(*) AS \"runs\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND p.finished_at IS NOT NULL\n  AND $__timeFilter(p.finished_at)\nGROUP BY 1\nORDER BY 2 DESC;"
         }
       ]
     },
@@ -624,7 +624,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  p.finished_at AS \"finished\",\n  r.github_url AS \"repository\",\n  COALESCE(NULLIF(p.branch, ''), r.branch) AS \"branch\",\n  p.status AS \"status\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  CASE\n    WHEN p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN (p.metrics->>'accuracy')::float\n  END AS \"accuracy\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"duration\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at)\nORDER BY p.started_at DESC\nLIMIT 50;"
+          "rawSql": "SELECT\n  p.finished_at AS \"finished\",\n  r.github_url AS \"repository\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  p.status AS \"status\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  CASE\n    WHEN p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN (p.metrics->>'accuracy')::float\n  END AS \"accuracy\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"duration\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at)\nORDER BY p.started_at DESC\nLIMIT 50;"
         }
       ]
     }

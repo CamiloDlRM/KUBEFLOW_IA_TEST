@@ -917,7 +917,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  md.accuracy AS \"accuracy\",\n  COALESCE(NULLIF(p.branch, ''), r.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
+          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  md.accuracy AS \"accuracy\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
         }
       ]
     }

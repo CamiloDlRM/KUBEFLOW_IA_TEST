@@ -607,6 +607,7 @@ class PipelineResponse(BaseModel):
     repo_id: int
     #: The project the run belongs to; ``None`` for runs older than projects.
     project_id: int | None = None
+    notebook_path: str = ""
     status: str
     commit_sha: str
     branch: str = ""
