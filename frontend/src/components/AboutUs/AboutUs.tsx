@@ -47,16 +47,6 @@ export default function AboutUs() {
 
           <div className="group relative overflow-hidden rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-900/80 to-slate-950/80 p-6 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-indigo-400/40 hover:shadow-indigo-500/10">
             <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-indigo-400">
-              <Brain className="h-6 w-6" />
-            </div>
-            <h3 className="text-xl font-semibold">AI Training Advisor</h3>
-            <p className="mt-2 text-sm leading-relaxed text-slate-400">
-              Multi-provider assistant (Claude, Gemini, Ollama) diagnoses runs, explains failures, and suggests concrete improvements you can review and apply.
-            </p>
-          </div>
-
-          <div className="group relative overflow-hidden rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-900/80 to-slate-950/80 p-6 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-indigo-400/40 hover:shadow-indigo-500/10">
-            <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-indigo-400">
               <BarChart3 className="h-6 w-6" />
             </div>
             <h3 className="text-xl font-semibold">Tracked, evaluated, deployed</h3>
@@ -75,7 +65,7 @@ export default function AboutUs() {
             </p>
           </div>
 
-          <div className="group relative overflow-hidden rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-900/80 to-slate-950/80 p-6 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-indigo-400/40 hover:shadow-indigo-500/10">
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-900/80 to-slate-950/80 p-6 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-indigo-400/40 hover:shadow-indigo-500/10 sm:col-span-2 lg:col-span-1 lg:col-start-2">
             <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-indigo-400">
               <GitCommit className="h-6 w-6" />
             </div>
