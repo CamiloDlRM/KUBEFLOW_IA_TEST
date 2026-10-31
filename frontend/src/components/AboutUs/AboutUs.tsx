@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { GitBranch, Layers, Brain, BarChart3, ShieldCheck, GitCommit } from "lucide-react";
+import { GitBranch, Layers, BarChart3, ShieldCheck, GitCommit } from "lucide-react";
 
 export default function AboutUs() {
   return (

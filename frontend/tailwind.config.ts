@@ -9,7 +9,9 @@ const config: Config = {
         body: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         display: ['Space Grotesk', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         body2: ['Outfit', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        logo: ['Birthstone Bounce', 'ui-sans-serif', 'system-ui', 'sans-serif']
+        logo: ['Birthstone Bounce', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        serif: ['Crimson Pro', 'ui-serif', 'Georgia', 'serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
       },
       colors: {
         brand: {

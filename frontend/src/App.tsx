@@ -16,6 +16,7 @@ import Models from './pages/Models';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
 import ConfirmChange from './pages/ConfirmChange';
+import Docs from './pages/Docs';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/confirm-change" element={<ConfirmChange />} />
+      <Route path="/docs" element={<Docs />} />
 
       {/* Protected routes */}
       <Route

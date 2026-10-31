@@ -18,3 +18,377 @@
     background: rgb(71 85 105);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Maia user manual                                                   */
+/*                                                                     */
+/*  The manual is a printed artefact, not a screen of the product:     */
+/*  drafting paper, ink, hairline rules and one signal colour. All     */
+/*  colours live in variables so the print sheet can re-ink them.      */
+/* ------------------------------------------------------------------ */
+
+.manual {
+  --paper: #edf0ef;
+  --paper-soft: #f7f9f8;
+  --paper-deep: #e1e6e4;
+  --ink: #101c25;
+  --ink-2: #3b4b54;
+  --ink-3: #6c7b81;
+  --rule: #c6d0cc;
+  --rule-strong: #a2afaa;
+  --accent: #4338ca;
+  --accent-soft: #e4e3f9;
+  --ok: #2f7d54;
+  --bad: #a33c2c;
+  --warn: #8a5a09;
+  --bronze: #a2703c;
+  --silver: #6f7f88;
+  --gold: #96760f;
+
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: 'ss01' 1;
+}
+
+.manual ::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.manual-grid {
+  background-image:
+    linear-gradient(to right, rgba(16, 28, 37, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(16, 28, 37, 0.045) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+.manual-rule {
+  border-color: var(--rule);
+}
+
+.manual-lede {
+  color: var(--ink-2);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+}
+
+.manual-body-text {
+  color: var(--ink-2);
+  line-height: 1.72;
+}
+
+.manual-eyebrow {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.manual-note {
+  border-left: 2px solid var(--accent);
+  background: var(--paper-soft);
+}
+
+.manual-note--watch {
+  border-left-color: var(--warn);
+}
+
+.manual-note__label {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.manual-code {
+  background: var(--paper-soft);
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.manual-tag {
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-soft);
+  color: var(--ink-2);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.6875rem;
+}
+
+/* ---- Wireframe drawings ------------------------------------------- */
+
+.wf {
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-soft);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.wf-chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-deep);
+  padding: 0.4rem 0.6rem;
+}
+
+.wf-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--rule-strong);
+}
+
+.wf-title {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.wf-body {
+  position: relative;
+  padding: 0.7rem;
+}
+
+.wf-pin {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  height: 17px;
+  width: 17px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--paper-soft);
+}
+
+.wf-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.wf-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.wf-box {
+  border: 1px solid var(--rule);
+  background: #fff;
+  border-radius: 2px;
+  padding: 0.45rem 0.5rem;
+}
+
+.wf-box--dashed {
+  border-style: dashed;
+  background: transparent;
+}
+
+.wf-box--accent {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.wf-box--deep {
+  background: var(--paper-deep);
+}
+
+.wf-label {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.wf-text {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.wf-strong {
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.wf-line {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--rule);
+}
+
+.wf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0 0.3rem;
+  font-size: 8.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.wf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  background: var(--accent);
+  padding: 0.22rem 0.5rem;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.wf-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-2);
+}
+
+.wf-ok {
+  background: var(--ok);
+}
+
+.wf-bad {
+  background: var(--bad);
+}
+
+.wf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9px;
+}
+
+.wf-table th {
+  border-bottom: 1px solid var(--rule-strong);
+  padding: 0.25rem 0.3rem;
+  text-align: left;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 7px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.wf-table td {
+  border-bottom: 1px solid var(--rule);
+  padding: 0.3rem;
+  color: var(--ink-2);
+}
+
+.wf-side {
+  width: 88px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--rule);
+  background: var(--paper-deep);
+  padding: 0.45rem;
+}
+
+.wf-navitem {
+  border-radius: 2px;
+  padding: 0.22rem 0.3rem;
+  font-size: 9px;
+  color: var(--ink-2);
+}
+
+.wf-navitem--active {
+  border: 1px solid var(--rule-strong);
+  background: #fff;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+@media print {
+  @page {
+    margin: 16mm 15mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .manual {
+    --paper: #fff;
+    --paper-soft: #fff;
+    --paper-deep: #fff;
+    --ink: #000;
+    --ink-2: #1a1a1a;
+    --ink-3: #4a4a4a;
+    --rule: #bbb;
+    --rule-strong: #777;
+    --accent: #000;
+    --accent-soft: #eee;
+    --ok: #1a1a1a;
+    --bad: #1a1a1a;
+    --warn: #1a1a1a;
+    --bronze: #1a1a1a;
+    --silver: #1a1a1a;
+    --gold: #1a1a1a;
+    background: #fff !important;
+  }
+
+  .manual-print-hide {
+    display: none !important;
+  }
+
+  .manual-shell {
+    display: block !important;
+  }
+
+  .manual-main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .manual-hero {
+    break-after: page;
+  }
+
+  .manual-chapter + .manual-chapter {
+    break-before: page;
+  }
+
+  .manual-section,
+  .wf,
+  .manual-note,
+  .manual-steps li,
+  .manual-layer {
+    break-inside: avoid;
+  }
+
+  .manual a {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
+
+  .wf-pin {
+    border: 1px solid #000;
+    box-shadow: none;
+  }
+
+  .manual-grid {
+    background-image: none;
+  }
+}
