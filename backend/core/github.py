@@ -41,6 +41,38 @@ def _headers(token: str) -> dict[str, str]:
     }
 
 
+async def check_github_token(token: str) -> str:
+    """Ping GitHub with ``token``: "ok", "expiring" (<7 days), "invalid" or "unknown".
+
+    A 401 means expired, revoked or wrong. Fine-grained/classic PATs with an
+    expiry report it in ``github-authentication-token-expiration``; OAuth tokens
+    don't expire but can be revoked, which the 401 catches.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if not token:
+        return "missing"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{_GITHUB_API}/user", headers=_headers(token))
+    except httpx.HTTPError:
+        return "unknown"
+    if resp.status_code == 401:
+        return "invalid"
+    if resp.status_code != 200:
+        return "unknown"
+    expiry = resp.headers.get("github-authentication-token-expiration")
+    if expiry:
+        try:
+            # e.g. "2026-11-05 12:00:00 UTC" or "... -0500"
+            when = datetime.strptime(expiry.replace("UTC", "+0000"), "%Y-%m-%d %H:%M:%S %z")
+        except ValueError:
+            return "ok"
+        if when - datetime.now(timezone.utc) < timedelta(days=7):
+            return "expiring"
+    return "ok"
+
+
 async def _find_existing_webhook(
     client: httpx.AsyncClient,
     owner: str,

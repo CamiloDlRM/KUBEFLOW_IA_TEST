@@ -5,13 +5,24 @@ import secrets
 from datetime import timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError, jwt
 from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
 from core.email import send_change_confirmation_email
+from core.github import check_github_token
+from core.github_credentials import (
+    encrypt_token,
+    decrypt_token,
+    get_provider,
+    identity_of,
+    set_user_token,
+    user_token,
+)
 from core.security import (
     create_access_token,
     get_current_user,
@@ -26,18 +37,44 @@ from models.schemas import (
     ChangeToken,
     ChangeUsernameRequest,
     ConfirmChangeRequest,
+    GithubConfirmNewRequest,
+    GithubTokenUpdateRequest,
     InviteCreateRequest,
     InviteToken,
     InviteTokenResponse,
+    SetPasswordRequest,
     TokenResponse,
     UpdateProfileRequest,
     User,
+    UserIdentity,
     UserRegisterRequest,
     UserResponse,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_SUFFIXES = ("@g", "@t")
+
+
+def _base_username(name: str) -> str:
+    """Strip a sign-in suffix the user may have typed themselves."""
+    for suffix in _SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def user_response(session: Session, user: User) -> UserResponse:
+    found = identity_of(session, user)
+    identity, provider = found if found else (None, None)
+    return UserResponse.model_validate(user).model_copy(
+        update={
+            "auth_provider": provider.code if provider else "token",
+            "has_github_token": bool(identity and identity.github_token_encrypted),
+            "github_token_masked": identity.github_token_masked if identity else "",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -48,71 +85,70 @@ router = APIRouter(prefix="/auth", tags=["auth"])
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register using a valid invite token",
+    summary="Register with username, email, password and a GitHub token",
 )
-def register(
+async def register(
     body: UserRegisterRequest,
     session: Annotated[Session, Depends(get_session)],
 ) -> UserResponse:
     """Create a new user account.
 
-    Requires a valid, unexpired, unused invite token issued by an admin.
-    Returns 409 if the username is already taken.
-    Returns 400 if the invite token is invalid or expired.
+    Open to anyone. The username gets the ``@t`` suffix; 409 if it is taken.
+    Returns 400 if the GitHub token or an (optional) invite token is invalid.
     """
     from datetime import datetime
 
-    # Validate invite token
-    invite = session.exec(
-        select(InviteToken).where(InviteToken.token == body.invite_token)
-    ).first()
-    if not invite:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid invite token.",
-        )
-    if invite.used_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invite token has already been used.",
-        )
     now = datetime.now(timezone.utc)
-    expires = invite.expires_at
-    if expires.tzinfo is None:
-        from datetime import timezone as tz
-        expires = expires.replace(tzinfo=tz.utc)
-    if now > expires:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invite token has expired.",
-        )
+    invite = None
+    if body.invite_token:
+        invite = session.exec(
+            select(InviteToken).where(InviteToken.token == body.invite_token)
+        ).first()
+        if not invite:
+            raise HTTPException(status_code=400, detail="Invalid invite token.")
+        if invite.used_at is not None:
+            raise HTTPException(status_code=400, detail="Invite token has already been used.")
+        expires = invite.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if now > expires:
+            raise HTTPException(status_code=400, detail="Invite token has expired.")
 
-    # Check username uniqueness
-    existing = session.exec(select(User).where(User.username == body.username)).first()
-    if existing:
+    base = _base_username(body.username)
+    if "@" in base:
+        raise HTTPException(status_code=422, detail="Username may not contain '@'.")
+    provider = get_provider(session, "token")
+    username = base + provider.username_suffix
+    if session.exec(select(User).where(User.username == username)).first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Username already registered.",
+            detail=f"Username '{username}' is already taken. Choose another one.",
         )
 
+    if await check_github_token(body.github_token) == "invalid":
+        raise HTTPException(status_code=400, detail="The GitHub token is invalid or expired.")
+
     user = User(
-        username=body.username,
+        username=username,
         hashed_password=hash_password(body.password),
         role="member",
-        email=invite.email,
+        email=body.email,
     )
     session.add(user)
     session.flush()  # get user.id before commit
 
-    # Mark invite as used
-    invite.used_by = user.id
-    invite.used_at = now
-    session.add(invite)
+    identity = UserIdentity(user_id=user.id, provider_id=provider.id)  # type: ignore[arg-type]
+    set_user_token(session, identity, body.github_token, get_settings())
+
+    if invite:
+        invite.used_by = user.id
+        invite.used_at = now
+        session.add(invite)
     session.commit()
     session.refresh(user)
 
-    logger.info("auth.user_registered", username=body.username)
-    return UserResponse.model_validate(user)
+    logger.info("auth.user_registered", username=user.username)
+    return user_response(session, user)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +160,7 @@ def register(
     response_model=TokenResponse,
     summary="Obtain a JWT access token",
 )
-def login(
+async def login(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[AppSettings, Depends(get_settings)],
@@ -145,7 +181,241 @@ def login(
 
     token = create_access_token(subject=user.username, settings=settings)
     logger.info("auth.login_success", username=user.username)
-    return TokenResponse(access_token=token)
+    return TokenResponse(
+        access_token=token,
+        github_token_status=await check_github_token(user_token(session, user, settings)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GitHub OAuth
+# ---------------------------------------------------------------------------
+
+_GH_STATE = "gh_state"
+_GH_PENDING = "gh_pending"
+#: Binds the OAuth ``state`` to the browser that started the sign-in, so a
+#: callback URL forwarded to someone else cannot log them into another account.
+_GH_NONCE_COOKIE = "gh_oauth_nonce"
+_GH_COOKIE_PATH = "/auth/github"
+
+
+def _short_jwt(claims: dict, typ: str, settings: AppSettings) -> str:
+    from datetime import datetime
+
+    exp = datetime.now(timezone.utc) + timedelta(minutes=10)
+    return jwt.encode({**claims, "typ": typ, "exp": exp}, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _read_short_jwt(value: str, typ: str, settings: AppSettings) -> dict:
+    try:
+        claims = jwt.decode(value, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError as exc:
+        raise HTTPException(status_code=400, detail="Expired or invalid GitHub sign-in.") from exc
+    if claims.get("typ") != typ:
+        raise HTTPException(status_code=400, detail="Expired or invalid GitHub sign-in.")
+    return claims
+
+
+def _github_account(session: Session, settings: AppSettings, gh: dict) -> User:
+    """Create the ``<login>@g`` user and its GitHub identity."""
+    provider = get_provider(session, "github")
+    username = gh["login"] + provider.username_suffix
+    if session.exec(select(User).where(User.username == username)).first():
+        # Someone renamed on GitHub and another took the old login.
+        username = f"{gh['login']}-{gh['id']}{provider.username_suffix}"
+    user = User(
+        username=username,
+        hashed_password=hash_password(secrets.token_urlsafe(32)),
+        role="member",
+        email=gh["email"],
+        needs_password=True,
+    )
+    session.add(user)
+    session.flush()
+    identity = UserIdentity(
+        user_id=user.id,  # type: ignore[arg-type]
+        provider_id=provider.id,  # type: ignore[arg-type]
+        provider_user_id=str(gh["id"]),
+    )
+    set_user_token(session, identity, decrypt_token(gh["token"], settings), settings)
+    session.commit()
+    session.refresh(user)
+    logger.info("auth.github_user_created", username=user.username)
+    return user
+
+
+def _login_redirect(user: User, status_: str, settings: AppSettings) -> RedirectResponse:
+    from urllib.parse import urlencode
+
+    query = urlencode({
+        "token": create_access_token(subject=user.username, settings=settings),
+        "github_token_status": status_,
+    })
+    return RedirectResponse(f"{settings.frontend_url}/auth/github?{query}", status_code=302)
+
+
+@router.get("/github/login", summary="Start the GitHub OAuth sign-in")
+def github_login(settings: Annotated[AppSettings, Depends(get_settings)]) -> RedirectResponse:
+    from urllib.parse import urlencode
+
+    if not settings.github_oauth_client_id:
+        raise HTTPException(status_code=503, detail="GitHub sign-in is not configured.")
+    nonce = secrets.token_urlsafe(32)
+    query = urlencode({
+        "client_id": settings.github_oauth_client_id,
+        # repo + admin:repo_hook: registering a repository creates its webhook.
+        "scope": "repo admin:repo_hook user:email",
+        "state": _short_jwt({"nonce": nonce}, _GH_STATE, settings),
+        "redirect_uri": f"{settings.backend_public_url.rstrip('/')}/auth/github/callback",
+    })
+    response = RedirectResponse(f"https://github.com/login/oauth/authorize?{query}", status_code=302)
+    response.set_cookie(
+        _GH_NONCE_COOKIE,
+        nonce,
+        max_age=600,
+        path=_GH_COOKIE_PATH,
+        httponly=True,
+        # Lax still sends it on GitHub's top-level GET redirect back to us.
+        samesite="lax",
+        secure=settings.backend_public_url.startswith("https://"),
+    )
+    return response
+
+
+@router.get("/github/callback", summary="GitHub OAuth callback")
+async def github_callback(
+    code: str,
+    state: str,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> RedirectResponse:
+    claims = _read_short_jwt(state, _GH_STATE, settings)
+    cookie = request.cookies.get(_GH_NONCE_COOKIE, "")
+    if not cookie or not secrets.compare_digest(str(claims.get("nonce", "")), cookie):
+        raise HTTPException(status_code=400, detail="GitHub sign-in was started in another browser.")
+    response = await _github_sign_in(code, session, settings)
+    response.delete_cookie(_GH_NONCE_COOKIE, path=_GH_COOKIE_PATH)
+    return response
+
+
+async def _github_sign_in(code: str, session: Session, settings: AppSettings) -> RedirectResponse:
+    import httpx
+    from urllib.parse import urlencode
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": settings.github_oauth_client_id,
+                    "client_secret": settings.github_oauth_client_secret,
+                    "code": code,
+                },
+                headers={"Accept": "application/json"},
+            )
+            access = resp.json().get("access_token")
+            if not access:
+                raise HTTPException(status_code=400, detail="GitHub refused the sign-in.")
+            headers = {"Authorization": f"Bearer {access}", "Accept": "application/vnd.github+json"}
+            profile = (await client.get("https://api.github.com/user", headers=headers)).json()
+            emails = (await client.get("https://api.github.com/user/emails", headers=headers)).json()
+    except httpx.HTTPError as exc:
+        logger.error("auth.github_callback_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail="Could not reach GitHub.") from exc
+
+    email = next(
+        (e["email"] for e in emails if isinstance(e, dict) and e.get("primary") and e.get("verified")),
+        profile.get("email"),
+    )
+    provider = get_provider(session, "github")
+    identity = session.exec(
+        select(UserIdentity).where(
+            UserIdentity.provider_id == provider.id,
+            UserIdentity.provider_user_id == str(profile["id"]),
+        )
+    ).first()
+    if identity:
+        set_user_token(session, identity, access, settings)  # GitHub may have issued a new one
+        session.commit()
+        user = session.get(User, identity.user_id)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=403, detail="User account is disabled.")
+        return _login_redirect(user, "ok", settings)
+
+    gh = {"id": profile["id"], "login": profile["login"], "email": email,
+          "token": encrypt_token(access, settings)}
+    if email and session.exec(select(User).where(User.email == email)).first():
+        # Accounts are never linked: let the person choose.
+        query = urlencode({"conflict": email, "pending": _short_jwt({"gh": gh}, _GH_PENDING, settings)})
+        return RedirectResponse(f"{settings.frontend_url}/auth/github?{query}", status_code=302)
+    return _login_redirect(_github_account(session, settings, gh), "ok", settings)
+
+
+@router.post("/github/confirm-new", response_model=TokenResponse,
+             summary="Create the @g account despite an existing account with that email")
+def github_confirm_new(
+    body: GithubConfirmNewRequest,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> TokenResponse:
+    gh = _read_short_jwt(body.pending, _GH_PENDING, settings)["gh"]
+    provider = get_provider(session, "github")
+    if session.exec(select(UserIdentity).where(
+        UserIdentity.provider_id == provider.id, UserIdentity.provider_user_id == str(gh["id"])
+    )).first():
+        raise HTTPException(status_code=409, detail="This GitHub account is already registered.")
+    user = _github_account(session, settings, gh)
+    return TokenResponse(
+        access_token=create_access_token(subject=user.username, settings=settings),
+        github_token_status="ok",
+    )
+
+
+@router.post("/set-password", response_model=UserResponse,
+             summary="Set the first password of a GitHub sign-up")
+def set_password(
+    body: SetPasswordRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+) -> UserResponse:
+    if not current_user.needs_password:
+        raise HTTPException(status_code=400, detail="Use change-password instead.")
+    current_user.hashed_password = hash_password(body.password)
+    current_user.needs_password = False
+    session.add(current_user)
+    session.commit()
+    session.refresh(current_user)
+    return user_response(session, current_user)
+
+
+@router.put("/github-token", response_model=UserResponse, summary="Replace your GitHub token")
+async def update_github_token(
+    body: GithubTokenUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> UserResponse:
+    if await check_github_token(body.github_token) == "invalid":
+        raise HTTPException(status_code=400, detail="The GitHub token is invalid or expired.")
+    found = identity_of(session, current_user)
+    identity = found[0] if found else UserIdentity(
+        user_id=current_user.id,  # type: ignore[arg-type]
+        provider_id=get_provider(session, "token").id,  # type: ignore[arg-type]
+    )
+    set_user_token(session, identity, body.github_token, settings)
+    session.commit()
+    logger.info("auth.github_token_updated", username=current_user.username)
+    return user_response(session, current_user)
+
+
+@router.get("/github-token/status", summary="Ping GitHub with your stored token")
+async def github_token_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> dict[str, str]:
+    return {"status": await check_github_token(user_token(session, current_user, settings))}
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +429,10 @@ def login(
 )
 def me(
     current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
 ) -> UserResponse:
     """Return the profile of the currently authenticated user."""
-    return UserResponse.model_validate(current_user)
+    return user_response(session, current_user)
 
 
 @router.patch(
@@ -386,8 +657,12 @@ async def request_change_username(
             detail="No email address on your account. Ask an admin to update it.",
         )
 
+    # The sign-in suffix is not the user's to change.
+    found = identity_of(session, current_user)
+    suffix = found[1].username_suffix if found else "@t"
+    new_username = _base_username(body.new_username) + suffix
     conflict = session.exec(
-        select(User).where(User.username == body.new_username)
+        select(User).where(User.username == new_username)
     ).first()
     if conflict:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken.")
@@ -395,7 +670,7 @@ async def request_change_username(
     token_value = _create_change_token(
         user=current_user,
         change_type="username",
-        new_value=body.new_username,
+        new_value=new_username,
         session=session,
         settings=settings,
     )
@@ -406,10 +681,10 @@ async def request_change_username(
         to_address=current_user.email,
         confirm_url=confirm_url,
         change_type="username",
-        new_username=body.new_username,
+        new_username=new_username,
         settings=settings,
     )
-    logger.info("auth.change_username_requested", username=current_user.username, new=body.new_username)
+    logger.info("auth.change_username_requested", username=current_user.username, new=new_username)
     return ChangeRequestedResponse(
         message="Confirmation email sent. Click the link to apply the new username.",
         email=current_user.email,

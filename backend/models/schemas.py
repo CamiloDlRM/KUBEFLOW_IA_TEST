@@ -40,6 +40,35 @@ class User(SQLModel, table=True):
     email: str | None = SQLField(default=None)
     is_active: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=_utcnow)
+    #: A GitHub sign-up has no password until the user sets one.
+    needs_password: bool = SQLField(default=False)
+
+
+class AuthProvider(SQLModel, table=True):
+    """A way of signing in. A new method is a new row, not a new column."""
+
+    __tablename__ = "auth_providers"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    code: str = SQLField(index=True, unique=True)  # "github" | "token"
+    name: str
+    username_suffix: str  # "@g" | "@t"
+
+
+class UserIdentity(SQLModel, table=True):
+    """How a user signed up, and the GitHub token that identity carries."""
+
+    __tablename__ = "user_identities"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    user_id: int = SQLField(foreign_key="users.id", index=True)
+    provider_id: int = SQLField(foreign_key="auth_providers.id")
+    #: GitHub's numeric user id; empty for the manual-token provider.
+    provider_user_id: str | None = SQLField(default=None, index=True)
+    github_token_encrypted: str = SQLField(default="")
+    github_token_masked: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    updated_at: datetime = SQLField(default_factory=_utcnow)
 
 
 class ChangeToken(SQLModel, table=True):
@@ -135,6 +164,9 @@ class Repository(SQLModel, table=True):
     webhook_url: str | None = SQLField(default=None)
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
+    #: False for every repository registered before sign-in identities: those
+    #: keep the token they were created with. True means "use my owner's token".
+    uses_owner_token: bool = SQLField(default=False)
 
 
 class Pipeline(SQLModel, table=True):
@@ -785,7 +817,9 @@ class UserRegisterRequest(BaseModel):
 
     username: str = Field(..., min_length=3, max_length=64, pattern=USERNAME_PATTERN)
     password: str = Field(..., min_length=8, max_length=72)
-    invite_token: str = Field(..., description="Single-use invite token issued by an admin.")
+    email: str = Field(..., min_length=3, max_length=254)
+    github_token: str = Field(..., min_length=4)
+    invite_token: str | None = Field(default=None, description="Optional invite token.")
 
 
 class InviteCreateRequest(BaseModel):
@@ -811,6 +845,8 @@ class TokenResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+    #: "ok" | "expiring" | "invalid" | "missing" | "unknown"
+    github_token_status: str = "unknown"
 
 
 class UserResponse(BaseModel):
@@ -824,6 +860,28 @@ class UserResponse(BaseModel):
     email: str | None
     is_active: bool
     created_at: datetime
+    needs_password: bool = False
+    auth_provider: str = "token"  # "github" | "token"
+    has_github_token: bool = False
+    github_token_masked: str = ""
+
+
+class GithubTokenUpdateRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    github_token: str = Field(..., min_length=4)
+
+
+class SetPasswordRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    password: str = Field(..., min_length=8, max_length=72)
+
+
+class GithubConfirmNewRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    pending: str
 
 
 class DataSourceCreateRequest(BaseModel):

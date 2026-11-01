@@ -26,7 +26,6 @@ export interface LinkedNotebook {
 
 export interface CreateRepoPayload {
   github_url: string;
-  github_token: string;
 }
 
 export interface RepoCreatedResponse {
@@ -214,12 +213,17 @@ export interface LoginPayload {
 export interface RegisterPayload {
   username: string;
   password: string;
-  invite_token: string;
+  email: string;
+  github_token: string;
+  invite_token?: string;
 }
+
+export type GithubTokenStatus = 'ok' | 'expiring' | 'invalid' | 'missing' | 'unknown';
 
 export interface TokenResponse {
   access_token: string;
   token_type: string;
+  github_token_status: GithubTokenStatus;
 }
 
 export interface UserResponse {
@@ -229,6 +233,10 @@ export interface UserResponse {
   email: string | null;
   is_active: boolean;
   created_at: string;
+  needs_password: boolean;
+  auth_provider: 'github' | 'token';
+  has_github_token: boolean;
+  github_token_masked: string;
 }
 
 export interface ChangePasswordPayload {

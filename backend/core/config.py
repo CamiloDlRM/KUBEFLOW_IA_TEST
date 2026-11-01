@@ -31,6 +31,8 @@ class AppSettings(BaseSettings):
         default="",
         description="GitHub personal-access token for API calls.",
     )
+    github_oauth_client_id: str = Field(default="", description="GitHub OAuth App client id.")
+    github_oauth_client_secret: str = Field(default="", description="GitHub OAuth App secret.")
 
     # --- Infrastructure ---
     redis_url: str = Field(

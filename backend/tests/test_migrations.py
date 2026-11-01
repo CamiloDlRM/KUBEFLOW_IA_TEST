@@ -315,3 +315,40 @@ def test_a_null_json_column_is_backfilled_rather_than_left(migrated, monkeypatch
         ).fetchone()
 
     assert row[0] == "{}", "a run older than the column must not be left holding NULL"
+
+
+def test_identities_migration_keeps_legacy_repositories(migrated, monkeypatch):
+    """0023: existing users become ``@t``; existing repositories keep their token."""
+    config, engine, url = migrated
+    _upgrade(config, url, "0022", monkeypatch)
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO users (id, username, hashed_password, role, is_active, created_at) "
+                "VALUES (1, 'wil', 'h', 'member', 1, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO repositories (id, owner_id, github_url, github_token_masked, "
+                "github_token_encrypted, created_at, is_active) VALUES "
+                "(1, 1, 'https://github.com/a/b', '****abcd', 'ENC', :now, 1)"
+            ),
+            {"now": now},
+        )
+
+    _upgrade(config, url, "head", monkeypatch)
+
+    with engine.connect() as connection:
+        user = connection.execute(sa.text("SELECT username FROM users WHERE id = 1")).scalar()
+        repo = connection.execute(
+            sa.text("SELECT github_token_encrypted, uses_owner_token FROM repositories WHERE id = 1")
+        ).fetchone()
+        identities = connection.execute(sa.text("SELECT COUNT(*) FROM user_identities")).scalar()
+
+    assert user == "wil@t"
+    assert tuple(repo) == ("ENC", 0)
+    assert identities == 1

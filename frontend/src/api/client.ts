@@ -106,6 +106,23 @@ export async function register(payload: RegisterPayload): Promise<UserResponse> 
   return data;
 }
 
+export const GITHUB_LOGIN_URL = `${API_BASE}/auth/github/login`;
+
+export async function githubConfirmNew(pending: string): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/github/confirm-new', { pending });
+  return data;
+}
+
+export async function setPassword(password: string): Promise<UserResponse> {
+  const { data } = await apiClient.post<UserResponse>('/auth/set-password', { password });
+  return data;
+}
+
+export async function updateGithubToken(github_token: string): Promise<UserResponse> {
+  const { data } = await apiClient.put<UserResponse>('/auth/github-token', { github_token });
+  return data;
+}
+
 export async function getMe(): Promise<UserResponse> {
   const { data } = await apiClient.get<UserResponse>('/auth/me');
   return data;
