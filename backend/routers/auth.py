@@ -196,7 +196,13 @@ _GH_PENDING = "gh_pending"
 #: Binds the OAuth ``state`` to the browser that started the sign-in, so a
 #: callback URL forwarded to someone else cannot log them into another account.
 _GH_NONCE_COOKIE = "gh_oauth_nonce"
-_GH_COOKIE_PATH = "/auth/github"
+
+
+def _gh_cookie_path(settings: AppSettings) -> str:
+    """Path the browser sees, e.g. ``/api/auth/github`` behind the frontend's nginx."""
+    from urllib.parse import urlparse
+
+    return urlparse(settings.backend_public_url).path.rstrip("/") + "/auth/github"
 
 
 def _short_jwt(claims: dict, typ: str, settings: AppSettings) -> str:
@@ -273,7 +279,7 @@ def github_login(settings: Annotated[AppSettings, Depends(get_settings)]) -> Red
         _GH_NONCE_COOKIE,
         nonce,
         max_age=600,
-        path=_GH_COOKIE_PATH,
+        path=_gh_cookie_path(settings),
         httponly=True,
         # Lax still sends it on GitHub's top-level GET redirect back to us.
         samesite="lax",
@@ -295,7 +301,7 @@ async def github_callback(
     if not cookie or not secrets.compare_digest(str(claims.get("nonce", "")), cookie):
         raise HTTPException(status_code=400, detail="GitHub sign-in was started in another browser.")
     response = await _github_sign_in(code, session, settings)
-    response.delete_cookie(_GH_NONCE_COOKIE, path=_GH_COOKIE_PATH)
+    response.delete_cookie(_GH_NONCE_COOKIE, path=_gh_cookie_path(settings))
     return response
 
 

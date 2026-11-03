@@ -156,6 +156,13 @@ def test_github_callback_rejects_a_state_from_another_browser(anon_app, oauth_se
     assert resp.status_code == 400
 
 
+def test_github_nonce_cookie_follows_the_public_url_prefix(anon_app, oauth_settings):
+    # Behind the frontend's nginx the browser reaches the callback at /api/auth/github/...
+    oauth_settings.backend_public_url = "https://app.example.com/api/"
+    resp = anon_app.get("/auth/github/login", follow_redirects=False)
+    assert "Path=/api/auth/github" in resp.headers["set-cookie"]
+
+
 def test_github_callback_in_the_same_browser_creates_the_g_user(anon_app, oauth_settings, db_session):
     from models.schemas import User
 
