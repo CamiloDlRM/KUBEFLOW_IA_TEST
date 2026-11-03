@@ -8,6 +8,7 @@ import type { ModelCard, ModelDeployment } from '../../src/types';
 const predict = vi.fn();
 
 vi.mock('../../src/api/client', () => ({
+  API_BASE: 'https://api.example.test',
   predict: (...args: unknown[]) => predict(...args),
 }));
 
@@ -119,6 +120,39 @@ describe('TestModelModal', () => {
     await userEvent.clear(screen.getByRole('spinbutton', { name: 'base_cost' }));
 
     expect(screen.getByRole('button', { name: 'Send request' })).toBeDisabled();
+  });
+
+  it('says what each input is, what the model predicts and what the answers mean', () => {
+    renderModal(
+      model({
+        ...CARD,
+        inputs: [
+          { ...CARD.inputs![0], description: 'How long the encounter lasted', unit: 'min' },
+          CARD.inputs![1],
+        ],
+        target: { name: 'encounter_class', description: 'The kind of encounter' },
+        class_notes: { inpatient: 'Admitted overnight' },
+      }),
+    );
+
+    expect(screen.getByText('How long the encounter lasted')).toBeInTheDocument();
+    expect(screen.getByText('min')).toBeInTheDocument();
+    expect(screen.getByText(/The kind of encounter/)).toBeInTheDocument();
+    expect(screen.getByText('Admitted overnight')).toBeInTheDocument();
+  });
+
+  it('spells out the request, position by position, for calling it from code', () => {
+    renderModal();
+
+    const api = screen.getByRole('group', { name: 'API' });
+    const rows = within(api).getAllByRole('row').slice(1);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      '0duration_minutesnumber1 – 6,596',
+      '1base_costnumber12 – 14,650',
+    ]);
+    expect(api).toHaveTextContent('/models/encounter-class-classifier/predict');
+    expect(api).toHaveTextContent('one of ambulatory, emergency, inpatient, virtual');
+    expect(api).toHaveTextContent(`-d '{"data":[[30,130]]}'`);
   });
 
   it('falls back to raw JSON, and says how to get the guide, for a model without a card', () => {

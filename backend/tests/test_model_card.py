@@ -165,3 +165,59 @@ class TestModelsCarryTheirCard:
         db_session.commit()
 
         assert test_app.get("/models").json()[0]["model_card"] == {}
+
+
+class TestNotes:
+    """What the numbers mean comes from the notebook, and is checked, not trusted."""
+
+    def test_inputs_get_their_meaning_and_unit(self, features):
+        from core.model_card import annotate
+
+        card = annotate(
+            describe(ThresholdClassifier(), features),
+            {"inputs": {
+                "duration_minutes": {"description": "How long the encounter lasted", "unit": "min"},
+                "base_cost": "Cost before insurance",
+            }},
+        )
+
+        duration, cost = card["inputs"]
+        assert (duration["description"], duration["unit"]) == ("How long the encounter lasted", "min")
+        assert cost["description"] == "Cost before insurance"
+        assert "unit" not in cost
+
+    def test_the_target_and_the_classes_are_explained(self, features):
+        from core.model_card import annotate
+
+        card = annotate(
+            describe(ThresholdClassifier(), features),
+            {
+                "target": {"name": "encounter_class", "description": "Type of encounter"},
+                "classes": {"inpatient": "Admitted overnight", "telepathy": "Not a class"},
+            },
+        )
+
+        assert card["target"] == {"name": "encounter_class", "description": "Type of encounter"}
+        # A class the model does not have is not described.
+        assert card["class_notes"] == {"inpatient": "Admitted overnight"}
+
+    def test_notes_for_inputs_the_model_does_not_take_are_dropped(self, features):
+        from core.model_card import annotate
+
+        card = annotate(describe(ThresholdClassifier(), features), {"inputs": {"age": "Patient age"}})
+
+        assert all("description" not in spec for spec in card["inputs"])
+
+    def test_anything_not_shaped_like_notes_is_ignored(self, features):
+        from core.model_card import annotate
+
+        card = describe(ThresholdClassifier(), features)
+        assert annotate(dict(card), ["not", "a", "dict"]) == card
+        assert "target" not in annotate(dict(card), {"target": 42})
+
+    def test_long_text_is_cut(self, features):
+        from core.model_card import annotate
+
+        card = annotate(describe(ThresholdClassifier(), features), {"inputs": {"base_cost": "x" * 1000}})
+
+        assert len(card["inputs"][1]["description"]) == 300

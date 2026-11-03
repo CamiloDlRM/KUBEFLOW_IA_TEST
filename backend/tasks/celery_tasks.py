@@ -174,6 +174,7 @@ def _build_model_card(
     pipeline_id: str,
     model_path: str,
     features_path: str,
+    notes_path: str,
     client: Any,
     mlflow_run_id: str,
 ) -> str:
@@ -193,12 +194,20 @@ def _build_model_card(
         import joblib
         import pandas as pd
 
-        from core.model_card import describe
+        from core.model_card import annotate, describe
 
         card = describe(joblib.load(model_path), pd.read_parquet(features_path))
     except Exception as exc:  # noqa: BLE001 - a card is a courtesy, not a gate
         logger.warning("pipeline.model_card.failed", pipeline_id=pipeline_id, error=str(exc))
         return f"Could not describe the model's inputs: {exc}"
+
+    # Notes that do not parse cost the descriptions, not the card.
+    if os.path.exists(notes_path):
+        try:
+            with open(notes_path, encoding="utf-8") as handle:
+                card = annotate(card, json.load(handle))
+        except Exception as exc:  # noqa: BLE001
+            card["note"] = f"The model notes could not be read: {exc}"
 
     _update_pipeline_db(pipeline_id, model_card=card)
     try:
@@ -726,6 +735,9 @@ def run_pipeline(
             # platform can say what the model expects. Optional: a notebook
             # that writes nothing still trains and deploys, without a card.
             features_output_path = os.path.join(tmpdir, "training_features.parquet")
+            # And what those features and the answers mean, in words. Also
+            # optional: without it the card has ranges but no descriptions.
+            notes_output_path = os.path.join(tmpdir, "model_notes.json")
 
             # Write notebook to disk
             with open(input_path, "w") as f:
@@ -933,6 +945,7 @@ def run_pipeline(
                 "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri,
                 "MLFLOW_RUN_ID": mlflow_run_id,
                 "TRAINING_FEATURES_PATH": features_output_path,
+                "MODEL_NOTES_PATH": notes_output_path,
             }
             # Only injected when the repository has an active dataset, so
             # notebooks without a DATASET_PATH parameter keep working.
@@ -1016,7 +1029,12 @@ def run_pipeline(
             accuracy = metrics.get("accuracy", 0.0)
 
             card_note = _build_model_card(
-                pipeline_id, model_output_path, features_output_path, client, mlflow_run_id
+                pipeline_id,
+                model_output_path,
+                features_output_path,
+                notes_output_path,
+                client,
+                mlflow_run_id,
             )
 
             # Ensure the MLflow run is terminated (no-op if already ended

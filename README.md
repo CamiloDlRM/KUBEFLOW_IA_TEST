@@ -253,6 +253,8 @@ The pipeline injects these variables via papermill:
 | `MODEL_OUTPUT_PATH` | Path where the model must be saved |
 | `PIPELINE_ID` | UUID of the current pipeline run |
 | `MLFLOW_TRACKING_URI` | MLflow server URL |
+| `TRAINING_FEATURES_PATH` | Optional. Write the exact frame passed to `fit()` here (`X_train.to_parquet(TRAINING_FEATURES_PATH)`) and the model's test page shows each input's training range and what the model answers across it |
+| `MODEL_NOTES_PATH` | Optional. Write a JSON of what the inputs and answers mean — `{"target": {"name", "description"}, "inputs": {name: {"description", "unit"}}, "classes": {label: meaning}}` — and the test page shows it beside each input |
 
 See `notebooks/example_notebook.ipynb` for a minimal example, and
 `notebooks/example_dataset_notebook.ipynb` for one that consumes `DATASET_PATH`.

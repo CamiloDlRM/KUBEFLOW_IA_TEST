@@ -197,6 +197,9 @@ export interface ModelInput {
   max?: number | null;
   values?: string[];
   missing?: number;
+  /** What the input is, in the notebook author's words. */
+  description?: string;
+  unit?: string;
 }
 
 /** A range of one input, and what the model answered for the training rows in it. */
@@ -227,6 +230,10 @@ export interface ModelCard {
   };
   effects?: ModelEffect[];
   classes?: (string | number)[];
+  /** What the model predicts, when the notebook said. */
+  target?: { name: string; description: string };
+  /** What each answer means, when the notebook said. */
+  class_notes?: Record<string, string>;
   note?: string;
 }
 

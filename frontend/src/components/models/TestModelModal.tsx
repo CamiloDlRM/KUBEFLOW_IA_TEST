@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { TriangleAlert, X } from 'lucide-react';
-import { predict } from '../../api/client';
+import { API_BASE, predict } from '../../api/client';
 import type { ModelCard, ModelDeployment, ModelEffect, ModelInput, PredictionResult } from '../../types';
 import Spinner from '../Spinner';
 import EffectStrip from './EffectStrip';
@@ -16,6 +16,11 @@ import { classColor, formatValue } from './effects';
  * what the model answered across that range in training, so a value can be
  * chosen to land in a particular answer — and a value outside the range is
  * flagged as the extrapolation it is.
+ *
+ * When the notebook wrote notes, each input also says what it is and in what
+ * unit, the header says what the model predicts, and each answer says what it
+ * means. The API section spells out the request and response for calling the
+ * model from outside, position by position.
  *
  * A model with no card — trained before cards, or by a notebook that wrote no
  * features — gets the raw JSON editor and a line on how to give it one.
@@ -89,6 +94,12 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
                   inputs.length
                 } inputs, sent in this order`}
             </p>
+            {card.target && (
+              <p className="mt-1 text-xs text-slate-300">
+                Predicts <span className="font-mono text-slate-100">{card.target.name}</span>
+                {card.target.description && ` — ${card.target.description}`}
+              </p>
+            )}
           </div>
           <button onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
             <X size={18} />
@@ -114,7 +125,11 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
                 {shown.length > 1 && (
                   <ul aria-label="Answers" className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-300">
                     {shown.map((label) => (
-                      <li key={String(label)} className="flex items-center gap-1.5">
+                      <li
+                        key={String(label)}
+                        title={card.class_notes?.[String(label)]}
+                        className="flex items-center gap-1.5"
+                      >
                         <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm" style={{ background: classColor(card.classes, label) }} />
                         {String(label)}
                       </li>
@@ -122,6 +137,26 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
                   </ul>
                 )}
               </div>
+              {card.class_notes && (
+                <details className="text-[11px] text-slate-400">
+                  <summary className="cursor-pointer select-none text-slate-300 hover:text-slate-100">
+                    What each answer means
+                  </summary>
+                  <dl className="mt-1.5 grid gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+                    {(card.classes ?? [])
+                      .filter((label) => card.class_notes?.[String(label)])
+                      .map((label) => (
+                        <div key={String(label)} className="contents">
+                          <dt className="flex items-center gap-1.5 font-mono text-slate-200">
+                            <span aria-hidden="true" className="h-2 w-2 rounded-sm" style={{ background: classColor(card.classes, label) }} />
+                            {String(label)}
+                          </dt>
+                          <dd>{card.class_notes?.[String(label)]}</dd>
+                        </div>
+                      ))}
+                  </dl>
+                </details>
+              )}
               <p className="text-[11px] leading-relaxed text-slate-500">
                 Each strip splits the training rows by that input, sized by how many rows fall in each range; the colour
                 is what the model answered for most of them. It shows what goes together in the data, not what one input
@@ -175,6 +210,8 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
             )}
             {jsonError && <p className="text-xs text-red-400">{jsonError}</p>}
           </section>
+
+          {described && <ApiReference model={model} card={card} row={numbers} />}
 
           {mutation.isError && (
             <p className="rounded border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-300">
@@ -234,10 +271,14 @@ function InputRow({
         <label htmlFor={id} className="flex items-baseline gap-2">
           <span aria-hidden="true" className="font-mono text-[11px] text-slate-500">{index + 1}</span>
           <span className="truncate font-mono text-sm text-slate-100">{input.name}</span>
+          {input.unit && (
+            <span className="shrink-0 rounded bg-slate-800 px-1.5 py-px text-[10px] text-slate-300">{input.unit}</span>
+          )}
         </label>
+        {input.description && <p className="text-xs text-slate-300">{input.description}</p>}
         <p className="text-[11px] text-slate-500">
           {input.type === 'number'
-            ? `trained on ${formatValue(input.min)} – ${formatValue(input.max)} · typical ${formatValue(
+            ? `number · trained on ${formatValue(input.min)} – ${formatValue(input.max)} · typical ${formatValue(
                 input.median as number,
               )}`
             : `one of ${input.values?.slice(0, 5).join(', ')}${(input.values?.length ?? 0) > 5 ? '…' : ''}`}
@@ -313,5 +354,75 @@ function Answer({ result, classes }: { result: PredictionResult; classes: (strin
         <pre className="mt-1 overflow-x-auto font-mono text-slate-400">{JSON.stringify(result, null, 2)}</pre>
       </details>
     </section>
+  );
+}
+
+/**
+ * How to call the model from outside the platform: the exact shape of the
+ * request, what each position in a row is, and what comes back.
+ *
+ * The model takes rows of plain numbers with no names — position is the only
+ * thing that says which number is which — so the positions are spelled out.
+ */
+function ApiReference({ model, card, row }: { model: ModelDeployment; card: ModelCard; row: number[] }) {
+  const inputs = card.inputs ?? [];
+  const url = `${API_BASE}/models/${model.model_name}/predict`;
+  const example = JSON.stringify({ data: [row.map((n) => (Number.isFinite(n) ? n : 0))] });
+  const curl = `curl -X POST ${url} \\
+  -H "Authorization: Bearer <your token>" \\
+  -H "Content-Type: application/json" \\
+  -d '${example}'`;
+  const classes = (card.classes ?? []).map(String);
+
+  return (
+    <details aria-label="API" className="rounded-lg border border-slate-800 bg-slate-950/40">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-200">
+        Call it from code
+      </summary>
+      <div className="space-y-3 border-t border-slate-800 px-3 py-3 text-[11px] text-slate-400">
+        <p>
+          <span className="font-mono text-slate-200">POST {url}</span> with a JSON body: <code className="text-slate-200">data</code> is
+          a list of rows, and each row is {inputs.length} numbers in this order. Several rows are answered in one call.
+        </p>
+        <table className="w-full border-separate border-spacing-0 font-mono">
+          <thead>
+            <tr className="text-left text-slate-500">
+              <th scope="col" className="border-b border-slate-800 py-1 pr-3 font-normal">#</th>
+              <th scope="col" className="border-b border-slate-800 py-1 pr-3 font-normal">field</th>
+              <th scope="col" className="border-b border-slate-800 py-1 pr-3 font-normal">type</th>
+              <th scope="col" className="border-b border-slate-800 py-1 font-normal">seen in training</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inputs.map((input, index) => (
+              <tr key={input.name} className="text-slate-300">
+                <td className="py-1 pr-3 text-slate-500">{index}</td>
+                <td className="py-1 pr-3">{input.name}</td>
+                <td className="py-1 pr-3">number{input.unit ? ` (${input.unit})` : ''}</td>
+                <td className="py-1">
+                  {input.type === 'number' ? `${formatValue(input.min)} – ${formatValue(input.max)}` : input.values?.join(', ')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p>
+          The answer has one entry per row in <code className="text-slate-200">prediction</code>
+          {card.target ? <> — a value of <span className="text-slate-200">{card.target.name}</span></> : null}
+          {classes.length > 0 && (
+            <>
+              , one of <span className="text-slate-200">{classes.join(', ')}</span>
+            </>
+          )}
+          {card.kind === 'classifier' && (
+            <>
+              . <code className="text-slate-200">probabilities</code> gives, per row, each class's probability from 0 to 1
+            </>
+          )}
+          .
+        </p>
+        <pre className="overflow-x-auto rounded bg-slate-950 px-3 py-2 text-slate-300">{curl}</pre>
+      </div>
+    </details>
   );
 }

@@ -222,3 +222,61 @@ def describe(model: Any, features: pd.DataFrame) -> dict[str, Any]:
         card["effects"].append(effect)
 
     return card
+
+
+# ---------------------------------------------------------------------------
+# What the numbers mean
+# ---------------------------------------------------------------------------
+
+#: Longest description kept. Notes are a sentence for a form, not a document.
+_MAX_TEXT = 300
+
+
+def _text(value: Any) -> str:
+    return str(value).strip()[:_MAX_TEXT] if isinstance(value, (str, int, float)) else ""
+
+
+def annotate(card: dict[str, Any], notes: dict[str, Any]) -> dict[str, Any]:
+    """Add what the notebook says its inputs and answers mean.
+
+    Ranges and types can be read off the data; meaning cannot. "base_cost
+    12 – 14,650" says nothing until someone says it is dollars, before
+    insurance. So the notebook may write notes (``MODEL_NOTES_PATH``)::
+
+        {"target": {"name": "encounter_class", "description": "..."},
+         "inputs": {"base_cost": {"description": "...", "unit": "USD"}},
+         "classes": {"inpatient": "Admitted for at least one night"}}
+
+    Every part is optional, and anything not shaped like that is ignored
+    rather than trusted: the notes come from user code. Names that match no
+    input are dropped, so a stale note cannot describe a column the model no
+    longer takes.
+    """
+    if not isinstance(notes, dict):
+        return card
+
+    target = notes.get("target")
+    if isinstance(target, dict) and (_text(target.get("name")) or _text(target.get("description"))):
+        card["target"] = {"name": _text(target.get("name")), "description": _text(target.get("description"))}
+
+    described = notes.get("inputs")
+    if isinstance(described, dict):
+        for spec in card.get("inputs", []):
+            note = described.get(spec["name"])
+            if isinstance(note, str):
+                note = {"description": note}
+            if not isinstance(note, dict):
+                continue
+            if _text(note.get("description")):
+                spec["description"] = _text(note.get("description"))
+            if _text(note.get("unit")):
+                spec["unit"] = _text(note.get("unit"))[:20]
+
+    classes = notes.get("classes")
+    if isinstance(classes, dict):
+        known = {str(label) for label in card.get("classes", [])}
+        meanings = {str(label): _text(text) for label, text in classes.items() if str(label) in known and _text(text)}
+        if meanings:
+            card["class_notes"] = meanings
+
+    return card
