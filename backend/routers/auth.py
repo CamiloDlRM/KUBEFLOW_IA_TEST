@@ -167,6 +167,10 @@ async def login(
 ) -> TokenResponse:
     """Authenticate with username/password and receive a JWT bearer token."""
     user = session.exec(select(User).where(User.username == form.username)).first()
+    if not user:
+        # Password accounts are stored as <name>@t; let people sign in without typing it.
+        suffixed = form.username + get_provider(session, "token").username_suffix
+        user = session.exec(select(User).where(User.username == suffixed)).first()
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -53,6 +53,14 @@ def test_register_with_invalid_github_token_is_400(anon_app):
     assert _register(anon_app, token_status="invalid").status_code == 400
 
 
+def test_login_without_the_token_suffix_finds_the_t_account(anon_app):
+    _register(anon_app)
+    with patch("routers.auth.check_github_token", new=AsyncMock(return_value="ok")):
+        assert anon_app.post("/auth/login", data={"username": "wil", "password": "password123"}).status_code == 200
+        assert anon_app.post("/auth/login", data={"username": "wil", "password": "wrong"}).status_code == 401
+        assert anon_app.post("/auth/login", data={"username": "nobody", "password": "password123"}).status_code == 401
+
+
 def test_login_reports_github_token_status(anon_app):
     _register(anon_app)
     with patch("routers.auth.check_github_token", new=AsyncMock(return_value="invalid")):

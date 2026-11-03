@@ -69,7 +69,7 @@ export default function Register() {
               {usernameFocused && (
                 <p id="username-hint" className="mt-2 rounded-lg bg-brand-500/10 px-3 py-2 text-xs text-brand-300">
                   Your username will be saved as <strong>{username.replace(/@[gt]$/, '') || 'name'}@t</strong>.
-                  Use it with <strong>@t</strong> every time you sign in.
+                  You can sign in with or without the <strong>@t</strong>.
                 </p>
               )}
             </div>

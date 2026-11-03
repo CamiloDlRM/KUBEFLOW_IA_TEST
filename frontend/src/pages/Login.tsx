@@ -134,10 +134,10 @@ export default function Login() {
                     className="mt-2 overflow-hidden rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-3 py-2 font-body2 text-xs text-indigo-200"
                   >
                     {isRegistering ? (
-                      <>Your username will be saved as <strong>{username.replace(/@[gt]$/, '') || 'name'}@t</strong>. Use it with <strong>@t</strong> every time you sign in.</>
+                      <>Your username will be saved as <strong>{username.replace(/@[gt]$/, '') || 'name'}@t</strong>. You can sign in with or without the <strong>@t</strong>.</>
                     ) : (
                       <>
-                        Signed up with a password? Type your username ending in <strong>@t</strong> (e.g. <strong>wil@t</strong>).
+                        Signed up with a password? Just type your username (e.g. <strong>wil</strong>); the <strong>@t</strong> is optional.
                         Using GitHub? Just press <strong>Continue with GitHub</strong> below: no username needed.
                       </>
                     )}
