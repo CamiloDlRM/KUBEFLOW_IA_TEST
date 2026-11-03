@@ -237,6 +237,23 @@ export interface ModelCard {
   note?: string;
 }
 
+/** One version of a model: a run that registered an artifact, deployed or not. */
+export interface ModelVersion {
+  version: string;
+  pipeline_id: string | null;
+  mlflow_run_id: string;
+  trained_at: string | null;
+  metrics: Record<string, number>;
+  accuracy: number | null;
+  branch: string;
+  commit_sha: string;
+  input_label: string;
+  /** The last time it was put in service; null if it never was. */
+  deployed_at: string | null;
+  is_active: boolean;
+  deployable: boolean;
+}
+
 export interface PredictionResult {
   prediction: unknown[];
   model_name: string;

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
@@ -204,6 +204,13 @@ class Pipeline(SQLModel, table=True):
     #: Built by the worker from the features the notebook wrote; empty when it
     #: wrote none. See :mod:`core.model_card`.
     model_card: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The model this run trained and the version it was given, fixed at
+    #: validation; and the MLflow run holding its artifact, once registered.
+    #: Together they make every registered run a version that can be deployed,
+    #: whether or not it cleared the auto-deploy bar.
+    model_name: str = SQLField(default="", index=True)
+    model_version: str = SQLField(default="")
+    mlflow_run_id: str = SQLField(default="")
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -586,11 +593,44 @@ class LoadModelRequest(BaseModel):
 
 
 class RollbackRequest(BaseModel):
-    """Request to rollback a model to a previous version."""
+    """Which version of a model to serve.
+
+    ``pipeline_id`` names it exactly: the run that trained it. ``version`` is
+    kept for callers from before versions were listed.
+    """
 
     model_config = ConfigDict(strict=True)
 
-    version: str = Field(..., description="MLflow model version to rollback to.")
+    pipeline_id: str | None = Field(default=None, description="The run whose artifact to serve.")
+    version: str | None = Field(default=None, description="The model version to serve.")
+
+    @model_validator(mode="after")
+    def _names_one(self) -> "RollbackRequest":
+        if not self.pipeline_id and not self.version:
+            raise ValueError("Say which version: pipeline_id or version.")
+        return self
+
+
+class ModelVersionResponse(BaseModel):
+    """One version of a model: a run that registered an artifact."""
+
+    version: str
+    pipeline_id: str | None = None
+    mlflow_run_id: str = ""
+    trained_at: datetime | None = None
+    #: Every numeric metric the notebook logged, accuracy included.
+    metrics: dict[str, float] = Field(default_factory=dict)
+    accuracy: float | None = None
+    branch: str = ""
+    commit_sha: str = ""
+    #: What it trained on, e.g. "gold v3".
+    input_label: str = ""
+    #: The last time it was put in service, if it ever was.
+    deployed_at: datetime | None = None
+    #: Serving now.
+    is_active: bool = False
+    #: Has an artifact to load. A version without one is listed, not offered.
+    deployable: bool = True
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ import type {
   PipelineInputOptions,
   PipelineInputState,
   RepoNotebook,
+  ModelVersion,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -420,10 +421,23 @@ export async function predict(
   return data;
 }
 
-export async function rollbackModel(modelName: string): Promise<ModelDeployment> {
-  const { data } = await apiClient.post<ModelDeployment>(
-    `/models/${modelName}/rollback`,
-  );
+/** Every version of a model that can be served, newest first. */
+export async function getModelVersions(modelName: string): Promise<ModelVersion[]> {
+  const { data } = await apiClient.get<ModelVersion[]>(`/models/${modelName}/versions`);
+  return data;
+}
+
+/**
+ * Put one version of a model in service, named by the run that trained it.
+ * Older or newer, deployed before or not: the run is what makes it exact.
+ */
+export async function serveModelVersion(
+  modelName: string,
+  pipelineId: string,
+): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>(`/models/${modelName}/rollback`, {
+    pipeline_id: pipelineId,
+  });
   return data;
 }
 

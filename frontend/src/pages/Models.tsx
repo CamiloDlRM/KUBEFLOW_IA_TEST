@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getModels, rollbackModel, deleteModel } from '../api/client';
+import { getModels, deleteModel } from '../api/client';
 import type { ModelDeployment } from '../types';
 import Spinner from '../components/Spinner';
 import ModelDashboard, { ModelStatusBadge } from '../components/ModelDashboard';
 import TestModelModal from '../components/models/TestModelModal';
+import VersionsDialog from '../components/models/VersionsDialog';
 import { formatDate } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 
@@ -22,21 +23,12 @@ export default function Models() {
   const [selected, setSelected] = useState<ModelDeployment | null>(null);
   const [copiedName, setCopiedName] = useState<string | null>(null);
 
-  const rollbackMut = useMutation({
-    mutationFn: rollbackModel,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['models'] }),
-  });
+  const [versionsOf, setVersionsOf] = useState<string | null>(null);
 
   const deleteMut = useMutation({
     mutationFn: deleteModel,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['models'] }),
   });
-
-  function handleRollback(modelName: string) {
-    if (window.confirm(`Rollback "${modelName}" to the previous version?`)) {
-      rollbackMut.mutate(modelName);
-    }
-  }
 
   function handleDelete(modelName: string) {
     if (window.confirm(`Delete model "${modelName}"? This will unload it from the model server.`)) {
@@ -159,11 +151,10 @@ export default function Models() {
                         Test
                       </button>
                       <button
-                        onClick={() => handleRollback(m.model_name)}
-                        disabled={rollbackMut.isPending}
-                        className="rounded bg-yellow-600/20 px-2.5 py-1 text-xs font-medium text-yellow-400 hover:bg-yellow-600/30 disabled:opacity-50"
+                        onClick={() => setVersionsOf(m.model_name)}
+                        className="rounded bg-yellow-600/20 px-2.5 py-1 text-xs font-medium text-yellow-400 hover:bg-yellow-600/30"
                       >
-                        Rollback
+                        Versions
                       </button>
                       <button
                         onClick={() => handleDelete(m.model_name)}
@@ -180,6 +171,8 @@ export default function Models() {
           </table>
         </div>
       )}
+
+      {versionsOf && <VersionsDialog modelName={versionsOf} onClose={() => setVersionsOf(null)} />}
 
       {/* Test modal */}
       {testModal && (

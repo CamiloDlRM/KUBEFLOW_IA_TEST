@@ -138,6 +138,9 @@ def _update_pipeline_db(
     mounted_input: dict[str, Any] | None = None,
     cells: list[dict[str, Any]] | None = None,
     model_card: dict[str, Any] | None = None,
+    model_name: str | None = None,
+    model_version: str | None = None,
+    mlflow_run_id: str | None = None,
 ) -> None:
     """Update pipeline record in the database via SQLModel (sync context)."""
     from sqlmodel import Session, select
@@ -166,6 +169,12 @@ def _update_pipeline_db(
             pipeline.cells = cells
         if model_card is not None:
             pipeline.model_card = model_card
+        if model_name is not None:
+            pipeline.model_name = model_name
+        if model_version is not None:
+            pipeline.model_version = model_version
+        if mlflow_run_id is not None:
+            pipeline.mlflow_run_id = mlflow_run_id
         session.add(pipeline)
         session.commit()
 
@@ -511,12 +520,17 @@ def next_model_version(session: Any, model_name: str) -> str:
     """
     from sqlmodel import select
 
-    from models.schemas import ModelDeployment
+    from models.schemas import ModelDeployment, Pipeline
 
-    versions = session.exec(
+    deployed = session.exec(
         select(ModelDeployment.version).where(ModelDeployment.model_name == model_name)
     ).all()
-    numbers = [int(v) for v in versions if str(v).isdigit()]
+    # Runs that registered without deploying are versions too, so they count:
+    # otherwise the next run would take the number of one that never shipped.
+    registered = session.exec(
+        select(Pipeline.model_version).where(Pipeline.model_name == model_name)
+    ).all()
+    numbers = [int(v) for v in [*deployed, *registered] if str(v).isdigit()]
     return str(max(numbers, default=0) + 1)
 
 
@@ -706,6 +720,7 @@ def run_pipeline(
                 or config["model_name"]
             )
             model_version = next_model_version(session, model_name)
+        _update_pipeline_db(pipeline_id, model_name=model_name, model_version=model_version)
         _phase(
             "validate",
             "success",
@@ -1027,6 +1042,10 @@ def run_pipeline(
                 metrics = {}
 
             accuracy = metrics.get("accuracy", 0.0)
+
+            # From here the run is a version that can be deployed by hand,
+            # whether or not it clears the bar below.
+            _update_pipeline_db(pipeline_id, mlflow_run_id=mlflow_run_id)
 
             card_note = _build_model_card(
                 pipeline_id,
