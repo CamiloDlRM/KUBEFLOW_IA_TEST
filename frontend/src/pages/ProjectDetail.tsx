@@ -13,6 +13,7 @@ import {
 import type { Project } from '../types';
 import Spinner from '../components/Spinner';
 import RunPipelineModal from '../components/RunPipelineModal';
+import DeployPolicyPanel from '../components/DeployPolicyPanel';
 import { repoNameFromUrl } from '../utils/format';
 import { ChevronDown } from 'lucide-react';
 
@@ -102,6 +103,8 @@ export default function ProjectDetail() {
       </Link>
 
       <RepositorySection project={project} />
+
+      {project.repository && <DeployPolicyPanel projectId={project.id} />}
 
       <div className="flex justify-end">
         <RunPipelineButton project={project} onClick={() => setRunOpen(true)} />

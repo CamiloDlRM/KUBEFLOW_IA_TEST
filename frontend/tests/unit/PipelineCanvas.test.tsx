@@ -34,6 +34,13 @@ vi.mock('../../src/api/client', () => ({
   setPipelineInput: (...args: unknown[]) => api.setPipelineInput(...args),
   runProject: (...args: unknown[]) => api.runProject(...args),
   previewLayer: (...args: unknown[]) => api.previewLayer(...args),
+  getRunSettings: () =>
+    Promise.resolve({
+      policy: { auto_deploy: true, metric: 'accuracy', threshold: 0.8, direction: 'higher', must_beat_serving: false },
+      is_default: true,
+      metrics_available: [],
+      last_parameters: {},
+    }),
 }));
 
 const PROJECT: Project = {
@@ -241,7 +248,7 @@ describe('PipelineCanvas', () => {
     await userEvent.type(name, 'readmit');
     await userEvent.click(screen.getByRole('button', { name: 'Run' }));
 
-    await waitFor(() => expect(api.runProject).toHaveBeenCalledWith(4, 'readmit'));
+    await waitFor(() => expect(api.runProject).toHaveBeenCalledWith(4, 'readmit', {}));
     await waitFor(() => expect(api.getPipeline).toHaveBeenCalledWith('run-new'));
   });
 

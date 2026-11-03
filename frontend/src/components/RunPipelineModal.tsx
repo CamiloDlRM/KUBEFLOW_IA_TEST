@@ -1,13 +1,51 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { getPipelineInput, runProject } from '../api/client';
-import type { Project } from '../types';
+import { getPipelineInput, getRunSettings, runProject } from '../api/client';
+import type { Project, TrainingParameter } from '../types';
+import { describePolicy } from './DeployPolicyPanel';
 import { formatBytes, repoNameFromUrl } from '../utils/format';
 import Spinner from './Spinner';
 
 /** Same rule the backend enforces (core/notebook_parser.MODEL_NAME_PATTERN). */
 const MODEL_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,200}$/;
+
+/** Same rules the backend enforces (core/deploy_policy.clean_parameters). */
+const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const RESERVED = new Set([
+  'DATASET_PATH',
+  'MODEL_OUTPUT_PATH',
+  'PIPELINE_ID',
+  'MLFLOW_TRACKING_URI',
+  'MLFLOW_RUN_ID',
+  'TRAINING_FEATURES_PATH',
+  'MODEL_NOTES_PATH',
+]);
+
+interface ParameterRow {
+  name: string;
+  value: string;
+}
+
+/** "300" is a number, "true" a flag, anything else text — as typed in a notebook. */
+export function parseParameterValue(value: string): TrainingParameter {
+  const trimmed = value.trim();
+  if (trimmed === 'true' || trimmed === 'false') return trimmed === 'true';
+  if (trimmed !== '' && /^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(trimmed)) return Number(trimmed);
+  return value;
+}
+
+export function parameterProblem(rows: ParameterRow[]): string | null {
+  const seen = new Set<string>();
+  for (const { name } of rows) {
+    if (!name.trim()) return 'Every parameter needs a name.';
+    if (!PARAMETER_NAME.test(name)) return `${name} is not a usable name: letters, digits and _, not starting with a digit.`;
+    if (RESERVED.has(name)) return `${name} is set by the platform.`;
+    if (seen.has(name)) return `${name} appears twice.`;
+    seen.add(name);
+  }
+  return null;
+}
 
 function suggestedModelName(projectName: string): string {
   return (
@@ -40,8 +78,30 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
   const [modelName, setModelName] = useState(() => suggestedModelName(project.name));
   const nameValid = Boolean(existing) || MODEL_NAME_PATTERN.test(modelName.trim());
 
+  // What the run will be given, starting from what the last one was, and the
+  // rule that decides whether its model deploys.
+  const { data: runSettings } = useQuery({
+    queryKey: ['run-settings', project.id],
+    queryFn: () => getRunSettings(project.id),
+  });
+  const [rows, setRows] = useState<ParameterRow[] | null>(null);
+  useEffect(() => {
+    if (runSettings && rows === null) {
+      setRows(
+        Object.entries(runSettings.last_parameters).map(([name, value]) => ({ name, value: String(value) })),
+      );
+    }
+  }, [runSettings, rows]);
+  const parameterRows = rows ?? [];
+  const problem = parameterProblem(parameterRows);
+
   const mutation = useMutation({
-    mutationFn: () => runProject(project.id, existing || modelName.trim()),
+    mutationFn: () =>
+      runProject(
+        project.id,
+        existing || modelName.trim(),
+        Object.fromEntries(parameterRows.map(({ name, value }) => [name, parseParameterValue(value)])),
+      ),
     onSuccess: ({ pipeline_id }) =>
       onStarted ? onStarted(pipeline_id) : navigate(`/pipelines/${pipeline_id}`),
   });
@@ -56,7 +116,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (nameValid) mutation.mutate();
+    if (nameValid && !problem) mutation.mutate();
   }
 
   const repository = project.repository;
@@ -135,6 +195,59 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
             </SummaryRow>
           </dl>
 
+          <fieldset className="space-y-2">
+            <legend className="text-xs font-medium text-slate-400">Training parameters</legend>
+            {parameterRows.map((row, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <input
+                  aria-label={`Parameter ${index + 1} name`}
+                  value={row.name}
+                  placeholder="N_ESTIMATORS"
+                  onChange={(event) =>
+                    setRows(parameterRows.map((r, i) => (i === index ? { ...r, name: event.target.value } : r)))
+                  }
+                  className="w-40 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 font-mono text-xs text-slate-100 focus:border-brand-500 focus:outline-none"
+                />
+                <span className="text-slate-500">=</span>
+                <input
+                  aria-label={`Parameter ${index + 1} value`}
+                  value={row.value}
+                  placeholder="300"
+                  onChange={(event) =>
+                    setRows(parameterRows.map((r, i) => (i === index ? { ...r, value: event.target.value } : r)))
+                  }
+                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 font-mono text-xs text-slate-100 focus:border-brand-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove parameter ${index + 1}`}
+                  onClick={() => setRows(parameterRows.filter((_, i) => i !== index))}
+                  className="rounded px-1.5 text-slate-500 hover:bg-slate-700 hover:text-slate-200"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setRows([...parameterRows, { name: '', value: '' }])}
+              className="text-xs text-brand-400 hover:text-brand-300"
+            >
+              + Add a parameter
+            </button>
+            <p className={`text-xs ${problem ? 'text-red-400' : 'text-slate-500'}`}>
+              {problem ??
+                'Each becomes a variable in the notebook, set after its parameters cell: numbers, true/false or text.'}
+            </p>
+          </fieldset>
+
+          {runSettings && (
+            <p className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+              {describePolicy(runSettings.policy)}{' '}
+              <span className="text-slate-500">Change it in the project’s deployment rules.</span>
+            </p>
+          )}
+
           <p className="text-xs text-slate-500">
             The version is assigned automatically. If the notebook does not declare{' '}
             <code className="rounded bg-slate-900 px-1 py-0.5 font-mono text-slate-300">DATASET_PATH</code>{' '}
@@ -157,7 +270,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
             </button>
             <button
               type="submit"
-              disabled={!nameValid || mutation.isPending}
+              disabled={!nameValid || Boolean(problem) || mutation.isPending}
               className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500 disabled:opacity-50"
             >
               {mutation.isPending && <Spinner size="sm" />}

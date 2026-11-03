@@ -237,6 +237,28 @@ export interface ModelCard {
   note?: string;
 }
 
+/** When a project's model goes to production. */
+export interface DeployPolicy {
+  auto_deploy: boolean;
+  /** Any metric the notebook logs to MLflow. */
+  metric: string;
+  threshold: number;
+  /** Whether a higher or a lower value is better (errors like RMSE: lower). */
+  direction: 'higher' | 'lower';
+  /** Also require beating the version serving now. */
+  must_beat_serving: boolean;
+}
+
+export interface RunSettings {
+  policy: DeployPolicy;
+  /** The project set no policy and uses the platform's. */
+  is_default: boolean;
+  metrics_available: string[];
+  last_parameters: Record<string, TrainingParameter>;
+}
+
+export type TrainingParameter = number | string | boolean;
+
 /** One version of a model: a run that registered an artifact, deployed or not. */
 export interface ModelVersion {
   version: string;
@@ -252,6 +274,7 @@ export interface ModelVersion {
   deployed_at: string | null;
   is_active: boolean;
   deployable: boolean;
+  parameters?: Record<string, TrainingParameter>;
 }
 
 export interface PredictionResult {

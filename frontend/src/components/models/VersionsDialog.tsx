@@ -85,6 +85,7 @@ export default function VersionsDialog({ modelName, onClose }: { modelName: stri
                     <th key={name} scope="col" className="px-4 py-2 text-right font-medium">{name}</th>
                   ))}
                   <th scope="col" className="px-4 py-2 font-medium">Trained on</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Parameters</th>
                   <th scope="col" className="px-4 py-2 font-medium">Code</th>
                   <th scope="col" className="px-4 py-2" />
                 </tr>
@@ -176,6 +177,11 @@ function VersionRow({
         );
       })}
       <td className="px-4 py-2.5 text-slate-400">{version.input_label || '—'}</td>
+      <td className="max-w-[14rem] truncate px-4 py-2.5 font-mono text-[11px] text-slate-400">
+        {Object.entries(version.parameters ?? {})
+          .map(([name, value]) => `${name}=${value}`)
+          .join(' ') || '—'}
+      </td>
       <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[11px] text-slate-500">
         {version.branch || '—'}
         {version.commit_sha && ` @ ${truncate(version.commit_sha, 7)}`}

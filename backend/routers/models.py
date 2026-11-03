@@ -394,6 +394,7 @@ def list_versions(
             commit_sha=run.commit_sha,
             input_label=str((run.mounted_input or {}).get("label", "")),
             deployable=bool(mlflow_run_id),
+            parameters=dict(run.parameters or {}),
         )
 
     for run in runs:

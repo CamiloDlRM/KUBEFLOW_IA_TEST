@@ -256,6 +256,21 @@ The pipeline injects these variables via papermill:
 | `TRAINING_FEATURES_PATH` | Optional. Write the exact frame passed to `fit()` here (`X_train.to_parquet(TRAINING_FEATURES_PATH)`) and the model's test page shows each input's training range and what the model answers across it |
 | `MODEL_NOTES_PATH` | Optional. Write a JSON of what the inputs and answers mean — `{"target": {"name", "description"}, "inputs": {name: {"description", "unit"}}, "classes": {label: meaning}}` — and the test page shows it beside each input |
 
+**Training parameters.** "Run pipeline" takes any number of `NAME = value`
+pairs (numbers, `true`/`false` or text). Each is injected as a variable after
+the notebook's parameters cell, so a notebook can read `N_ESTIMATORS` instead
+of hard-coding it. The platform's own names above cannot be overwritten. Every
+version on the model's Versions page shows the parameters it was trained with.
+
+**When a model deploys** is the project's decision, under *Deployment rules*
+on the project page: auto-deploy on or off, the deciding metric (any the
+notebook logs with `mlflow.log_metric`, not only `accuracy`), its bar, whether
+higher or lower is better, and whether a new version must also beat the one
+serving. A project that sets nothing deploys on `accuracy >= MIN_ACCURACY_THRESHOLD`,
+as before. Each run records why it did or did not deploy (`deploy_reason` in
+its metrics), and a version that missed the bar can still be deployed by hand
+from the model's Versions.
+
 See `notebooks/example_notebook.ipynb` for a minimal example, and
 `notebooks/example_dataset_notebook.ipynb` for one that consumes `DATASET_PATH`.
 

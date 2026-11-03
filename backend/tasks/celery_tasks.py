@@ -226,6 +226,45 @@ def _build_model_card(
     return f"Described {len(card.get('inputs', []))} input(s) for the test page."
 
 
+def _deploy_decision(
+    project_id: int | None, model_name: str, metrics: dict[str, Any]
+) -> tuple[bool, str]:
+    """Apply the project's deployment policy to a run's metrics.
+
+    The version serving now is looked up only when the policy asks to beat it.
+    """
+    from sqlmodel import Session, select
+
+    from core.deploy_policy import DeployPolicy, PolicyError, decide
+    from db import engine
+    from models.schemas import ModelDeployment, Pipeline, Project
+
+    fallback = DeployPolicy.defaults(
+        auto_deploy=settings.auto_deploy_on_success, threshold=settings.min_accuracy_threshold
+    )
+    with Session(engine) as session:
+        project = session.get(Project, project_id) if project_id is not None else None
+        try:
+            policy = DeployPolicy.parse(project.deploy_policy if project else {}, fallback=fallback)
+        except PolicyError:
+            policy = fallback
+        serving: float | None = None
+        if policy.must_beat_serving:
+            active = session.exec(
+                select(ModelDeployment).where(
+                    ModelDeployment.model_name == model_name,
+                    ModelDeployment.is_active == True,  # noqa: E712
+                )
+            ).first()
+            if active is not None:
+                run = session.get(Pipeline, active.pipeline_id) if active.pipeline_id else None
+                value = (run.metrics or {}).get(policy.metric) if run else None
+                if value is None and policy.metric == "accuracy":
+                    value = active.accuracy
+                serving = float(value) if isinstance(value, (int, float)) else None
+    return decide(policy, metrics, serving)
+
+
 def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:
     """Fetch a run's training notebook from GitHub at a given ref."""
     import base64
@@ -654,6 +693,7 @@ def run_pipeline(
             requested_model_name = pipeline_row.requested_model_name
             notebook_path = pipeline_row.notebook_path
             project_id = pipeline_row.project_id
+            run_parameters = dict(pipeline_row.parameters or {})
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
@@ -954,7 +994,11 @@ def run_pipeline(
 
             # Execute with papermill — pass run_id so the notebook
             # logs metrics into the same MLflow run.
+            # The person's training parameters first, so the platform's own
+            # names below always win: the API refuses reserved names, and this
+            # holds even for a row written some other way.
             parameters: dict[str, Any] = {
+                **run_parameters,
                 "MODEL_OUTPUT_PATH": model_output_path,
                 "PIPELINE_ID": pipeline_id,
                 "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri,
@@ -1076,10 +1120,9 @@ def run_pipeline(
 
             # Phase 5: Auto-deploy
             deployed = False
-            if (
-                settings.auto_deploy_on_success
-                and accuracy >= settings.min_accuracy_threshold
-            ):
+            should_deploy, deploy_reason = _deploy_decision(project_id, model_name, metrics)
+            metrics["deploy_reason"] = deploy_reason
+            if should_deploy:
                 _phase("deploy", "running", f"Deploying model '{model_name}' to model server...")
                 log.info("pipeline.phase.deploy.start", accuracy=accuracy)
 
@@ -1131,8 +1174,7 @@ def run_pipeline(
                     _phase("deploy", "failed", str(exc))
                     log.warning("pipeline.phase.deploy.failed", error=str(exc))
             else:
-                reason = "auto_deploy disabled" if not settings.auto_deploy_on_success else f"accuracy {accuracy} < {settings.min_accuracy_threshold}"
-                log.info("pipeline.deploy.skipped", reason=reason)
+                log.info("pipeline.deploy.skipped", reason=deploy_reason)
 
         # Mark success
         metrics["deployed"] = deployed

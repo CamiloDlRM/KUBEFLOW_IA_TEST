@@ -44,6 +44,9 @@ import type {
   PipelineInputState,
   RepoNotebook,
   ModelVersion,
+  DeployPolicy,
+  RunSettings,
+  TrainingParameter,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -239,10 +242,27 @@ export async function getProjects(): Promise<Project[]> {
 export async function runProject(
   projectId: number,
   modelName: string,
+  parameters: Record<string, TrainingParameter> = {},
 ): Promise<TriggerAccepted> {
   const { data } = await apiClient.post<TriggerAccepted>(`/projects/${projectId}/run`, {
     model_name: modelName,
+    parameters,
   });
+  return data;
+}
+
+/** The project's deployment policy, its runs' metrics and its last parameters. */
+export async function getRunSettings(projectId: number): Promise<RunSettings> {
+  const { data } = await apiClient.get<RunSettings>(`/projects/${projectId}/run-settings`);
+  return data;
+}
+
+/** Change part of the policy, or `{ reset: true }` to go back to the platform's. */
+export async function setDeployPolicy(
+  projectId: number,
+  changes: Partial<DeployPolicy> & { reset?: boolean },
+): Promise<RunSettings> {
+  const { data } = await apiClient.put<RunSettings>(`/projects/${projectId}/deploy-policy`, changes);
   return data;
 }
 

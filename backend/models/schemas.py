@@ -141,6 +141,10 @@ class Project(SQLModel, table=True):
     #: ``{"layer": "silver", "source_id": 2}`` for one source's silver. Empty
     #: means the project's active dataset. See :mod:`core.pipeline_input`.
     pipeline_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: When this project's model deploys: on or off, the metric that decides,
+    #: its bar and direction, whether it must beat the version serving. Empty
+    #: means the platform's defaults. See :mod:`core.deploy_policy`.
+    deploy_policy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class Repository(SQLModel, table=True):
@@ -211,6 +215,9 @@ class Pipeline(SQLModel, table=True):
     model_name: str = SQLField(default="", index=True)
     model_version: str = SQLField(default="")
     mlflow_run_id: str = SQLField(default="")
+    #: Training parameters this run was launched with, injected into the
+    #: notebook alongside the platform's own.
+    parameters: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -536,6 +543,8 @@ class ProjectRunRequest(BaseModel):
     model_name: str = Field(
         ..., description="Name of the model this run produces (letters, digits, _ . -)."
     )
+    #: Injected into the notebook as variables, e.g. ``{"N_ESTIMATORS": 300}``.
+    parameters: dict[str, int | float | str | bool] = Field(default_factory=dict)
 
 
 class ProjectResponse(BaseModel):
@@ -631,6 +640,32 @@ class ModelVersionResponse(BaseModel):
     is_active: bool = False
     #: Has an artifact to load. A version without one is listed, not offered.
     deployable: bool = True
+    #: The training parameters it was launched with.
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeployPolicyRequest(BaseModel):
+    """A project's deployment policy. Fields left out keep their value."""
+
+    auto_deploy: bool | None = None
+    metric: str | None = None
+    threshold: float | None = None
+    direction: str | None = None
+    must_beat_serving: bool | None = None
+    #: True puts the project back on the platform's defaults.
+    reset: bool = False
+
+
+class RunSettingsResponse(BaseModel):
+    """What a run of this project will do with its model, and how to tune it."""
+
+    policy: dict[str, Any]
+    #: The project has not set a policy and uses the platform's.
+    is_default: bool
+    #: Metrics the project's runs have logged, for choosing the deciding one.
+    metrics_available: list[str] = Field(default_factory=list)
+    #: The parameters of the latest run, to start the next one from.
+    last_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +727,7 @@ class PipelineResponse(BaseModel):
     finished_at: datetime | None
     phases: list[dict[str, Any]]
     metrics: dict[str, Any]
+    parameters: dict[str, Any] = Field(default_factory=dict)
     #: Whose run this is: the owner of its project (and repository).
     owner_username: str | None = None
     mounted_input: dict[str, Any] = Field(default_factory=dict)
