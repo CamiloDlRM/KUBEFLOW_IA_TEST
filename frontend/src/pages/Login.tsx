@@ -5,15 +5,19 @@ import { useAuth } from '../context/AuthContext';
 import MicroSlats from '@/components/MicroSlats';
 import { useMediaQuery } from 'react-responsive';
 import { ArrowLeft } from 'lucide-react';
+import { GITHUB_LOGIN_URL } from '../api/client';
+import { GithubIcon } from '@/components/AuthProviderIcon';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, register } = useAuth();
   const navigate = useNavigate();
   const isMobile = useMediaQuery({ maxWidth: 768 });
 
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [githubToken, setGithubToken] = useState('');
+  const [usernameFocused, setUsernameFocused] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,14 +26,13 @@ export default function Login() {
     e.preventDefault();
     setError('');
 
-    if (isRegistering) {
-      setError('Public account creation is not available yet.');
-      return;
-    }
-
     setLoading(true);
     try {
-      await login({ username, password });
+      if (isRegistering) {
+        await register({ username, email, password, github_token: githubToken.trim() });
+      } else {
+        await login({ username, password });
+      }
       navigate('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -107,6 +110,9 @@ export default function Login() {
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  onFocus={() => setUsernameFocused(true)}
+                  onBlur={() => setUsernameFocused(false)}
+                  aria-describedby="username-hint"
                   placeholder=" "
                   className="peer w-full rounded-lg border border-slate-700 bg-slate-800 px-3 pb-2 pt-5 font-body2 text-sm text-slate-100 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
                 />
@@ -117,6 +123,27 @@ export default function Login() {
                   Username
                 </label>
               </div>
+              <AnimatePresence initial={false}>
+                {usernameFocused && (
+                  <motion.p
+                    id="username-hint"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className="mt-2 overflow-hidden rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-3 py-2 font-body2 text-xs text-indigo-200"
+                  >
+                    {isRegistering ? (
+                      <>Your username will be saved as <strong>{username.replace(/@[gt]$/, '') || 'name'}@t</strong>. Use it with <strong>@t</strong> every time you sign in.</>
+                    ) : (
+                      <>
+                        Signed up with a password? Type your username ending in <strong>@t</strong> (e.g. <strong>wil@t</strong>).
+                        Using GitHub? Just press <strong>Continue with GitHub</strong> below: no username needed.
+                      </>
+                    )}
+                  </motion.p>
+                )}
+              </AnimatePresence>
             </div>
 
             <AnimatePresence initial={false} mode="popLayout">
@@ -144,6 +171,24 @@ export default function Login() {
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 bg-slate-800 px-1 font-body2 text-sm text-slate-400 transition-all peer-focus:top-2 peer-focus:translate-y-0 peer-focus:text-xs peer-focus:text-brand-500 peer-[:not(:placeholder-shown)]:top-2 peer-[:not(:placeholder-shown)]:translate-y-0 peer-[:not(:placeholder-shown)]:text-xs"
                   >
                     Email
+                  </label>
+                </div>
+                <div className="relative mt-4">
+                  <input
+                    id="github-token"
+                    type="password"
+                    autoComplete="off"
+                    required
+                    value={githubToken}
+                    onChange={(e) => setGithubToken(e.target.value)}
+                    placeholder=" "
+                    className="peer w-full rounded-lg border border-slate-700 bg-slate-800 px-3 pb-2 pt-5 font-body2 text-sm text-slate-100 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                  />
+                  <label
+                    htmlFor="github-token"
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 bg-slate-800 px-1 font-body2 text-sm text-slate-400 transition-all peer-focus:top-2 peer-focus:translate-y-0 peer-focus:text-xs peer-focus:text-brand-500 peer-[:not(:placeholder-shown)]:top-2 peer-[:not(:placeholder-shown)]:translate-y-0 peer-[:not(:placeholder-shown)]:text-xs"
+                  >
+                    GitHub token (ghp_…)
                   </label>
                 </div>
                 </motion.div>
@@ -183,12 +228,25 @@ export default function Login() {
 
             <button
               type="submit"
-              disabled={loading || isRegistering}
+              disabled={loading}
               className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-3.5 text-base font-semibold text-white shadow-xl shadow-indigo-600/30 transition-all duration-300 ease-in hover:scale-[1.02] hover:shadow-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? 'Signing in…' : isRegistering ? 'Public registration coming soon' : 'Sign in'}
+              {loading ? (isRegistering ? 'Creating account…' : 'Signing in…') : isRegistering ? 'Create account' : 'Sign in'}
             </button>
           </motion.form>
+
+          <div className="my-4 flex items-center gap-3 font-body2 text-xs text-slate-500">
+            <span className="h-px flex-1 bg-slate-800" />
+            or
+            <span className="h-px flex-1 bg-slate-800" />
+          </div>
+          <a
+            href={GITHUB_LOGIN_URL}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-8 py-3 font-body2 text-sm font-semibold text-slate-100 transition hover:border-indigo-500 hover:bg-slate-700"
+          >
+            <GithubIcon className="h-4 w-4" />
+            Continue with GitHub
+          </a>
 
           <AnimatePresence mode="wait" initial={false}>
             <motion.div

@@ -11,19 +11,24 @@ export default function Register() {
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [githubToken, setGithubToken] = useState('');
+  const [usernameFocused, setUsernameFocused] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!inviteToken) {
-      setError('No invite token found in the URL. Ask an admin for a valid invite link.');
-      return;
-    }
     setError('');
     setLoading(true);
     try {
-      await register({ username, password, invite_token: inviteToken });
+      await register({
+        username,
+        password,
+        email,
+        github_token: githubToken.trim(),
+        invite_token: inviteToken || undefined,
+      });
       navigate('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -41,12 +46,6 @@ export default function Register() {
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
-          {!inviteToken && (
-            <div className="mb-4 rounded-lg bg-yellow-500/10 px-3 py-2 text-sm text-yellow-400">
-              No invite token in the URL. This link may be invalid or incomplete.
-            </div>
-          )}
-
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="username" className="mb-1 block text-xs font-medium text-slate-400">
@@ -61,8 +60,47 @@ export default function Register() {
                 maxLength={64}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                onFocus={() => setUsernameFocused(true)}
+                onBlur={() => setUsernameFocused(false)}
+                aria-describedby="username-hint"
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
                 placeholder="choose-a-username"
+              />
+              {usernameFocused && (
+                <p id="username-hint" className="mt-2 rounded-lg bg-brand-500/10 px-3 py-2 text-xs text-brand-300">
+                  Your username will be saved as <strong>{username.replace(/@[gt]$/, '') || 'name'}@t</strong>.
+                  Use it with <strong>@t</strong> every time you sign in.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="email" className="mb-1 block text-xs font-medium text-slate-400">
+                Email
+              </label>
+              <input
+                id="email"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                placeholder="you@example.com"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="github-token" className="mb-1 block text-xs font-medium text-slate-400">
+                GitHub token
+              </label>
+              <input
+                id="github-token"
+                type="password"
+                required
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                placeholder="ghp_..."
               />
             </div>
 
@@ -90,7 +128,7 @@ export default function Register() {
 
             <button
               type="submit"
-              disabled={loading || !inviteToken}
+              disabled={loading}
               className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-50"
             >
               {loading ? 'Creating account…' : 'Create account'}

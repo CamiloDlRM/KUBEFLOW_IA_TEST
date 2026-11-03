@@ -31,10 +31,6 @@ async function openForm() {
 
 async function fillForm(url = 'https://github.com/testuser/newrepo') {
   await userEvent.type(screen.getByLabelText(/GitHub Repository URL/i), url);
-  await userEvent.type(
-    screen.getByLabelText(/GitHub Personal Access Token/i),
-    'ghp_test1234567890',
-  );
 }
 
 describe('AddRepository', () => {
@@ -52,7 +48,7 @@ describe('AddRepository', () => {
     );
   });
 
-  it('asks for a repository and a token, and nothing else', async () => {
+  it('asks only for a repository URL, and nothing else', async () => {
     // A repository no longer carries a notebook: it is registered once, and a
     // project chooses a notebook inside it when it links. Asking for a path
     // here would be asking for the old concept back.
@@ -60,7 +56,7 @@ describe('AddRepository', () => {
     await openForm();
 
     expect(screen.getByLabelText(/GitHub Repository URL/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/GitHub Personal Access Token/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/GitHub Personal Access Token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Notebook Path/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Register Repository/i })).toBeInTheDocument();
   });
@@ -76,30 +72,6 @@ describe('AddRepository', () => {
     await waitFor(() => {
       expect(screen.getByText(/valid GitHub repository URL/i)).toBeInTheDocument();
     });
-  });
-
-  it('shows token field as password type by default', async () => {
-    renderWithProviders();
-    await openForm();
-
-    expect(screen.getByLabelText(/GitHub Personal Access Token/i)).toHaveAttribute(
-      'type',
-      'password',
-    );
-  });
-
-  it('toggles token visibility on show/hide click', async () => {
-    renderWithProviders();
-    await openForm();
-
-    const tokenInput = screen.getByLabelText(/GitHub Personal Access Token/i);
-    expect(tokenInput).toHaveAttribute('type', 'password');
-
-    await userEvent.click(screen.getByRole('button', { name: /Show/i }));
-    expect(tokenInput).toHaveAttribute('type', 'text');
-
-    await userEvent.click(screen.getByRole('button', { name: /Hide/i }));
-    expect(tokenInput).toHaveAttribute('type', 'password');
   });
 
   it('registers the repository and points at its branches and notebooks', async () => {
