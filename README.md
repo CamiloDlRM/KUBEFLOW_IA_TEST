@@ -359,12 +359,13 @@ app. It refreshes every 30 seconds, so a run in progress updates the charts as
 it goes. (It used to be a page of its own called "Dashboards", one nav item
 below the page called "Dashboard"; `/dashboards` still redirects there.)
 
-Two dashboards are provisioned:
+Three dashboards are provisioned:
 
 | Dashboard | Who sees it | Contents |
 |-----------|-------------|----------|
 | **My Models** (`mlops-ml`) | everyone | Repositories, deployed models, last accuracy, success rate, accuracy over time and by branch, pipeline outcomes and durations, recent runs |
 | **Platform** (`mlops-ops`) | admins | Service health, request rate, error ratio, latency percentiles, in-flight requests, pipeline throughput and duration across the whole installation |
+| **Resources** (`mlops-resources`) | admins | CPU, memory, disk and load of the server; CPU, memory, memory-limit use and network of every container in the stack |
 
 ### How each user sees only their own data
 
@@ -414,6 +415,26 @@ and durations are read from Postgres instead: the Celery worker runs prefork
 with several children, each keeps its own metrics registry and only one of them
 can bind the exporter port, so the Prometheus counters would see a fraction of
 the runs. The database sees all of them.
+
+### Resources: CPU and memory
+
+Until now nothing scraped the machine: the backend's `/metrics` describes
+requests and pipelines, not how much CPU or memory anything uses. Two
+exporters do that now, both on the compose network only:
+
+| Service | Image | Reads | Prometheus job |
+|---|---|---|---|
+| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.49.1` | each container's cgroups, labelled by container name (`mlops-*`) | `cadvisor` |
+| `node-exporter` | `prom/node-exporter:v1.8.2` | the host: CPU, memory, filesystems, load | `node` |
+
+The **Resources** dashboard reads them. It is admin-only by the same rule as
+Platform: its PromQL names no model, and the proxy refuses such queries to
+members. On Docker Desktop both exporters run inside Docker's VM, so "host"
+there means that VM; on the Linux server it is the real host.
+
+```bash
+docker compose up -d cadvisor node-exporter prometheus grafana
+```
 
 ### Turning it off
 

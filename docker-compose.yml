@@ -341,6 +341,48 @@ services:
       - mlops-network
     restart: unless-stopped
 
+  # ---------- Resource metrics: containers and host (admin only) ----------
+  #
+  # Prometheus scraped only the platform's own counters, so nothing said how
+  # much CPU or memory any container, or the server, was using. cAdvisor reads
+  # each container's cgroups; node-exporter reads the host. Neither is
+  # published: Prometheus reaches them on the compose network, and the
+  # dashboard over them is admin-only (core/grafana_queries.py refuses PromQL
+  # that names no model to members).
+  #
+  # On Docker Desktop (Windows/macOS) both run inside Docker's VM, so "host"
+  # means that VM, not the laptop. On the Linux server they see the real host.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: mlops-cadvisor
+    command:
+      - --housekeeping_interval=15s
+      - --docker_only=true
+    # Reading every container's cgroups needs it; this container exposes
+    # nothing outside the compose network.
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: mlops-node-exporter
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro
+    networks:
+      - mlops-network
+    restart: unless-stopped
+
   # ---------- Grafana (dashboards, embedded in the app) ----------
   # Authentication is delegated to the backend: it validates the user's JWT and
   # forwards the identity in the auth-proxy header. Grafana is NOT published

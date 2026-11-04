@@ -39,6 +39,12 @@ const DASHBOARD_TABS: DashboardTab[] = [
     blurb: 'Cluster-wide health of the MLOps platform services.',
     adminOnly: true,
   },
+  {
+    uid: 'mlops-resources',
+    label: 'Resources',
+    blurb: 'CPU, memory, disk and network of the server and of every container in the stack.',
+    adminOnly: true,
+  },
 ];
 
 /**
