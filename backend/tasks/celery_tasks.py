@@ -137,6 +137,10 @@ def _update_pipeline_db(
     finished_at: datetime | None = None,
     mounted_input: dict[str, Any] | None = None,
     cells: list[dict[str, Any]] | None = None,
+    model_card: dict[str, Any] | None = None,
+    model_name: str | None = None,
+    model_version: str | None = None,
+    mlflow_run_id: str | None = None,
 ) -> None:
     """Update pipeline record in the database via SQLModel (sync context)."""
     from sqlmodel import Session, select
@@ -163,8 +167,102 @@ def _update_pipeline_db(
             pipeline.mounted_input = mounted_input
         if cells is not None:
             pipeline.cells = cells
+        if model_card is not None:
+            pipeline.model_card = model_card
+        if model_name is not None:
+            pipeline.model_name = model_name
+        if model_version is not None:
+            pipeline.model_version = model_version
+        if mlflow_run_id is not None:
+            pipeline.mlflow_run_id = mlflow_run_id
         session.add(pipeline)
         session.commit()
+
+
+def _build_model_card(
+    pipeline_id: str,
+    model_path: str,
+    features_path: str,
+    notes_path: str,
+    client: Any,
+    mlflow_run_id: str,
+) -> str:
+    """Describe the trained model from the features its notebook wrote.
+
+    Never fails the run: the model trained and will deploy whether or not it
+    can be described. Returns one sentence for the register phase's log.
+    """
+    if not os.path.exists(features_path):
+        return (
+            "No training features written, so the test page cannot describe its "
+            "inputs (write them to TRAINING_FEATURES_PATH)."
+        )
+    if not os.path.exists(model_path):
+        return "No model file, so there is nothing to describe."
+    try:
+        import joblib
+        import pandas as pd
+
+        from core.model_card import annotate, describe
+
+        card = describe(joblib.load(model_path), pd.read_parquet(features_path))
+    except Exception as exc:  # noqa: BLE001 - a card is a courtesy, not a gate
+        logger.warning("pipeline.model_card.failed", pipeline_id=pipeline_id, error=str(exc))
+        return f"Could not describe the model's inputs: {exc}"
+
+    # Notes that do not parse cost the descriptions, not the card.
+    if os.path.exists(notes_path):
+        try:
+            with open(notes_path, encoding="utf-8") as handle:
+                card = annotate(card, json.load(handle))
+        except Exception as exc:  # noqa: BLE001
+            card["note"] = f"The model notes could not be read: {exc}"
+
+    _update_pipeline_db(pipeline_id, model_card=card)
+    try:
+        client.log_dict(mlflow_run_id, card, "model_card.json")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pipeline.model_card.not_logged", pipeline_id=pipeline_id, error=str(exc))
+    return f"Described {len(card.get('inputs', []))} input(s) for the test page."
+
+
+def _deploy_decision(
+    project_id: int | None, model_name: str, metrics: dict[str, Any]
+) -> tuple[bool, str]:
+    """Apply the project's deployment policy to a run's metrics.
+
+    The version serving now is looked up only when the policy asks to beat it.
+    """
+    from sqlmodel import Session, select
+
+    from core.deploy_policy import DeployPolicy, PolicyError, decide
+    from db import engine
+    from models.schemas import ModelDeployment, Pipeline, Project
+
+    fallback = DeployPolicy.defaults(
+        auto_deploy=settings.auto_deploy_on_success, threshold=settings.min_accuracy_threshold
+    )
+    with Session(engine) as session:
+        project = session.get(Project, project_id) if project_id is not None else None
+        try:
+            policy = DeployPolicy.parse(project.deploy_policy if project else {}, fallback=fallback)
+        except PolicyError:
+            policy = fallback
+        serving: float | None = None
+        if policy.must_beat_serving:
+            active = session.exec(
+                select(ModelDeployment).where(
+                    ModelDeployment.model_name == model_name,
+                    ModelDeployment.is_active == True,  # noqa: E712
+                )
+            ).first()
+            if active is not None:
+                run = session.get(Pipeline, active.pipeline_id) if active.pipeline_id else None
+                value = (run.metrics or {}).get(policy.metric) if run else None
+                if value is None and policy.metric == "accuracy":
+                    value = active.accuracy
+                serving = float(value) if isinstance(value, (int, float)) else None
+    return decide(policy, metrics, serving)
 
 
 def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:
@@ -461,12 +559,17 @@ def next_model_version(session: Any, model_name: str) -> str:
     """
     from sqlmodel import select
 
-    from models.schemas import ModelDeployment
+    from models.schemas import ModelDeployment, Pipeline
 
-    versions = session.exec(
+    deployed = session.exec(
         select(ModelDeployment.version).where(ModelDeployment.model_name == model_name)
     ).all()
-    numbers = [int(v) for v in versions if str(v).isdigit()]
+    # Runs that registered without deploying are versions too, so they count:
+    # otherwise the next run would take the number of one that never shipped.
+    registered = session.exec(
+        select(Pipeline.model_version).where(Pipeline.model_name == model_name)
+    ).all()
+    numbers = [int(v) for v in [*deployed, *registered] if str(v).isdigit()]
     return str(max(numbers, default=0) + 1)
 
 
@@ -590,6 +693,7 @@ def run_pipeline(
             requested_model_name = pipeline_row.requested_model_name
             notebook_path = pipeline_row.notebook_path
             project_id = pipeline_row.project_id
+            run_parameters = dict(pipeline_row.parameters or {})
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
@@ -656,6 +760,7 @@ def run_pipeline(
                 or config["model_name"]
             )
             model_version = next_model_version(session, model_name)
+        _update_pipeline_db(pipeline_id, model_name=model_name, model_version=model_version)
         _phase(
             "validate",
             "success",
@@ -681,6 +786,13 @@ def run_pipeline(
             input_path = os.path.join(tmpdir, "input.ipynb")
             output_path = os.path.join(tmpdir, "output.ipynb")
             model_output_path = os.path.join(tmpdir, "model.joblib")
+            # Where the notebook may write the frame it fitted on, so the
+            # platform can say what the model expects. Optional: a notebook
+            # that writes nothing still trains and deploys, without a card.
+            features_output_path = os.path.join(tmpdir, "training_features.parquet")
+            # And what those features and the answers mean, in words. Also
+            # optional: without it the card has ranges but no descriptions.
+            notes_output_path = os.path.join(tmpdir, "model_notes.json")
 
             # Write notebook to disk
             with open(input_path, "w") as f:
@@ -882,11 +994,17 @@ def run_pipeline(
 
             # Execute with papermill — pass run_id so the notebook
             # logs metrics into the same MLflow run.
+            # The person's training parameters first, so the platform's own
+            # names below always win: the API refuses reserved names, and this
+            # holds even for a row written some other way.
             parameters: dict[str, Any] = {
+                **run_parameters,
                 "MODEL_OUTPUT_PATH": model_output_path,
                 "PIPELINE_ID": pipeline_id,
                 "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri,
                 "MLFLOW_RUN_ID": mlflow_run_id,
+                "TRAINING_FEATURES_PATH": features_output_path,
+                "MODEL_NOTES_PATH": notes_output_path,
             }
             # Only injected when the repository has an active dataset, so
             # notebooks without a DATASET_PATH parameter keep working.
@@ -969,6 +1087,19 @@ def run_pipeline(
 
             accuracy = metrics.get("accuracy", 0.0)
 
+            # From here the run is a version that can be deployed by hand,
+            # whether or not it clears the bar below.
+            _update_pipeline_db(pipeline_id, mlflow_run_id=mlflow_run_id)
+
+            card_note = _build_model_card(
+                pipeline_id,
+                model_output_path,
+                features_output_path,
+                notes_output_path,
+                client,
+                mlflow_run_id,
+            )
+
             # Ensure the MLflow run is terminated (no-op if already ended
             # by the notebook).
             try:
@@ -976,7 +1107,11 @@ def run_pipeline(
             except Exception:
                 pass
 
-            _phase("register", "success", f"Model registered in MLflow run {mlflow_run_id}. Accuracy: {accuracy:.4f}")
+            _phase(
+                "register",
+                "success",
+                f"Model registered in MLflow run {mlflow_run_id}. Accuracy: {accuracy:.4f}. {card_note}",
+            )
             log.info(
                 "pipeline.phase.register.done",
                 mlflow_run_id=mlflow_run_id,
@@ -985,10 +1120,9 @@ def run_pipeline(
 
             # Phase 5: Auto-deploy
             deployed = False
-            if (
-                settings.auto_deploy_on_success
-                and accuracy >= settings.min_accuracy_threshold
-            ):
+            should_deploy, deploy_reason = _deploy_decision(project_id, model_name, metrics)
+            metrics["deploy_reason"] = deploy_reason
+            if should_deploy:
                 _phase("deploy", "running", f"Deploying model '{model_name}' to model server...")
                 log.info("pipeline.phase.deploy.start", accuracy=accuracy)
 
@@ -1040,8 +1174,7 @@ def run_pipeline(
                     _phase("deploy", "failed", str(exc))
                     log.warning("pipeline.phase.deploy.failed", error=str(exc))
             else:
-                reason = "auto_deploy disabled" if not settings.auto_deploy_on_success else f"accuracy {accuracy} < {settings.min_accuracy_threshold}"
-                log.info("pipeline.deploy.skipped", reason=reason)
+                log.info("pipeline.deploy.skipped", reason=deploy_reason)
 
         # Mark success
         metrics["deployed"] = deployed

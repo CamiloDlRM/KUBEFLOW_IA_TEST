@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
@@ -141,6 +141,10 @@ class Project(SQLModel, table=True):
     #: ``{"layer": "silver", "source_id": 2}`` for one source's silver. Empty
     #: means the project's active dataset. See :mod:`core.pipeline_input`.
     pipeline_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: When this project's model deploys: on or off, the metric that decides,
+    #: its bar and direction, whether it must beat the version serving. Empty
+    #: means the platform's defaults. See :mod:`core.deploy_policy`.
+    deploy_policy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class Repository(SQLModel, table=True):
@@ -199,6 +203,21 @@ class Pipeline(SQLModel, table=True):
     #: after execution what each cell printed. Stored rather than re-read from
     #: GitHub, because the branch moves and the code that ran does not.
     cells: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
+    #: What the trained model expects and how it answers across that: its
+    #: inputs in order with their training ranges, and one sweep per input.
+    #: Built by the worker from the features the notebook wrote; empty when it
+    #: wrote none. See :mod:`core.model_card`.
+    model_card: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The model this run trained and the version it was given, fixed at
+    #: validation; and the MLflow run holding its artifact, once registered.
+    #: Together they make every registered run a version that can be deployed,
+    #: whether or not it cleared the auto-deploy bar.
+    model_name: str = SQLField(default="", index=True)
+    model_version: str = SQLField(default="")
+    mlflow_run_id: str = SQLField(default="")
+    #: Training parameters this run was launched with, injected into the
+    #: notebook alongside the platform's own.
+    parameters: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -524,6 +543,8 @@ class ProjectRunRequest(BaseModel):
     model_name: str = Field(
         ..., description="Name of the model this run produces (letters, digits, _ . -)."
     )
+    #: Injected into the notebook as variables, e.g. ``{"N_ESTIMATORS": 300}``.
+    parameters: dict[str, int | float | str | bool] = Field(default_factory=dict)
 
 
 class ProjectResponse(BaseModel):
@@ -581,11 +602,70 @@ class LoadModelRequest(BaseModel):
 
 
 class RollbackRequest(BaseModel):
-    """Request to rollback a model to a previous version."""
+    """Which version of a model to serve.
+
+    ``pipeline_id`` names it exactly: the run that trained it. ``version`` is
+    kept for callers from before versions were listed.
+    """
 
     model_config = ConfigDict(strict=True)
 
-    version: str = Field(..., description="MLflow model version to rollback to.")
+    pipeline_id: str | None = Field(default=None, description="The run whose artifact to serve.")
+    version: str | None = Field(default=None, description="The model version to serve.")
+
+    @model_validator(mode="after")
+    def _names_one(self) -> "RollbackRequest":
+        if not self.pipeline_id and not self.version:
+            raise ValueError("Say which version: pipeline_id or version.")
+        return self
+
+
+class ModelVersionResponse(BaseModel):
+    """One version of a model: a run that registered an artifact."""
+
+    version: str
+    pipeline_id: str | None = None
+    mlflow_run_id: str = ""
+    trained_at: datetime | None = None
+    #: Every numeric metric the notebook logged, accuracy included.
+    metrics: dict[str, float] = Field(default_factory=dict)
+    accuracy: float | None = None
+    branch: str = ""
+    commit_sha: str = ""
+    #: What it trained on, e.g. "gold v3".
+    input_label: str = ""
+    #: The last time it was put in service, if it ever was.
+    deployed_at: datetime | None = None
+    #: Serving now.
+    is_active: bool = False
+    #: Has an artifact to load. A version without one is listed, not offered.
+    deployable: bool = True
+    #: The training parameters it was launched with.
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeployPolicyRequest(BaseModel):
+    """A project's deployment policy. Fields left out keep their value."""
+
+    auto_deploy: bool | None = None
+    metric: str | None = None
+    threshold: float | None = None
+    direction: str | None = None
+    must_beat_serving: bool | None = None
+    #: True puts the project back on the platform's defaults.
+    reset: bool = False
+
+
+class RunSettingsResponse(BaseModel):
+    """What a run of this project will do with its model, and how to tune it."""
+
+    policy: dict[str, Any]
+    #: The project has not set a policy and uses the platform's.
+    is_default: bool
+    #: Metrics the project's runs have logged, for choosing the deciding one.
+    metrics_available: list[str] = Field(default_factory=list)
+    #: The parameters of the latest run, to start the next one from.
+    last_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +727,7 @@ class PipelineResponse(BaseModel):
     finished_at: datetime | None
     phases: list[dict[str, Any]]
     metrics: dict[str, Any]
+    parameters: dict[str, Any] = Field(default_factory=dict)
     #: Whose run this is: the owner of its project (and repository).
     owner_username: str | None = None
     mounted_input: dict[str, Any] = Field(default_factory=dict)
@@ -656,6 +737,7 @@ class PipelineDetailResponse(PipelineResponse):
     """One run, with the code it ran. Kept off the list, where it would be
     every notebook of every run on the page."""
     cells: list[dict[str, Any]] = Field(default_factory=list)
+    model_card: dict[str, Any] = Field(default_factory=dict)
 
 
 class PipelineListResponse(BaseModel):
@@ -752,6 +834,9 @@ class ModelDeploymentResponse(BaseModel):
     pipeline_id: str | None
     #: Whose model this is: the owner of the pipeline that trained it.
     owner_username: str | None = None
+    #: The card of the run that produced it — what to send it, in what range,
+    #: and what it answers across that. Empty for models trained before cards.
+    model_card: dict[str, Any] = Field(default_factory=dict)
 
 
 class PredictResponse(BaseModel):
@@ -760,6 +845,9 @@ class PredictResponse(BaseModel):
     prediction: list[Any]
     model_name: str
     version: str
+    #: Per row, the probability of each class, when the model can say. A
+    #: classifier's answer without its confidence reads the same at 34% as at 99%.
+    probabilities: list[dict[str, float]] | None = None
 
 
 class HealthResponse(BaseModel):

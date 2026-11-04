@@ -4,7 +4,7 @@ Register, list, and delete GitHub repositories with automatic webhook setup.
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
@@ -294,6 +294,7 @@ async def launch_pipeline(
     settings: AppSettings,
     session: Session,
     requested_model_name: str | None = None,
+    parameters: dict[str, Any] | None = None,
 ) -> WebhookAccepted:
     """Pin ``branch`` to its HEAD commit and enqueue a run of ``project``'s notebook.
 
@@ -340,6 +341,7 @@ async def launch_pipeline(
         commit_sha=commit_sha,
         branch=branch,
         requested_model_name=requested_model_name,
+        parameters=parameters or {},
     )
     session.add(pipeline)
     session.commit()

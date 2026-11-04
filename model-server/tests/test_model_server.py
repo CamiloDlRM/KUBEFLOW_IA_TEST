@@ -180,3 +180,48 @@ class TestHealthEndpoints:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
         assert resp.json()["models_loaded"] == 1
+
+
+class _Classifier:
+    """Just enough of a fitted sklearn classifier: classes and probabilities."""
+
+    classes_ = ["ambulatory", "inpatient"]
+
+    def predict(self, data):
+        return ["inpatient" if row[0] > 100 else "ambulatory" for row in data]
+
+    def predict_proba(self, data):
+        return [[0.1, 0.9] if row[0] > 100 else [0.8, 0.2] for row in data]
+
+
+class _Regressor:
+    def predict(self, data):
+        return [row[0] * 2 for row in data]
+
+
+class TestProbabilities:
+    """A classifier's answer comes with how sure it is."""
+
+    def _load(self, model):
+        from server import _models, _ModelEntry
+
+        _models["m"] = _ModelEntry(model=model, model_name="m", version="1", mlflow_run_id="r")
+
+    def test_each_row_carries_its_probability_per_class(self, model_server_client):
+        self._load(_Classifier())
+
+        body = model_server_client.post("/predict/m", json={"data": [[30.0], [400.0]]}).json()
+
+        assert body["prediction"] == ["ambulatory", "inpatient"]
+        assert body["probabilities"] == [
+            {"ambulatory": 0.8, "inpatient": 0.2},
+            {"ambulatory": 0.1, "inpatient": 0.9},
+        ]
+
+    def test_a_model_without_probabilities_still_answers(self, model_server_client):
+        self._load(_Regressor())
+
+        body = model_server_client.post("/predict/m", json={"data": [[3.0]]}).json()
+
+        assert body["prediction"] == [6.0]
+        assert body["probabilities"] is None

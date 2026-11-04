@@ -12,7 +12,7 @@ code.
 from __future__ import annotations
 
 import re
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,9 +33,11 @@ from db import get_session
 from models.schemas import (
     DataSource,
     Dataset,
+    DeployPolicyRequest,
     GoldTable,
     MessageResponse,
     NotebookCellsResponse,
+    Pipeline,
     PipelineInputRequest,
     PipelineInputResponse,
     Project,
@@ -46,6 +48,7 @@ from models.schemas import (
     ProjectResponse,
     ProjectUpdateRequest,
     Repository,
+    RunSettingsResponse,
     User,
     WebhookAccepted,
 )
@@ -318,9 +321,115 @@ async def run_project(
             detail="Build the gold layer in the Data Factory before running a pipeline.",
         )
 
+    from core.deploy_policy import PolicyError, clean_parameters
+
+    try:
+        parameters = clean_parameters(body.parameters)
+    except PolicyError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     return await launch_pipeline(
-        repo, project, project.branch, settings, session, requested_model_name=model_name
+        repo,
+        project,
+        project.branch,
+        settings,
+        session,
+        requested_model_name=model_name,
+        parameters=parameters,
     )
+
+
+def _platform_policy(settings: AppSettings) -> Any:
+    from core.deploy_policy import DeployPolicy
+
+    return DeployPolicy.defaults(
+        auto_deploy=settings.auto_deploy_on_success, threshold=settings.min_accuracy_threshold
+    )
+
+
+def _run_settings(session: Session, project: Project, settings: AppSettings) -> RunSettingsResponse:
+    from core.deploy_policy import DeployPolicy, PolicyError
+
+    fallback = _platform_policy(settings)
+    try:
+        policy = DeployPolicy.parse(project.deploy_policy, fallback=fallback)
+    except PolicyError:
+        policy = fallback
+    runs = session.exec(
+        select(Pipeline)
+        .where(Pipeline.project_id == project.id)
+        .order_by(Pipeline.started_at.desc())  # type: ignore[union-attr]
+        .limit(20)
+    ).all()
+    metrics = sorted(
+        {
+            name
+            for run in runs
+            for name, value in (run.metrics or {}).items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+    )
+    return RunSettingsResponse(
+        policy=policy.as_dict(),
+        is_default=not project.deploy_policy,
+        metrics_available=metrics,
+        last_parameters=dict(runs[0].parameters or {}) if runs else {},
+    )
+
+
+@router.get(
+    "/{project_id}/run-settings",
+    response_model=RunSettingsResponse,
+    summary="When this project's model deploys, and what its last run was given",
+)
+def get_run_settings(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> RunSettingsResponse:
+    """The project's deployment policy (or the platform's, if it set none),
+    the metrics its runs have logged, and the parameters of its latest run."""
+    project = get_visible_project_or_404(session, project_id, current_user)
+    return _run_settings(session, project, settings)
+
+
+@router.put(
+    "/{project_id}/deploy-policy",
+    response_model=RunSettingsResponse,
+    summary="Decide when this project's model goes to production",
+)
+def set_deploy_policy(
+    project_id: int,
+    body: DeployPolicyRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> RunSettingsResponse:
+    """Set auto-deploy, the deciding metric, its bar and direction, and
+    whether a new version must beat the one serving.
+
+    Applies from the next run on; a run already finished keeps the decision
+    it got. ``reset`` returns the project to the platform's defaults.
+    """
+    from core.deploy_policy import DeployPolicy, PolicyError
+
+    project = get_visible_project_or_404(session, project_id, current_user)
+    if body.reset:
+        project.deploy_policy = {}
+    else:
+        current = DeployPolicy.parse(project.deploy_policy, fallback=_platform_policy(settings))
+        changes = body.model_dump(exclude={"reset"}, exclude_none=True)
+        try:
+            policy = DeployPolicy.parse({**current.as_dict(), **changes}, fallback=current)
+        except PolicyError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        project.deploy_policy = policy.as_dict()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    logger.info("project.deploy_policy.set", project_id=project_id, policy=project.deploy_policy)
+    return _run_settings(session, project, settings)
 
 
 @router.delete(

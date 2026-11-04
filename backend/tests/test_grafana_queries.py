@@ -363,3 +363,32 @@ class TestModelDashboard:
         raw = _model_targets("rawSql")[0]
         with pytest.raises(QueryNotAllowed):
             authorize_query(_payload(_render(raw, "iris", "otheruser")), MEMBER)
+
+
+class TestResourcesDashboard:
+    """CPU and memory of every container is the platform's, not a tenant's."""
+
+    @staticmethod
+    def _exprs() -> list[str]:
+        document = json.loads((DASHBOARDS_DIR / "mlops-resources.json").read_text(encoding="utf-8"))
+        return [
+            target["expr"]
+            for panel in document["panels"]
+            for target in panel.get("targets", [])
+        ]
+
+    def test_every_panel_reads_prometheus(self):
+        document = json.loads((DASHBOARDS_DIR / "mlops-resources.json").read_text(encoding="utf-8"))
+        assert document["uid"] == "mlops-resources"
+        assert document["editable"] is False
+        assert {panel["datasource"]["uid"] for panel in document["panels"]} == {"mlops-prometheus"}
+
+    def test_a_member_cannot_run_any_of_its_queries(self):
+        for expr in self._exprs():
+            body = json.dumps({"queries": [{"refId": "A", "expr": expr}]}).encode()
+            with pytest.raises(QueryNotAllowed):
+                authorize_query(body, MEMBER, owns_model=lambda _name: True)
+
+    def test_an_admin_can(self):
+        for expr in self._exprs():
+            authorize_query(json.dumps({"queries": [{"refId": "A", "expr": expr}]}).encode(), ADMIN)

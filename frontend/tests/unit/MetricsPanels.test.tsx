@@ -87,6 +87,27 @@ describe('MetricsPanels', () => {
     );
   });
 
+  it('hides the resources dashboard from non-admin users', async () => {
+    // CPU and memory of every container is the whole platform, not a tenant's.
+    renderPage({ isAdmin: false });
+    await screen.findByTitle('Grafana dashboard: My Models');
+
+    expect(screen.queryByRole('button', { name: 'Resources' })).not.toBeInTheDocument();
+  });
+
+  it('lets admins see what the server and every container are using', async () => {
+    renderPage({ isAdmin: true });
+    await screen.findByTitle('Grafana dashboard: My Models');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resources' }));
+
+    const frame = await screen.findByTitle('Grafana dashboard: Resources');
+    expect(frame).toHaveAttribute(
+      'src',
+      `${API_BASE}/grafana/d/mlops-resources/?kiosk&theme=dark&refresh=30s&from=now-30d&to=now`,
+    );
+  });
+
   it('shows an actionable error and a retry when the embed never loads', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
