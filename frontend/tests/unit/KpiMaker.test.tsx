@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -132,8 +132,77 @@ describe('KpiMaker', () => {
     expect(screen.queryByText('create_chart')).toBeNull();
 
     await userEvent.click(toggle);
-    expect(screen.getByText('create_chart')).toBeInTheDocument();
+    // Said in words, with what it acted on; the raw call one click further.
+    const step = screen.getByRole('button', { name: /Created a chart/ });
+    expect(step).toHaveTextContent('“By class”');
+    expect(step).toHaveTextContent('create_chart');
+    expect(screen.queryByText(/chart 3/)).toBeNull();
+
+    await userEvent.click(step);
     expect(screen.getByText(/chart 3/)).toBeInTheDocument();
+  });
+
+  it('marks a step that failed, and counts the failures', async () => {
+    renderMaker(
+      conversation({
+        turns: [
+          turn({
+            calls: [
+              { name: 'generate_chart', arguments: { chart_name: 'Cost' }, result: '{"error": "validation_system_error"}' },
+              { name: 'generate_chart', arguments: { chart_name: 'Count' }, result: '{"chart_id": 5}' },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const toggle = await screen.findByRole('button', { name: /2 calls to Superset/ });
+    expect(toggle).toHaveTextContent('1 failed');
+    expect(toggle).toHaveTextContent('made 1 chart');
+
+    await userEvent.click(toggle);
+    expect(within(screen.getByRole('button', { name: /“Cost”/ })).getByLabelText('failed')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', { name: /“Count”/ })).getByLabelText('done')).toBeInTheDocument();
+  });
+
+  it('renders the answer’s formatting instead of showing its markup', async () => {
+    renderMaker(conversation({ turns: [turn({ summary: 'Built **two** charts:\n\n- by class\n- by month' })] }));
+
+    expect(await screen.findByText('two', { selector: 'strong' })).toBeInTheDocument();
+    expect(screen.getByText('by month')).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*two\*\*/)).toBeNull();
+  });
+
+  it('sends on Enter and keeps Shift+Enter for a new line', async () => {
+    renderMaker();
+    askForDashboard.mockResolvedValue(conversation({ turns: [turn({ prompt: 'cost', summary: 'Done.' })] }));
+
+    const box = await screen.findByLabelText(/What should the dashboard show/);
+    await userEvent.type(box, 'cost{Shift>}{Enter}{/Shift}per month');
+    expect(askForDashboard).not.toHaveBeenCalled();
+    expect(box).toHaveValue('cost\nper month');
+
+    await userEvent.type(box, '{Enter}');
+    expect(askForDashboard).toHaveBeenCalledWith(4, 'cost\nper month');
+  });
+
+  it('shows what was asked at once, before the answer arrives', async () => {
+    renderMaker();
+    askForDashboard.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(await screen.findByRole('textbox'), 'margin by ward{Enter}');
+
+    expect(await screen.findByText('margin by ward')).toBeInTheDocument();
+    expect(screen.getByText(/Working in Superset/)).toBeInTheDocument();
+  });
+
+  it('offers a first prompt to start from, without sending it', async () => {
+    renderMaker();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Encounters per month, split by class' }));
+
+    expect(screen.getByLabelText(/What should the dashboard show/)).toHaveValue('Encounters per month, split by class');
+    expect(askForDashboard).not.toHaveBeenCalled();
   });
 
   it('warns when the agent ran out of turns, because the dashboard is half-built', async () => {
@@ -162,6 +231,8 @@ describe('KpiMaker', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Build it' }));
 
     expect(await screen.findByText(/Superset is not configured/)).toBeInTheDocument();
+    // What was typed comes back, so it can be sent again.
+    expect(screen.getByRole('textbox')).toHaveValue('anything');
   });
 
   it('shows the dashboard once an exchange has built something', async () => {
