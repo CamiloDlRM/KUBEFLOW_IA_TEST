@@ -6,7 +6,7 @@ import { ReactFlow, Background, Controls, MarkerType, Position, Panel } from '@x
 import '@xyflow/react/dist/style.css';
 import type { Node, Edge } from '@xyflow/react';
 import { NOTEBOOK_PHASES } from '../components/canvas/phases';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 
 // React Flow's dark mode, tuned to the app's slate palette.
 const darkTheme = {
@@ -23,7 +23,7 @@ const darkTheme = {
 } as CSSProperties;
 
 const steps = [
-  { id: 'input', label: 'Input' }, ...NOTEBOOK_PHASES.map((phase) => ({ id: phase.id, label: phase.label })), { id: 'model', label: 'Model' }
+  { id: 'input', label: 'Input', caption: 'The data this pipeline trains on.' }, ...NOTEBOOK_PHASES.map((phase) => ({ id: phase.id, label: phase.label, caption:phase.caption })), { id: 'model', label: 'Model', caption: 'The trained model.' }
 ];
 
 const GAP = 180;
@@ -67,10 +67,10 @@ export default function PipelineCanva() {
     return <Navigate to={`/pipelines/canvas/${projects[0].id}`} replace />;
   }
 
-  const projectLabel = project?.name ?? (project ? 'Project not found' : 'Loading...');
+  const projectLabel = project?.name ?? (projects ? 'Project not found' : 'Loading...');
 
   return (
-    <div className="w-full h-full [&_.react-flow\_\_handle]:opacity-0">
+    <div className="relative w-full h-full [&_.react-flow\_\_handle]:opacity-0">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -114,6 +114,24 @@ export default function PipelineCanva() {
           </div>
         </Panel>
       </ReactFlow>
+      {
+        openNode === 'input' && (
+          <aside className="absolute inset-y-0 right-0 z-10 flex w-80 flex-col border-l border-slate-700 bg-slate-900/95 shadow-2xl backdrop-blur">
+            <header className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+              <div>
+                <h3 className="font-display text-base font-semibold text-slate-100">Input</h3>
+                <p className="mt-0.5 text-xs text-slate-500">The data this pipeline trains on.</p>
+              </div>
+              <button type="button" onClick={() => setOpenNode(null)} aria-label="Close" className="rounded-md p-1 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100">
+                <X size={16} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <p className="text-sm text-slate-400">The sources go here (step 7).</p>
+            </div>
+          </aside>
+        )
+      }
     </div>
   );
 }
