@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const navItems = [
@@ -24,6 +24,9 @@ function navLinkClass({ isActive }: { isActive: boolean }) {
 export default function Layout() {
   const { logout, isAdmin, currentUser } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+
+  const fullScreen = pathname.startsWith('/pipelines/canvas');
 
   function handleLogout() {
     logout();
@@ -95,7 +98,7 @@ export default function Layout() {
       </div>
 
       {/* Main content */}
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6 pt-16 md:pt-6">
+      <main className={`min-h-0 min-w-0 flex-1 ${fullScreen ? 'overflow-hidden pt-16 md:pt-0' : 'overflow-y-auto p-6 pt-16 md:pt-6'}`}>
         <Outlet />
       </main>
     </div>

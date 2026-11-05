@@ -55,7 +55,7 @@ export default function App() {
             not a step in making them. */}
         <Route path="/projects/:projectId/datasets" element={<Datasets />} />
         <Route path="/pipelines" element={<Pipelines />} />
-        <Route path="/pipelines/canvas" element={<PipelineCanva />} />
+        <Route path="/pipelines/canvas/:projectId?" element={<PipelineCanva />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/models" element={<Models />} />
         {/* The Grafana panels are a section of the dashboard now. Kept as a
