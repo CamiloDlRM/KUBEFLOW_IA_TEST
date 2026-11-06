@@ -32,3 +32,19 @@ scrape_configs:
       - targets: ["worker:9100"]
         labels:
           service: worker
+
+  # Every container's CPU, memory and network, labelled by container name
+  # (compose names them mlops-*). Read by the admin-only "Platform resources"
+  # dashboard.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          service: cadvisor
+
+  # The server the stack runs on: CPU, memory, disk, load.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          service: node-exporter

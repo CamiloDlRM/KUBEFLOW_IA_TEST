@@ -18,6 +18,8 @@ import Models from './pages/Models';
 import Admin from './pages/Admin';
 import Settings from './pages/Settings';
 import ConfirmChange from './pages/ConfirmChange';
+import GithubCallback from './pages/GithubCallback';
+import SetPassword from './pages/SetPassword';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -35,6 +37,8 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/confirm-change" element={<ConfirmChange />} />
+      <Route path="/auth/github" element={<GithubCallback />} />
+      <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
 
       {/* Protected routes */}
       <Route

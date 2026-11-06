@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { requestChangePassword, requestChangeUsername, updateEmail } from '../api/client';
+import { requestChangePassword, requestChangeUsername, updateEmail, updateGithubToken } from '../api/client';
 import type { ChangeRequestedResponse } from '../types';
 
-type Tab = 'password' | 'username' | 'email';
+type Tab = 'password' | 'username' | 'email' | 'github';
 
 function SuccessBanner({ res }: { res: ChangeRequestedResponse }) {
   return (
@@ -220,6 +220,63 @@ function EmailForm() {
   );
 }
 
+function GithubTokenForm() {
+  const { currentUser, refreshUser } = useAuth();
+  const [token, setToken] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handle(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    setSaved(false);
+    setLoading(true);
+    try {
+      await updateGithubToken(token.trim());
+      await refreshUser();
+      setToken('');
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handle} className="space-y-4">
+      <p className="text-xs text-slate-400">
+        Current token:{' '}
+        <span className="font-mono text-slate-300">{currentUser?.github_token_masked || 'none'}</span>.
+        Repositories added with your account use it.
+      </p>
+      <div>
+        <label htmlFor="new-github-token" className="mb-1 block text-xs font-medium text-slate-400">New GitHub token</label>
+        <input
+          id="new-github-token"
+          type="password"
+          autoComplete="off"
+          required
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="ghp_..."
+          className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+        />
+      </div>
+      {error && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>}
+      {saved && <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400">GitHub token updated.</p>}
+      <button
+        type="submit"
+        disabled={loading}
+        className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500 disabled:opacity-50"
+      >
+        {loading ? 'Checking…' : 'Update GitHub token'}
+      </button>
+    </form>
+  );
+}
+
 export default function Settings() {
   const { currentUser } = useAuth();
   const [tab, setTab] = useState<Tab>(() => (currentUser?.email ? 'password' : 'email'));
@@ -239,7 +296,7 @@ export default function Settings() {
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
         {/* Tabs */}
         <div className="mb-6 flex rounded-lg bg-slate-800 p-1">
-          {(['email', 'password', 'username'] as Tab[]).map((t) => (
+          {(['email', 'password', 'username', ...(currentUser?.auth_provider === 'github' ? [] : ['github'])] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -249,7 +306,7 @@ export default function Settings() {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {t === 'email' ? 'Email' : t === 'password' ? 'Password' : 'Username'}
+              {t === 'email' ? 'Email' : t === 'password' ? 'Password' : t === 'username' ? 'Username' : 'GitHub token'}
             </button>
           ))}
         </div>
@@ -257,6 +314,7 @@ export default function Settings() {
         {tab === 'email' && <EmailForm />}
         {tab === 'password' && <PasswordForm />}
         {tab === 'username' && <UsernameForm />}
+        {tab === 'github' && <GithubTokenForm />}
       </div>
     </div>
   );

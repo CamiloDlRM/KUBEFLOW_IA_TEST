@@ -217,7 +217,7 @@ class TestRollbackModel:
             )
 
         assert resp.status_code == 200
-        assert "Rolled back" in resp.json()["message"]
+        assert "now serving version 1" in resp.json()["message"]
         # The model-server must receive the REAL MLflow run id of the target version
         load_call = mock_client.post.call_args
         assert load_call.kwargs["json"]["mlflow_run_id"] == "run-v1"
@@ -248,7 +248,7 @@ class TestRollbackModel:
         )
 
         assert resp.status_code == 404
-        assert "No deployment found" in resp.json()["detail"]
+        assert "No version 99 of iris" in resp.json()["detail"]
 
     def test_rollback_when_model_server_fails_should_return_502(
         self, admin_app, db_session

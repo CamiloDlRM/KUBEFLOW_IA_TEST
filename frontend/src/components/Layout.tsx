@@ -1,5 +1,6 @@
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import AuthProviderIcon from './AuthProviderIcon';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon },
@@ -22,7 +23,7 @@ function navLinkClass({ isActive }: { isActive: boolean }) {
 }
 
 export default function Layout() {
-  const { logout, isAdmin, currentUser } = useAuth();
+  const { logout, isAdmin, currentUser, githubTokenStatus } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -32,6 +33,8 @@ export default function Layout() {
     logout();
     navigate('/login');
   }
+
+  if (currentUser?.needs_password) return <Navigate to="/set-password" replace />;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -57,6 +60,7 @@ export default function Layout() {
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-800">
           <p className="font-body2 mb-2 truncate px-3 text-sm leading-tight max-w-xs text-slate-500">
+            <AuthProviderIcon provider={currentUser?.auth_provider} />{' '}
             Hello, {currentUser?.username}!
             {isAdmin && (
               <span className="ml-1 rounded-full bg-brand-600/20 px-1.5 py-0.5 text-brand-400">
@@ -99,6 +103,18 @@ export default function Layout() {
 
       {/* Main content */}
       <main className={`min-h-0 min-w-0 flex-1 ${fullScreen ? 'overflow-hidden pt-16 md:pt-0' : 'overflow-y-auto p-6 pt-16 md:pt-6'}`}>
+        {(githubTokenStatus === 'invalid' || githubTokenStatus === 'expiring') && (
+          <div role="alert" className="mb-4 rounded-lg border border-yellow-700 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
+            {githubTokenStatus === 'invalid'
+              ? 'Your GitHub token has expired or is not valid. Repositories using it will fail.'
+              : 'Your GitHub token expires in less than 7 days.'}{' '}
+            {currentUser?.auth_provider === 'github' ? (
+              'Sign in again with GitHub to renew it.'
+            ) : (
+              <Link to="/settings" className="font-medium underline hover:text-yellow-200">Update it in Settings</Link>
+            )}
+          </div>
+        )}
         <Outlet />
       </main>
     </div>

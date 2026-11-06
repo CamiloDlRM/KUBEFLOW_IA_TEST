@@ -4,14 +4,14 @@ Register, list, and delete GitHub repositories with automatic webhook setup.
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
-from core.github_credentials import encrypt_token, repo_token
+from core.github_credentials import encrypt_token, mask_token, repo_token, user_token
 from core.ownership import filter_repos_by_owner, get_visible_repo_or_404, linked_projects
 from core.security import get_current_user
 from db import get_session
@@ -74,11 +74,14 @@ async def create_repo(
             detail="This repository is already registered for your account.",
         )
 
-    token = body.github_token or settings.github_token
+    # A token in the body keeps the old per-repository behaviour. Otherwise the
+    # repository follows its owner's sign-in token, so renewing it fixes all.
+    owner_token = "" if body.github_token else user_token(session, current_user, settings)
+    token = body.github_token or owner_token or settings.github_token
     if not token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A GitHub token is required (via body or GITHUB_TOKEN env).",
+            detail="A GitHub token is required: set yours in Settings.",
         )
 
     webhook_url = f"{settings.backend_public_url.rstrip('/')}/webhook/github"
@@ -100,13 +103,12 @@ async def create_repo(
             detail=f"Failed to create GitHub webhook: {exc}",
         )
 
-    masked_token = f"****{token[-4:]}" if len(token) >= 4 else "****"
-
     repo = Repository(
         owner_id=current_user.id,
         github_url=canonical_url,
-        github_token_masked=masked_token,
-        github_token_encrypted=encrypt_token(token, settings),
+        github_token_masked=mask_token(token),
+        github_token_encrypted="" if owner_token else encrypt_token(token, settings),
+        uses_owner_token=bool(owner_token),
         webhook_id=hook_data.get("id"),
         webhook_url=webhook_url,
         is_active=True,
@@ -292,6 +294,7 @@ async def launch_pipeline(
     settings: AppSettings,
     session: Session,
     requested_model_name: str | None = None,
+    parameters: dict[str, Any] | None = None,
 ) -> WebhookAccepted:
     """Pin ``branch`` to its HEAD commit and enqueue a run of ``project``'s notebook.
 
@@ -338,6 +341,7 @@ async def launch_pipeline(
         commit_sha=commit_sha,
         branch=branch,
         requested_model_name=requested_model_name,
+        parameters=parameters or {},
     )
     session.add(pipeline)
     session.commit()

@@ -13,8 +13,6 @@ export default function AddRepository() {
   const queryClient = useQueryClient();
 
   const [url, setUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [showToken, setShowToken] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const repos = useQuery({
@@ -27,7 +25,6 @@ export default function AddRepository() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['repos'] });
       setUrl('');
-      setToken('');
       setValidationError(null);
     },
   });
@@ -41,15 +38,8 @@ export default function AddRepository() {
       return;
     }
 
-    if (!token.trim()) {
-      setValidationError('A GitHub Personal Access Token is required.');
-      return;
-    }
-
-    mutation.mutate({
-      github_url: url.trim(),
-      github_token: token.trim(),
-    });
+    // The backend calls GitHub with the token of the signed-in user.
+    mutation.mutate({ github_url: url.trim() });
   }
 
   return (
@@ -111,31 +101,6 @@ export default function AddRepository() {
               required
               className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
-          </div>
-
-          {/* Token */}
-          <div>
-            <label htmlFor="token" className="mb-1 block text-sm font-medium text-slate-300">
-              GitHub Personal Access Token
-            </label>
-            <div className="relative">
-              <input
-                id="token"
-                type={showToken ? 'text' : 'password'}
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="ghp_..."
-                required
-                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 pr-16 text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken((s) => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
-              >
-                {showToken ? 'Hide' : 'Show'}
-              </button>
-            </div>
           </div>
 
           {/* Actions */}
