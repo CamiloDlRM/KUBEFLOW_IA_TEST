@@ -65,7 +65,7 @@ export function PhaseDetail({
   );
 }
 
-function Keys({ input }: { input: MountedInput }) {
+export function Keys({ input }: { input: MountedInput }) {
   return (
     <ul className="space-y-0.5 font-mono text-[11px] text-slate-500">
       {input.keys.slice(0, 8).map((key) => (
@@ -129,10 +129,19 @@ export function ModelDetail({ run }: { run?: Pipeline }) {
       </Panel>
     );
   }
+  return (
+    <Panel title="Register & deploy">
+      <ModelSummary run={run} />
+    </Panel>
+  );
+}
+
+/** What became of a run's model: registration, deployment and its metrics. */
+export function ModelSummary({ run }: { run: Pipeline }) {
   const phases = latestPhases(run.phases);
   const metrics = Object.entries(run.metrics).filter(([, value]) => typeof value === 'number');
   return (
-    <Panel title="Register & deploy">
+    <>
       {(['register', 'deploy'] as const).map((name) => (
         <p key={name} className="text-sm text-slate-300">
           <span className="font-semibold text-slate-100">{name}:</span>{' '}
@@ -150,6 +159,6 @@ export function ModelDetail({ run }: { run?: Pipeline }) {
           ))}
         </dl>
       )}
-    </Panel>
+    </>
   );
 }

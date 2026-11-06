@@ -303,6 +303,17 @@ async def launch_pipeline(
     """
     from core.pipeline import get_pipeline_runner
 
+    # One run per project at a time: while one is queued or running, hand back
+    # that one instead of starting another, so the caller can follow it.
+    existing = session.exec(
+        select(Pipeline).where(
+            Pipeline.project_id == project.id,
+            Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
+        )
+    ).first()
+    if existing:
+        return WebhookAccepted(status="already_queued", pipeline_id=existing.id)
+
     # Resolve the branch HEAD so the run is pinned to a concrete commit
     from core.github import list_branches
 
@@ -321,17 +332,6 @@ async def launch_pipeline(
             detail=f"Branch '{branch}' does not exist in the repository.",
         )
     commit_sha = match["commit_sha"]
-
-    # Deduplication: skip if an identical run is already queued or running
-    existing = session.exec(
-        select(Pipeline).where(
-            Pipeline.project_id == project.id,
-            Pipeline.commit_sha == commit_sha,
-            Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
-        )
-    ).first()
-    if existing:
-        return WebhookAccepted(status="already_queued", pipeline_id=existing.id)
 
     pipeline = Pipeline(
         repo_id=repo.id,  # type: ignore[arg-type]

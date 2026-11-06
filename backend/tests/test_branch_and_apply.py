@@ -110,6 +110,27 @@ class TestTriggerPipeline:
         assert body["status"] == "already_queued"
         assert body["pipeline_id"] == existing.id
 
+    def test_trigger_refuses_second_run_of_another_commit(self, test_app, db_session):
+        repo = seed_repo_in_project(db_session)
+        existing = seed_pipeline(
+            db_session, repo.id, status="queued", commit_sha="old999"
+        )
+        runner = self._mock_runner()
+        with (
+            patch(
+                "core.github.list_branches",
+                new=AsyncMock(return_value=[{"name": "main", "commit_sha": "abc123"}]),
+            ),
+            patch("core.pipeline.get_pipeline_runner", return_value=runner),
+        ):
+            resp = test_app.post(f"/repos/{repo.id}/trigger", json={"branch": "main"})
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "already_queued"
+        assert body["pipeline_id"] == existing.id
+        runner.run.assert_not_called()
+
 
     def test_trigger_without_a_project_is_refused(self, test_app, db_session):
         repo = seed_repo(db_session)
