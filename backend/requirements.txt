@@ -20,6 +20,7 @@ python-multipart==0.0.20
 
 # Task Queue
 celery==5.4.0
+kombu==5.4.2  # newer kombu requires redis>=6.1
 redis==5.2.1
 
 # HTTP client
