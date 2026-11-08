@@ -70,7 +70,7 @@ function Code({ source }: { source: string }) {
   );
 }
 
-function Cell({ cell, fromRun }: { cell: NotebookCell; fromRun: boolean }) {
+function Cell({ cell, fromRun, hideOutput }: { cell: NotebookCell; fromRun: boolean; hideOutput?: boolean }) {
   const state = CELL_STATE[cell.status];
   const tags = cell.tags.filter((tag) => !tag.startsWith('mlops:'));
   return (
@@ -97,12 +97,12 @@ function Cell({ cell, fromRun }: { cell: NotebookCell; fromRun: boolean }) {
           )}
           <Code source={cell.source} />
         </div>
-        {cell.output && (
+        {cell.output && !hideOutput && (
           <pre className="mt-1 max-h-56 overflow-auto px-3 py-1.5 font-mono text-[12px] leading-relaxed text-[#cccccc]">
             {cell.output}
           </pre>
         )}
-        {cell.error && (
+        {cell.error && !hideOutput && (
           <pre className="mt-1 overflow-x-auto rounded-md border-l-2 border-[#f14c4c] bg-[#5a1d1d]/40 px-3 py-1.5 font-mono text-[12px] text-[#f48771]">
             {cell.error}
           </pre>
@@ -119,6 +119,8 @@ export default function CodeEditor({
   cells,
   fromRun,
   status,
+  fill = false,
+  hideOutput = false,
 }: {
   title: string;
   notebookPath: string;
@@ -127,6 +129,10 @@ export default function CodeEditor({
   fromRun: boolean;
   /** One line for the status bar: how the phase ended, or where the code came from. */
   status: string;
+  /** Take the full height of the parent, scrolling inside, instead of capping the code at 32rem. */
+  fill?: boolean;
+  /** Leave what the cells printed to a log window shown beside the code. */
+  hideOutput?: boolean;
 }) {
   const file = notebookPath.split('/').pop() || 'notebook.ipynb';
   const folders = notebookPath.split('/').slice(0, -1);
@@ -135,7 +141,7 @@ export default function CodeEditor({
   return (
     <section
       aria-label={`${title} detail`}
-      className="overflow-hidden rounded-xl border border-[#2b2b2b] bg-[#1e1e1e] shadow-xl shadow-black/40"
+      className={`flex flex-col overflow-hidden rounded-xl border border-[#2b2b2b] bg-[#1e1e1e] shadow-xl shadow-black/40 ${fill ? 'h-full' : ''}`}
     >
       <div className="flex items-end bg-[#252526]">
         <span className="flex items-center gap-1.5 border-t-2 border-[#0078d4] bg-[#1e1e1e] px-3 py-1.5 text-[12px] text-white">
@@ -155,9 +161,9 @@ export default function CodeEditor({
         ))}
       </nav>
 
-      <div className="max-h-[32rem] overflow-y-auto py-2">
+      <div className={`overflow-y-auto py-2 ${fill ? 'min-h-0 flex-1' : 'max-h-[32rem]'}`}>
         {cells.map((cell) => (
-          <Cell key={cell.index} cell={cell} fromRun={fromRun} />
+          <Cell key={cell.index} cell={cell} fromRun={fromRun} hideOutput={hideOutput} />
         ))}
       </div>
 

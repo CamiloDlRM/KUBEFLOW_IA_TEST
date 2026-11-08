@@ -127,6 +127,12 @@ export async function updateGithubToken(github_token: string): Promise<UserRespo
   return data;
 }
 
+/** A fresh token for a still-valid one; keeps the session open while it is used. */
+export async function refreshToken(): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/refresh');
+  return data;
+}
+
 export async function getMe(): Promise<UserResponse> {
   const { data } = await apiClient.get<UserResponse>('/auth/me');
   return data;

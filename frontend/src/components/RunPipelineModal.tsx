@@ -5,6 +5,7 @@ import { getPipelineInput, getRunSettings, runProject } from '../api/client';
 import type { Project, TrainingParameter } from '../types';
 import { describePolicy } from './DeployPolicyPanel';
 import { formatBytes, repoNameFromUrl } from '../utils/format';
+import { runLink } from '../utils/links';
 import Spinner from './Spinner';
 
 /** Same rule the backend enforces (core/notebook_parser.MODEL_NAME_PATTERN). */
@@ -103,7 +104,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
         Object.fromEntries(parameterRows.map(({ name, value }) => [name, parseParameterValue(value)])),
       ),
     onSuccess: ({ pipeline_id }) =>
-      onStarted ? onStarted(pipeline_id) : navigate(`/pipelines/${pipeline_id}`),
+      onStarted ? onStarted(pipeline_id) : navigate(runLink(pipeline_id, project.id)),
   });
 
   useEffect(() => {

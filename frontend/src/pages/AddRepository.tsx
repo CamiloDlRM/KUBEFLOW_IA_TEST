@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { runLink } from '../utils/links';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, getRepoBranches, getRepoNotebooks, getRepos } from '../api/client';
 import type { LinkedNotebook, Repository } from '../types';
@@ -330,7 +331,7 @@ function RepositoryExplorer({
               <li key={path} className="flex items-center gap-2 font-mono">
                 {link?.active_pipeline_id ? (
                   <Link
-                    to={`/pipelines/${link.active_pipeline_id}`}
+                    to={runLink(link.active_pipeline_id, link.project_id)}
                     aria-label={`Open the active pipeline of ${path}`}
                     title={`Webhook active (${link.project_name}). Open its pipeline`}
                     className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 ring-emerald-400/40 transition hover:ring-4 focus:outline-none focus-visible:ring-4"

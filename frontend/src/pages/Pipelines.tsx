@@ -9,6 +9,7 @@ import type { Pipeline } from '../types';
 import PipelineStatus from '../components/PipelineStatus';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
+import { runLink } from '../utils/links';
 
 type Sort = 'newest' | 'oldest';
 type Group = 'none' | 'project' | 'notebook';
@@ -204,7 +205,7 @@ function PipelineCard({
   return (
     <li>
       <Link
-        to={`/pipelines/${p.id}`}
+        to={runLink(p.id, p.project_id)}
         className="block h-full rounded-lg border border-slate-700 bg-slate-900 p-4 transition hover:border-brand-500/60 hover:bg-slate-800/60"
       >
         <div className="flex items-start justify-between gap-2">

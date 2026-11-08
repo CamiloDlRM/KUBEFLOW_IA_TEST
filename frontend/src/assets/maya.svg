@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <title>Maya</title>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="70%">
+      <stop offset="0" stop-color="#F4F2FF"/>
+      <stop offset="1" stop-color="#DCD7F7"/>
+    </radialGradient>
+    <radialGradient id="head" cx="38%" cy="30%" r="75%">
+      <stop offset="0" stop-color="#EEEBFF"/>
+      <stop offset="0.22" stop-color="#B9AEFF"/>
+      <stop offset="0.6" stop-color="#7C68F0"/>
+      <stop offset="1" stop-color="#4433B0"/>
+    </radialGradient>
+    <linearGradient id="tent" gradientUnits="userSpaceOnUse" x1="0" y1="230" x2="0" y2="320">
+      <stop offset="0" stop-color="#5E4BD6"/>
+      <stop offset="0.6" stop-color="#8E7DF7"/>
+      <stop offset="1" stop-color="#D9D2FF"/>
+    </linearGradient>
+    <filter id="blur-lg" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="22"/></filter>
+    <filter id="blur-sm" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="400" height="400" rx="40" fill="url(#bg)"/>
+
+  <!-- aura -->
+  <circle cx="200" cy="200" r="120" fill="#8B7CF6" opacity="0.35" filter="url(#blur-lg)"/>
+
+  <!-- orbita trasera -->
+  <path d="M60 205 A140 38 -12 0 1 340 145" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.55"/>
+
+  <!-- piso -->
+  <ellipse cx="200" cy="335" rx="120" ry="16" fill="#FFFFFF" opacity="0.5"/>
+  <ellipse cx="200" cy="335" rx="70" ry="8" fill="#6A57E3" opacity="0.18" filter="url(#blur-sm)"/>
+
+  <!-- tentaculos -->
+  <g fill="none" stroke="url(#tent)" stroke-width="30" stroke-linecap="round">
+    <path d="M160 232 C148 272 118 292 106 270"/>
+    <path d="M200 242 C200 282 196 304 216 312"/>
+    <path d="M240 232 C252 272 282 292 294 270"/>
+  </g>
+  <g fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" opacity="0.45">
+    <path d="M152 248 C142 272 124 284 114 274"/>
+    <path d="M193 262 C193 286 192 298 204 306"/>
+    <path d="M233 248 C243 272 262 286 280 276"/>
+  </g>
+
+  <!-- cabeza -->
+  <ellipse cx="200" cy="168" rx="82" ry="90" fill="url(#head)"/>
+  <ellipse cx="200" cy="168" rx="80" ry="88" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.25"/>
+  <path d="M132 210 Q150 250 200 256" fill="none" stroke="#D9D2FF" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- brillo -->
+  <ellipse cx="163" cy="112" rx="24" ry="12" transform="rotate(-32 163 112)" fill="#FFFFFF" opacity="0.85" filter="url(#blur-sm)"/>
+  <circle cx="190" cy="96" r="4" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- ojos -->
+  <g filter="url(#glow)">
+    <ellipse cx="170" cy="182" rx="14" ry="18" fill="#FFFFFF"/>
+    <ellipse cx="230" cy="182" rx="14" ry="18" fill="#FFFFFF"/>
+  </g>
+  <ellipse cx="174" cy="187" rx="7" ry="10" fill="#5A47D4"/>
+  <ellipse cx="226" cy="187" rx="7" ry="10" fill="#5A47D4"/>
+  <circle cx="176" cy="182" r="3" fill="#FFFFFF"/>
+  <circle cx="228" cy="182" r="3" fill="#FFFFFF"/>
+
+  <!-- orbita delantera -->
+  <path d="M340 145 A140 38 -12 0 1 60 205" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.8"/>
+  <circle cx="72" cy="214" r="4" fill="#FFFFFF" filter="url(#glow)"/>
+  <circle cx="330" cy="140" r="3" fill="#FFFFFF" filter="url(#glow)"/>
+</svg>

@@ -74,7 +74,7 @@ describe('PipelineDetail', () => {
 
     expect(screen.getByRole('link', { name: /code and data of this run/i })).toHaveAttribute(
       'href',
-      '/projects/4/pipeline?run=run-1',
+      '/pipelines/canvas/4?run=run-1',
     );
     expect(screen.queryByText(/back to dashboard/i)).not.toBeInTheDocument();
   });

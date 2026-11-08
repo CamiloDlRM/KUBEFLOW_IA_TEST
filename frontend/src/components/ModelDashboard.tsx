@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { ModelDeployment } from '../types';
 import { formatDate } from '../utils/format';
+import { runLink } from '../utils/links';
 import { GrafanaFrame, OpenInGrafanaLink, buildGrafanaEmbedUrl } from './MetricsPanels';
 
 /** Provisioned from grafana/dashboards/mlops-model.json. */
@@ -49,7 +50,7 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
         <InfoCard label="Produced by">
           {model.pipeline_id ? (
             <Link
-              to={`/pipelines/${model.pipeline_id}`}
+              to={runLink(model.pipeline_id, model.project_id)}
               className="font-mono text-brand-400 hover:underline"
             >
               {model.pipeline_id.slice(0, 8)}

@@ -5,6 +5,7 @@ import PipelineStatus from '../components/PipelineStatus';
 import MetricsPanels from '../components/MetricsPanels';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
+import { runLink } from '../utils/links';
 
 /**
  * One dashboard: is it up, what has run, and how is it doing.
@@ -116,7 +117,7 @@ export default function Dashboard() {
                   >
                     <td className="px-4 py-3">
                       <Link
-                        to={`/pipelines/${p.id}`}
+                        to={runLink(p.id, p.project_id)}
                         className="font-mono text-xs text-brand-400 hover:underline"
                       >
                         {truncate(p.id, 8)}

@@ -213,7 +213,7 @@ function RepositorySection({ project }: { project: Project }) {
               </p>
             </div>
             <Link
-              to={`/projects/${project.id}/pipeline`}
+              to={`/pipelines/canvas/${project.id}`}
               className="shrink-0 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-500"
             >
               Open pipeline

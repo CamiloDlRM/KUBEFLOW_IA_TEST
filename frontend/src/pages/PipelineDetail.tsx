@@ -103,7 +103,7 @@ export default function PipelineDetail() {
       {/* The same run on its project's canvas: the code and data of each phase */}
       {pipeline.project_id != null && (
         <Link
-          to={`/projects/${pipeline.project_id}/pipeline?run=${pipeline.id}`}
+          to={`/pipelines/canvas/${pipeline.project_id}?run=${pipeline.id}`}
           className="text-sm text-brand-400 hover:underline"
         >
           &larr; Code and data of this run

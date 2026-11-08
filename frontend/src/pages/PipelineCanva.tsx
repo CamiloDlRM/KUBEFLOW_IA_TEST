@@ -15,16 +15,18 @@ import { buildNodes, edges, isPhase, steps } from '../components/flow/pipelineNo
 import { ACTIVE, usePipelineView } from '../components/flow/usePipelineView';
 import { ChevronDown, Play } from 'lucide-react';
 
-const FOCUS_ZOOM = 1.5;
+const FOCUS_ZOOM = 1.8; // React Flow's default maxZoom is 2
 const CAMERA_DURATION = 600;
+/** Extra screen pixels the focused node moves left, so it sits clear of the panel rather than near it. */
+const FOCUS_NUDGE = 60;
 
 // A node's position is its left edge and vertical middle, not its top-left corner.
 // Nodes differ in height (some have more lines), so with top-left anchoring their
 // middles — and the arrows between them — would not line up.
 const NODE_ORIGIN: NodeOrigin = [0, 0.5];
 
-/** Phases open wider: they show code. */
-const panelWidthFor = (nodeId: string) => (isPhase(nodeId) ? CODE_PANEL_WIDTH : PANEL_WIDTH);
+/** Phases (code) and the model (metrics and logs) open wider. */
+const panelWidthFor = (nodeId: string) => (isPhase(nodeId) || nodeId === 'model' ? CODE_PANEL_WIDTH : PANEL_WIDTH);
 
 // React Flow's dark mode, tuned to the app's slate palette.
 const darkTheme = {
@@ -64,9 +66,17 @@ export default function PipelineCanva() {
   const resolvedInput = inputState.data?.resolved;
   // Rebuilt only when something they show changes, so React Flow is not handed new nodes every render.
   const { cards, inputStatus, modelStatus, accuracy, deployed } = view;
-  const nodes = useMemo(
+  const builtNodes = useMemo(
     () => buildNodes(resolvedInput, { cards, inputStatus, modelStatus, accuracy, deployed }),
     [resolvedInput, cards, inputStatus, modelStatus, accuracy, deployed],
+  );
+  // The node whose panel is open glows white (`.node-open` in index.css).
+  const nodes = useMemo(
+    () =>
+      builtNodes.map((node) =>
+        node.id === openNode ? { ...node, className: `${node.className ?? ''} node-open` } : node,
+      ),
+    [builtNodes, openNode],
   );
   const [runOpen, setRunOpen] = useState(false);
 
@@ -135,7 +145,7 @@ export default function PipelineCanva() {
     // From the node's anchor (NODE_ORIGIN) to its middle.
     const centerX = node.position.x + width * (0.5 - NODE_ORIGIN[0]);
     const centerY = node.position.y + height * (0.5 - NODE_ORIGIN[1]);
-    const offset = (panelWidthFor(node.id) + PANEL_MARGIN) / 2 / FOCUS_ZOOM;
+    const offset = ((panelWidthFor(node.id) + PANEL_MARGIN) / 2 + FOCUS_NUDGE) / FOCUS_ZOOM;
     flow.setCenter(centerX + offset, centerY, { zoom: FOCUS_ZOOM, duration: CAMERA_DURATION });
   }
 

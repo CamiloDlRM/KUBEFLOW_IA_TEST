@@ -2,14 +2,20 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, type UseMutationResult } from '@tanstack/react-query';
 import { Database } from 'lucide-react';
-import { getPipelineInput, getPipelineInputOptions } from '../../api/client';
+import { getPipelineInput, getPipelineInputOptions, getWsUrl } from '../../api/client';
+import { usePipelineLogs } from '../../hooks/usePipelines';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import type { PipelineInputChoice, PipelineInputState } from '../../types';
+import { truncate } from '../../utils/format';
 import InputPalette from '../canvas/InputPalette';
 import DataPeek from '../canvas/DataPeek';
 import { Keys, ModelSummary, PhaseDetail } from '../canvas/NodeDetail';
 import { NOTEBOOK_PHASES, latestPhases, sameChoice } from '../canvas/phases';
+import LogViewer from '../LogViewer';
+import MetricsChart from '../MetricsChart';
 import Spinner from '../Spinner';
-import type { PipelineView } from './usePipelineView';
+import { cellLogs, logsForNode } from './nodeLogs';
+import { ACTIVE, type PipelineView } from './usePipelineView';
 
 /** Saves which data the next run trains on. Lives in the page so a drop on the Input node can use it too. */
 export type ChooseInput = UseMutationResult<PipelineInputState, Error, PipelineInputChoice>;
@@ -93,6 +99,8 @@ export function InputPanel({ projectId, chooseInput, view }: NodePanelContext) {
                 </section>
             )}
 
+            {run && <NodeLogs nodeId="input" view={view} />}
+
             {chooseInput.isError && (
                 <p className="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-300">
                     Could not use that input: {chooseInput.error.message}
@@ -173,12 +181,28 @@ export function PhasePanel({ phaseId, projectId, view }: { phaseId: string } & N
         );
     }
 
-    return <PhaseDetail card={card} fromRun={view.fromRun} notebookPath={view.notebookPath} branch={view.branch} />;
+    const detail = { card, fromRun: view.fromRun, notebookPath: view.notebookPath, branch: view.branch };
+    // No run on screen: only the branch's code, so there is nothing to log.
+    if (!view.shownRun || card.status === 'missing') return <PhaseDetail {...detail} />;
+
+    // Two windows, like an editor over its terminal: the code on top, what it printed and raised below.
+    // Each scrolls on its own, so a long notebook never pushes the error out of sight.
+    return (
+        <div className="flex h-full min-h-0 flex-col gap-3">
+            <div className="min-h-0 flex-[3]">
+                <PhaseDetail {...detail} fill hideOutput />
+            </div>
+            <div className="min-h-0 flex-[2]">
+                <NodeLogs nodeId={phaseId} view={view} fill />
+            </div>
+        </div>
+    );
 }
 
-/** Registration in MLflow and, when the metrics clear the bar, deployment. */
+/** Registration in MLflow and, when the metrics clear the bar, deployment — plus the run's metrics and logs. */
 export function ModelPanel({ view }: NodePanelContext) {
-    if (!view.shownRun) {
+    const run = view.shownRun;
+    if (!run) {
         return (
             <p className="text-sm text-slate-400">
                 After the notebook runs, its model is logged to MLflow, and deployed when its accuracy clears the
@@ -186,13 +210,81 @@ export function ModelPanel({ view }: NodePanelContext) {
             </p>
         );
     }
+
+    // The project's runs, oldest first, so the chart reads left to right.
+    const history = [...view.runs]
+        .reverse()
+        .filter((r) => r.metrics && Object.keys(r.metrics).length > 0)
+        .map((r) => ({ label: truncate(r.id, 6), metrics: r.metrics }));
+
     return (
-        <div className="space-y-4">
-            <ModelSummary run={view.shownRun} />
-            <Link to={`/pipelines/${view.shownRun.id}`} className="block text-xs text-brand-400 hover:underline">
-                Logs, metrics and AI advice for this run →
+        <div className="space-y-6">
+            <section className="space-y-3">
+                <ModelSummary run={run} />
+            </section>
+
+            <section>
+                <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Metrics across runs
+                </h4>
+                <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+                    <MetricsChart dataPoints={history} />
+                </div>
+            </section>
+
+            <NodeLogs nodeId="model" view={view} />
+
+            {/* The AI advisor stays on the run's own page for now. */}
+            <Link to={`/pipelines/${run.id}`} className="block text-xs text-brand-400 hover:underline">
+                AI advice for this run →
             </Link>
         </div>
+    );
+}
+
+/**
+ * The shown run's log lines that belong to this node (see nodeLogs.ts): live
+ * from the WebSocket while the run is in flight, from the API once it has finished.
+ */
+function NodeLogs({ nodeId, view, fill = false }: { nodeId: string; view: PipelineView; fill?: boolean }) {
+    const run = view.shownRun!;
+    const live = ACTIVE.has(run.status);
+    const finished = run.status === 'success' || run.status === 'failed';
+    const { messages, status } = useWebSocket(live ? getWsUrl(run.id) : null);
+    const stored = usePipelineLogs(run.id, finished);
+
+    if (finished && stored.isLoading) {
+        return (
+            <p className="flex items-center gap-2 text-sm text-slate-400">
+                <Spinner size="sm" /> Loading logs…
+            </p>
+        );
+    }
+
+    const all = live ? messages : stored.data?.logs ?? [];
+    // A phase's own lines come from the run's cells, and only when the run kept them.
+    const card = view.fromRun ? view.cards?.find((c) => c.id === nodeId) : undefined;
+    const when = latestPhases(run.phases).execute?.timestamp ?? run.started_at;
+    const lines = [...cellLogs(card, run.id, when), ...logsForNode(nodeId, all, view.errorNode)];
+    const broke = run.status === 'failed' && view.errorNode === nodeId;
+
+    return (
+        <section className={fill ? 'flex h-full min-h-0 flex-col' : ''}>
+            <h4
+                className={`mb-2 shrink-0 text-[11px] font-semibold uppercase tracking-wider ${broke ? 'text-red-400' : 'text-slate-500'}`}
+            >
+                {broke ? 'Logs · the run failed here' : 'Logs'}
+            </h4>
+            <div className={fill ? 'min-h-0 flex-1' : ''}>
+                <LogViewer
+                    messages={lines}
+                    status={live ? status : undefined}
+                    title={`${run.id.slice(0, 8)} · this step`}
+                    emptyText={live ? 'Waiting for log output…' : 'Nothing was logged for this step in this run.'}
+                    fill={fill}
+                />
+            </div>
+        </section>
     );
 }
 
