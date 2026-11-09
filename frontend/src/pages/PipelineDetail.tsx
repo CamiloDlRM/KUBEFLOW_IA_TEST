@@ -11,6 +11,7 @@ import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, truncate, repoNameFromUrl } from '../utils/format';
 import type { PhaseStatus, WebSocketLogMessage, ConnectionStatus } from '../types';
 import { getPipelines } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 const PHASE_ORDER = ['download', 'validate', 'execute', 'register', 'deploy'];
 
@@ -25,6 +26,7 @@ export default function PipelineDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: pipeline, isLoading, error } = usePipeline(id);
   const { data: repos } = useRepos();
+  const { isAdmin } = useAuth();
 
   // WebSocket for live logs - only connect when pipeline is running/queued
   const shouldStream = pipeline?.status === 'running' || pipeline?.status === 'queued';
@@ -35,10 +37,11 @@ export default function PipelineDetail() {
   // Fetch historical logs via REST for completed pipelines
   const { data: historicalLogsData, isLoading: isLogsLoading } = usePipelineLogs(id, isFinished);
 
-  // Fetch historical pipelines for the same repo for MetricsChart
+  // Fetch historical pipelines for the same project for MetricsChart: a repo
+  // can hold several projects, each training its own model.
   const { data: historyPage } = useQuery({
-    queryKey: ['pipelines', 'history', pipeline?.repo_id],
-    queryFn: () => getPipelines(1, 10),
+    queryKey: ['pipelines', 'history', pipeline?.project_id ?? pipeline?.repo_id],
+    queryFn: () => getPipelines(1, 10, pipeline?.project_id ?? undefined),
     enabled: Boolean(pipeline?.repo_id),
   });
 
@@ -56,9 +59,6 @@ export default function PipelineDetail() {
         <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
           Failed to load pipeline: {(error as Error).message}
         </div>
-        <Link to="/" className="mt-4 inline-block text-sm text-brand-400 hover:underline">
-          Back to Dashboard
-        </Link>
       </div>
     );
   }
@@ -76,7 +76,14 @@ export default function PipelineDetail() {
 
   // Build metrics chart data from history
   const metricsData = (historyPage?.items ?? [])
-    .filter((p) => p.repo_id === pipeline.repo_id && p.metrics && Object.keys(p.metrics).length > 0)
+    .filter(
+      (p) =>
+        (pipeline.project_id != null
+          ? p.project_id === pipeline.project_id
+          : p.repo_id === pipeline.repo_id) &&
+        p.metrics &&
+        Object.keys(p.metrics).length > 0,
+    )
     .map((p) => ({
       label: truncate(p.id, 6),
       metrics: p.metrics,
@@ -93,24 +100,32 @@ export default function PipelineDetail() {
 
   return (
     <div className="space-y-8">
-      {/* Back link */}
-      <Link to="/" className="text-sm text-brand-400 hover:underline">
-        &larr; Back to Dashboard
-      </Link>
+      {/* The same run on its project's canvas: the code and data of each phase */}
+      {pipeline.project_id != null && (
+        <Link
+          to={`/pipelines/canvas/${pipeline.project_id}?run=${pipeline.id}`}
+          className="text-sm text-brand-400 hover:underline"
+        >
+          &larr; Code and data of this run
+        </Link>
+      )}
 
       {/* Header */}
       <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-100">
-              Pipeline <span className="font-mono text-base text-slate-400">{truncate(pipeline.id, 12)}</span>
+              Pipeline <span className="font-display text-base text-slate-400">{truncate(pipeline.id, 12)}</span>
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-slate-400">
               <span>Repo: <span className="text-slate-200">{repoName}</span></span>
+              {isAdmin && (
+                <span>User: <span className="text-slate-200">{pipeline.owner_username ?? '--'}</span></span>
+              )}
               <span>
                 Branch:{' '}
                 <span className={pipeline.branch === 'testing-ia-agent' ? 'text-fuchsia-300' : 'text-slate-200'}>
-                  {pipeline.branch || repo?.branch || '--'}
+                  {pipeline.branch || '--'}
                   {pipeline.branch === 'testing-ia-agent' && ' 🤖'}
                 </span>
               </span>

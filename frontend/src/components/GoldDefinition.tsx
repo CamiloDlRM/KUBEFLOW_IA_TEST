@@ -107,7 +107,7 @@ export default function GoldDefinition({
           <div className="mt-2 grid gap-3 md:grid-cols-2">
             {relationNames.map((name) => (
               <div key={name}>
-                <p className="font-mono text-xs text-yellow-100">
+                <p className="font-display text-xs text-yellow-100">
                   {name}{' '}
                   <span className="text-slate-500">
                     ({relations!.relations[name].rows.toLocaleString()} rows)
@@ -115,7 +115,7 @@ export default function GoldDefinition({
                 </p>
                 <ul className="mt-1 space-y-0.5">
                   {relations!.relations[name].columns.map((column) => (
-                    <li key={column.name} className="font-mono text-[11px] text-slate-400">
+                    <li key={column.name} className="font-display text-[11px] text-slate-400">
                       {column.name}{' '}
                       <span className="text-slate-600">{column.type.toLowerCase()}</span>
                     </li>
@@ -173,7 +173,7 @@ export default function GoldDefinition({
           rows={6}
           spellCheck={false}
           placeholder={relations?.default_sql ?? 'SELECT …'}
-          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600"
+          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 font-display text-xs text-slate-100 placeholder:text-slate-600"
         />
       </label>
 

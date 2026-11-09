@@ -50,7 +50,7 @@ export default function MetricsChart({ dataPoints }: MetricsChartProps) {
           {entries.map(([k, v]) => (
             <tr key={k} className="border-b border-slate-800">
               <td className="py-2 text-slate-300">{k}</td>
-              <td className="py-2 text-right font-mono text-slate-100">
+              <td className="py-2 text-right font-display text-slate-100">
                 {typeof v === 'number' ? v.toFixed(4) : String(v)}
               </td>
             </tr>

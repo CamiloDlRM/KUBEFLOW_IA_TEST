@@ -19,6 +19,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from core.config import get_settings
+from core.github_credentials import encrypt_token
 from core.ingestion import IngestionError, preview, validate_sql
 from core.ownership import get_visible_project_or_404, restrict_by_project
 from core.security import get_current_user
@@ -119,6 +121,7 @@ async def create_source(
         database=body.database,
         username=body.username,
         password_env=body.password_env,
+        password_encrypted=encrypt_token(body.password, get_settings()) if body.password else "",
         extraction_sql=body.extraction_sql,
         watermark_column=body.watermark_column,
         normalize_text_column=body.normalize_text_column,
@@ -172,9 +175,13 @@ async def preview_source(
         extraction_sql=body.extraction_sql,
         watermark_column="",
     )
+    if body.source_id is not None:
+        candidate.password_encrypted = _get_source_or_404(
+            session, body.source_id, current_user
+        ).password_encrypted
 
     try:
-        result = preview(candidate, limit=body.limit)
+        result = preview(candidate, limit=body.limit, password=body.password or None)
     except IngestionError as exc:
         # The reason is the whole value of this endpoint: a wrong table name, a
         # missing credential and an unreachable host must read differently.

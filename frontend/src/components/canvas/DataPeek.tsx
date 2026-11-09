@@ -5,6 +5,9 @@ import { previewLayer } from '../../api/client';
 import type { Layer, PipelineInputChoice } from '../../types';
 import Spinner from '../Spinner';
 
+const FLOATING =
+  'fixed inset-x-4 bottom-4 z-30 flex max-h-[70vh] flex-col overflow-hidden rounded-2xl border border-slate-600 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur focus:outline-none lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-full lg:top-0 lg:ml-3 lg:w-[44rem]';
+
 /**
  * A look at a layer before it becomes the input.
  *
@@ -18,12 +21,15 @@ export default function DataPeek({
   label,
   onUse,
   onClose,
+  className = FLOATING,
 }: {
   projectId: number;
   choice: PipelineInputChoice;
   label: string;
   onUse: () => void;
   onClose: () => void;
+  /** Where and how the preview sits. Defaults to floating beside the palette. */
+  className?: string;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const layer = choice.layer as Layer;
@@ -52,12 +58,12 @@ export default function DataPeek({
       role="dialog"
       aria-label={`Preview of ${label}`}
       tabIndex={-1}
-      className="fixed inset-x-4 bottom-4 z-30 flex max-h-[70vh] flex-col overflow-hidden rounded-2xl border border-slate-600 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur focus:outline-none lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-full lg:top-0 lg:ml-3 lg:w-[44rem]"
+      className={className}
     >
       <header className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-slate-100">{label}</h3>
-          <p className="truncate font-mono text-[11px] text-slate-500">
+          <p className="truncate font-display text-[11px] text-slate-500">
             {data
               ? `${data.object_rows.toLocaleString()} rows × ${data.columns.length} columns · ${data.key}`
               : ' '}
@@ -86,7 +92,7 @@ export default function DataPeek({
         )}
         {error != null && <p className="px-4 py-6 text-sm text-red-300">{(error as Error).message}</p>}
         {data && (
-          <table className="min-w-full border-separate border-spacing-0 font-mono text-[11px]">
+          <table className="min-w-full border-separate border-spacing-0 font-display text-[11px]">
             <thead className="sticky top-0 bg-slate-900">
               <tr>
                 {data.columns.map((column) => (

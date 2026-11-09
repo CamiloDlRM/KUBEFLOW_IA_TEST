@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { runLink } from '../utils/links';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, getRepoBranches, getRepoNotebooks, getRepos } from '../api/client';
-import type { Repository } from '../types';
+import type { LinkedNotebook, Repository } from '../types';
 import Spinner from '../components/Spinner';
 import { ChevronDown } from 'lucide-react';
 
@@ -13,8 +14,6 @@ export default function AddRepository() {
   const queryClient = useQueryClient();
 
   const [url, setUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [showToken, setShowToken] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const repos = useQuery({
@@ -27,7 +26,6 @@ export default function AddRepository() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['repos'] });
       setUrl('');
-      setToken('');
       setValidationError(null);
     },
   });
@@ -41,15 +39,8 @@ export default function AddRepository() {
       return;
     }
 
-    if (!token.trim()) {
-      setValidationError('A GitHub Personal Access Token is required.');
-      return;
-    }
-
-    mutation.mutate({
-      github_url: url.trim(),
-      github_token: token.trim(),
-    });
+    // The backend calls GitHub with the token of the signed-in user.
+    mutation.mutate({ github_url: url.trim() });
   }
 
   return (
@@ -58,10 +49,13 @@ export default function AddRepository() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-bold text-slate-100">My Repos</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Register a GitHub repository to monitor for notebook changes. A webhook will be
-              created to trigger pipelines on push events.
-            </p>
+            <div>
+              <h3 className="text-lg font-semibold text-slate-200 pt-4">Add a new repository</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Register a GitHub repository to monitor for notebook changes. A webhook will be
+                created to trigger pipelines on push events.
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -89,7 +83,7 @@ export default function AddRepository() {
 
       {/* Form */}
       {formOpen && (
-        <form id="add-repository-form" onSubmit={handleSubmit} className="mx-auto max-w-lg space-y-5 rounded-lg border border-slate-700 bg-slate-900/40 p-5">
+        <form id="add-repository-form" onSubmit={handleSubmit} className="mx-auto max-w-lg space-y-3 rounded-lg border border-slate-700 bg-slate-900/40 p-5">
           {/* Validation / mutation errors */}
           {(validationError || mutation.isError) && (
             <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
@@ -113,33 +107,8 @@ export default function AddRepository() {
             />
           </div>
 
-          {/* Token */}
-          <div>
-            <label htmlFor="token" className="mb-1 block text-sm font-medium text-slate-300">
-              GitHub Personal Access Token
-            </label>
-            <div className="relative">
-              <input
-                id="token"
-                type={showToken ? 'text' : 'password'}
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="ghp_..."
-                required
-                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 pr-16 text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken((s) => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
-              >
-                {showToken ? 'Hide' : 'Show'}
-              </button>
-            </div>
-          </div>
-
           {/* Actions */}
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-2">
             <button
               type="submit"
               disabled={mutation.isPending}
@@ -164,6 +133,7 @@ export default function AddRepository() {
           <h3 className="text-lg font-semibold text-slate-100">Your repositories</h3>
           <p className="mt-1 text-sm text-slate-400">
             Each repository is registered once per account. Explore its current branches and notebooks here.
+            Link a repository to a project to run pipelines.
           </p>
         </div>
         {repos.isLoading && <Spinner />}
@@ -187,8 +157,14 @@ export default function AddRepository() {
   );
 }
 
+const TAG_CLASS =
+  'inline-flex rounded-full border border-brand-500/30 bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-400 transition hover:border-brand-400/60 hover:bg-brand-600/30 hover:text-brand-300';
+
 function RepositoryCard({ repo }: { repo: Repository }) {
-  const [branch, setBranch] = useState(repo.branch || 'main');
+  const [branch, setBranch] = useState(repo.notebooks[0]?.branch || 'main');
+  // One tag per project, even if a project ever shows up twice.
+  const projects = [...new Map(repo.notebooks.map((n) => [n.project_id, n.project_name])).entries()];
+  const live = repo.notebooks.filter((n) => n.active_pipeline_id);
 
   return (
     <article className="rounded-lg border border-slate-700 bg-slate-900 p-3 transition hover:border-brand-500/60 hover:bg-slate-800/60">
@@ -197,24 +173,56 @@ function RepositoryCard({ repo }: { repo: Repository }) {
           <h4 className="truncate text-base font-semibold text-slate-100">
             {repoName(repo.github_url)}
           </h4>
-          <a
-            href={repo.github_url}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-flex rounded-full border border-brand-500/30 bg-brand-600/15 px-2.5 py-1 text-xs font-medium text-brand-400 transition hover:border-brand-400/60 hover:bg-brand-600/30 hover:text-brand-300"
-          >
-            Link
-          </a>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <a
+              href={repo.github_url}
+              target="_blank"
+              rel="noreferrer"
+              className={TAG_CLASS}
+            >
+              Link
+            </a>
+            {projects.length > 0 ? (
+              projects.map(([id, name]) => (
+                <Link
+                  key={id}
+                  to={`/projects/${id}`}
+                  title="Open project"
+                  className={`${TAG_CLASS} max-w-[12rem] truncate`}
+                >
+                  {name}
+                </Link>
+              ))
+            ) : (
+              <span
+                title="Link a notebook of this repository to a project to run pipelines"
+                className="inline-flex rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-400"
+              >
+                No project
+              </span>
+            )}
+          </div>
         </div>
-        <span className="shrink-0 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300">
-          webhook active
-        </span>
+        {live.length > 0 ? (
+          <span
+            title={live.map((n) => `${n.notebook_path} (${n.branch})`).join('\n')}
+            className="shrink-0 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300"
+          >
+            webhook active
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-full bg-slate-700 px-2 py-0.5 text-xs text-slate-400">
+            webhook inactive
+          </span>
+        )}
       </div>
       <RepositoryExplorer
         repoId={repo.id}
         repoUrl={repo.github_url}
         branch={branch}
         onBranchChange={setBranch}
+        // A link is to one notebook on one branch: only that branch shows it.
+        linked={repo.notebooks.filter((n) => n.branch === branch)}
       />
     </article>
   );
@@ -229,11 +237,13 @@ function RepositoryExplorer({
   repoUrl,
   branch,
   onBranchChange,
+  linked,
 }: {
   repoId: number;
   repoUrl: string;
   branch: string;
   onBranchChange: (branch: string) => void;
+  linked: LinkedNotebook[];
 }) {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const branchMenuRef = useRef<HTMLDivElement>(null);
@@ -296,11 +306,10 @@ function RepositoryExplorer({
                       onBranchChange(item.name);
                       setBranchMenuOpen(false);
                     }}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                      item.name === branch
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${item.name === branch
                         ? 'bg-brand-600/25 text-brand-300'
                         : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
-                    }`}
+                      }`}
                   >
                     {item.name}
                   </button>
@@ -318,18 +327,36 @@ function RepositoryExplorer({
       )}
       {notebooks.data && notebooks.data.length > 0 && (
         <ul className="mt-1 space-y-1 text-sm text-slate-200">
-          {notebooks.data.map((path) => (
-            <li key={path} className="font-mono">
-              <a
-                href={notebookUrl(repoUrl, branch, path)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-brand-400 underline-offset-2 hover:text-brand-300 hover:underline"
-              >
-                {path}
-              </a>
-            </li>
-          ))}
+          {notebooks.data.map((path) => {
+            const link = linked.find((n) => n.notebook_path === path);
+            return (
+              <li key={path} className="flex items-center gap-2 font-display">
+                {link?.active_pipeline_id ? (
+                  <Link
+                    to={runLink(link.active_pipeline_id, link.project_id)}
+                    aria-label={`Open the active pipeline of ${path}`}
+                    title={`Webhook active (${link.project_name}). Open its pipeline`}
+                    className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 ring-emerald-400/40 transition hover:ring-4 focus:outline-none focus-visible:ring-4"
+                  />
+                ) : link ? (
+                  <span
+                    role="img"
+                    aria-label={`Linked to ${link.project_name}, nothing running`}
+                    title={`Linked to ${link.project_name}. No pipeline running or deployed`}
+                    className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-500"
+                  />
+                ) : null}
+                <a
+                  href={notebookUrl(repoUrl, branch, path)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-brand-400 underline-offset-2 hover:text-brand-300 hover:underline"
+                >
+                  {path}
+                </a>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

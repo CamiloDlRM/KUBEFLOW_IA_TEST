@@ -31,6 +31,8 @@ class TestCreateRepo:
         assert "webhook_url" in data
         assert data["status"] == "webhook_created"
         mock_github_create_webhook.assert_awaited_once()
+        # No project yet, so the hook is created disabled.
+        assert mock_github_create_webhook.await_args.kwargs["active"] is False
 
     def test_create_repo_when_github_api_fails_should_return_502(
         self,

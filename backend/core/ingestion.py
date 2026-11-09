@@ -84,6 +84,11 @@ def resolve_password(source: DataSource) -> str:
     behaviour: registering a source is not the same authority as being granted
     access to it.
     """
+    if source.password_encrypted:
+        from core.config import get_settings
+        from core.github_credentials import decrypt_token
+
+        return decrypt_token(source.password_encrypted, get_settings())
     if not source.password_env:
         return ""
     password = os.getenv(source.password_env, "")

@@ -31,7 +31,7 @@ function renderBlocks(md: string): ReactNode[] {
       blocks.push(
         <pre
           key={key++}
-          className="overflow-x-auto rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-indigo-200"
+          className="overflow-x-auto rounded-lg border border-slate-700 bg-slate-950 p-3 font-display text-xs text-indigo-200"
         >
           {code.join('\n')}
         </pre>,
@@ -124,7 +124,7 @@ function renderInline(text: string): ReactNode {
       {parts.map((part, idx) => {
         if (part.startsWith('`') && part.endsWith('`')) {
           return (
-            <code key={idx} className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-amber-300">
+            <code key={idx} className="rounded bg-slate-800 px-1.5 py-0.5 font-display text-xs text-amber-300">
               {part.slice(1, -1)}
             </code>
           );

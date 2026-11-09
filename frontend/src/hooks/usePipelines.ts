@@ -41,11 +41,13 @@ export function usePipelineLogs(id: string | undefined, enabled: boolean) {
   });
 }
 
-export function useServiceHealth() {
+/** `enabled` false skips the polling, for viewers who are not shown the result. */
+export function useServiceHealth(enabled = true) {
   return useQuery({
     queryKey: ['health', 'ready'],
     queryFn: getReady,
     refetchInterval: 15_000,
     retry: 1,
+    enabled,
   });
 }

@@ -15,6 +15,11 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+#: Allowed ``MODEL_NAME`` values. The name becomes a URL segment on the
+#: model-server, a Prometheus label and the ``${model}`` slot the Grafana proxy
+#: matches (core/grafana_queries.py), so it must never carry quotes or spaces.
+MODEL_NAME_PATTERN = r"[A-Za-z0-9_.\-]{1,200}"
+
 REQUIRED_TAGS: list[str] = [
     "mlops:config",
     "mlops:preprocessing",
@@ -44,6 +49,51 @@ def get_cells_by_tag(notebook: dict[str, Any], tag: str) -> list[dict[str, Any]]
         for cell in notebook.get("cells", [])
         if tag in _cell_tags(cell)
     ]
+
+
+_DATASET_PATH_DECLARATION = re.compile(r"^\s*DATASET_PATH\s*=", re.MULTILINE)
+
+
+def uses_project_dataset(notebook: dict[str, Any]) -> bool:
+    """Whether the notebook reads the project's gold data.
+
+    The contract is the papermill ``parameters`` cell: a notebook that declares
+    ``DATASET_PATH`` there expects the platform to hand it the project's active
+    dataset; one that does not brings its own data, so nothing is downloaded.
+    """
+    for cell in get_cells_by_tag(notebook, "parameters"):
+        source = cell.get("source", "")
+        if isinstance(source, list):
+            source = "".join(source)
+        if _DATASET_PATH_DECLARATION.search(source):
+            return True
+    return False
+
+
+_READERS = {
+    "csv": re.compile(r"\bread_csv\s*\("),
+    "parquet": re.compile(r"\bread_parquet\s*\("),
+}
+
+
+def dataset_format(notebook: dict[str, Any]) -> str | None:
+    """The file format the notebook's code reads its data with.
+
+    ``"csv"`` or ``"parquet"`` when the code calls only that reader; ``None``
+    when it calls both (it handles either, so the file is left as it is) or
+    neither (nothing to go on).
+    """
+    found = set()
+    for cell in notebook.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        source = cell.get("source", "")
+        if isinstance(source, list):
+            source = "".join(source)
+        # A commented-out alternative is not a reader the code calls.
+        source = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+        found.update(name for name, pattern in _READERS.items() if pattern.search(source))
+    return found.pop() if len(found) == 1 else None
 
 
 def validate_required_tags(notebook: dict[str, Any]) -> None:
@@ -81,7 +131,8 @@ def extract_config(notebook: dict[str, Any]) -> dict[str, str]:
         Dict with keys ``model_name`` and ``version``.
 
     Raises:
-        ValueError: If the config cell is missing or values cannot be parsed.
+        ValueError: If the config cell is missing, values cannot be parsed or
+            ``MODEL_NAME`` does not match :data:`MODEL_NAME_PATTERN`.
     """
     cells = get_cells_by_tag(notebook, "mlops:config")
     if not cells:
@@ -99,6 +150,11 @@ def extract_config(notebook: dict[str, Any]) -> dict[str, str]:
     )
 
     model_name = model_name_match.group(1) if model_name_match else "default-model"
+    if not re.fullmatch(MODEL_NAME_PATTERN, model_name):
+        raise ValueError(
+            f"Invalid MODEL_NAME {model_name!r} in the mlops:config cell: use only "
+            "letters, digits, '_', '.' or '-' (max 200 characters)."
+        )
     version = version_match.group(1) if version_match else "1"
 
     logger.info(

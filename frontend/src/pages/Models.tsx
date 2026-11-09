@@ -1,12 +1,18 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getModels, predict, rollbackModel, deleteModel } from '../api/client';
+import { getModels, deleteModel } from '../api/client';
 import type { ModelDeployment } from '../types';
 import Spinner from '../components/Spinner';
+import ModelDashboard, { ModelStatusBadge } from '../components/ModelDashboard';
+import TestModelModal from '../components/models/TestModelModal';
+import VersionsDialog from '../components/models/VersionsDialog';
 import { formatDate } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 export default function Models() {
   const queryClient = useQueryClient();
+  // Members only ever see their own models, so the column would say nothing.
+  const { isAdmin } = useAuth();
   const { data: models, isLoading, error } = useQuery({
     queryKey: ['models'],
     queryFn: getModels,
@@ -14,23 +20,15 @@ export default function Models() {
   });
 
   const [testModal, setTestModal] = useState<ModelDeployment | null>(null);
+  const [selected, setSelected] = useState<ModelDeployment | null>(null);
   const [copiedName, setCopiedName] = useState<string | null>(null);
 
-  const rollbackMut = useMutation({
-    mutationFn: rollbackModel,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['models'] }),
-  });
+  const [versionsOf, setVersionsOf] = useState<string | null>(null);
 
   const deleteMut = useMutation({
     mutationFn: deleteModel,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['models'] }),
   });
-
-  function handleRollback(modelName: string) {
-    if (window.confirm(`Rollback "${modelName}" to the previous version?`)) {
-      rollbackMut.mutate(modelName);
-    }
-  }
 
   function handleDelete(modelName: string) {
     if (window.confirm(`Delete model "${modelName}"? This will unload it from the model server.`)) {
@@ -63,6 +61,10 @@ export default function Models() {
     );
   }
 
+  if (selected) {
+    return <ModelDashboard model={selected} onBack={() => setSelected(null)} />;
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -86,6 +88,7 @@ export default function Models() {
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3">Model</th>
+                {isAdmin && <th className="px-4 py-3">User</th>}
                 <th className="px-4 py-3">Version</th>
                 <th className="px-4 py-3">Accuracy</th>
                 <th className="px-4 py-3">Deployed</th>
@@ -97,9 +100,20 @@ export default function Models() {
             <tbody>
               {models.map((m) => (
                 <tr key={m.model_name} className="border-b border-slate-800 hover:bg-slate-800/40 transition">
-                  <td className="px-4 py-3 font-medium text-slate-100">{m.model_name}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => setSelected(m)}
+                      className="text-left font-medium text-slate-100 transition hover:text-brand-400"
+                      title="Open model dashboard"
+                    >
+                      {m.model_name}
+                    </button>
+                  </td>
+                  {isAdmin && (
+                    <td className="px-4 py-3 text-slate-300">{m.owner_username ?? '--'}</td>
+                  )}
                   <td className="px-4 py-3 text-slate-300">v{m.version}</td>
-                  <td className="px-4 py-3 font-mono text-slate-300">
+                  <td className="px-4 py-3 font-display text-slate-300">
                     {(m.accuracy * 100).toFixed(1)}%
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400">{formatDate(m.deployed_at)}</td>
@@ -137,11 +151,10 @@ export default function Models() {
                         Test
                       </button>
                       <button
-                        onClick={() => handleRollback(m.model_name)}
-                        disabled={rollbackMut.isPending}
-                        className="rounded bg-yellow-600/20 px-2.5 py-1 text-xs font-medium text-yellow-400 hover:bg-yellow-600/30 disabled:opacity-50"
+                        onClick={() => setVersionsOf(m.model_name)}
+                        className="rounded bg-yellow-600/20 px-2.5 py-1 text-xs font-medium text-yellow-400 hover:bg-yellow-600/30"
                       >
-                        Rollback
+                        Versions
                       </button>
                       <button
                         onClick={() => handleDelete(m.model_name)}
@@ -159,6 +172,8 @@ export default function Models() {
         </div>
       )}
 
+      {versionsOf && <VersionsDialog modelName={versionsOf} onClose={() => setVersionsOf(null)} />}
+
       {/* Test modal */}
       {testModal && (
         <TestModelModal
@@ -166,114 +181,6 @@ export default function Models() {
           onClose={() => setTestModal(null)}
         />
       )}
-    </div>
-  );
-}
-
-/* ---- Sub-components ---- */
-
-function ModelStatusBadge({ active }: { active: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        active
-          ? 'bg-emerald-900/50 text-emerald-300'
-          : 'bg-slate-700 text-slate-400'
-      }`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-      {active ? 'active' : 'inactive'}
-    </span>
-  );
-}
-
-interface TestModelModalProps {
-  model: ModelDeployment;
-  onClose: () => void;
-}
-
-function TestModelModal({ model, onClose }: TestModelModalProps) {
-  const [payload, setPayload] = useState('{\n  "data": [[5.1, 3.5, 1.4, 0.2]]\n}');
-  const [jsonError, setJsonError] = useState<string | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: (data: unknown) => predict(model.model_name, data),
-  });
-
-  function handleSend() {
-    setJsonError(null);
-    try {
-      const parsed = JSON.parse(payload);
-      mutation.mutate(parsed);
-    } catch {
-      setJsonError('Invalid JSON payload.');
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-lg rounded-lg border border-slate-700 bg-slate-800 shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-700 px-5 py-3">
-          <h3 className="text-sm font-semibold text-slate-100">
-            Test: {model.model_name}
-          </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="space-y-4 p-5">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-400">
-              JSON Payload
-            </label>
-            <textarea
-              value={payload}
-              onChange={(e) => setPayload(e.target.value)}
-              rows={5}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-slate-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            />
-          </div>
-
-          {jsonError && (
-            <p className="text-xs text-red-400">{jsonError}</p>
-          )}
-
-          {mutation.isError && (
-            <div className="rounded border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-300">
-              {(mutation.error as Error).message}
-            </div>
-          )}
-
-          {mutation.isSuccess && (
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">Response:</p>
-              <pre className="overflow-x-auto rounded bg-slate-900 p-3 font-mono text-xs text-emerald-300">
-                {JSON.stringify(mutation.data, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={onClose}
-              className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700"
-            >
-              Close
-            </button>
-            <button
-              onClick={handleSend}
-              disabled={mutation.isPending}
-              className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500 disabled:opacity-50"
-            >
-              {mutation.isPending && <Spinner size="sm" />}
-              Send Request
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

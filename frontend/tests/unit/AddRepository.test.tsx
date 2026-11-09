@@ -31,10 +31,6 @@ async function openForm() {
 
 async function fillForm(url = 'https://github.com/testuser/newrepo') {
   await userEvent.type(screen.getByLabelText(/GitHub Repository URL/i), url);
-  await userEvent.type(
-    screen.getByLabelText(/GitHub Personal Access Token/i),
-    'ghp_test1234567890',
-  );
 }
 
 describe('AddRepository', () => {
@@ -52,7 +48,7 @@ describe('AddRepository', () => {
     );
   });
 
-  it('asks for a repository and a token, and nothing else', async () => {
+  it('asks only for a repository URL, and nothing else', async () => {
     // A repository no longer carries a notebook: it is registered once, and a
     // project chooses a notebook inside it when it links. Asking for a path
     // here would be asking for the old concept back.
@@ -60,7 +56,7 @@ describe('AddRepository', () => {
     await openForm();
 
     expect(screen.getByLabelText(/GitHub Repository URL/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/GitHub Personal Access Token/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/GitHub Personal Access Token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Notebook Path/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Register Repository/i })).toBeInTheDocument();
   });
@@ -76,30 +72,6 @@ describe('AddRepository', () => {
     await waitFor(() => {
       expect(screen.getByText(/valid GitHub repository URL/i)).toBeInTheDocument();
     });
-  });
-
-  it('shows token field as password type by default', async () => {
-    renderWithProviders();
-    await openForm();
-
-    expect(screen.getByLabelText(/GitHub Personal Access Token/i)).toHaveAttribute(
-      'type',
-      'password',
-    );
-  });
-
-  it('toggles token visibility on show/hide click', async () => {
-    renderWithProviders();
-    await openForm();
-
-    const tokenInput = screen.getByLabelText(/GitHub Personal Access Token/i);
-    expect(tokenInput).toHaveAttribute('type', 'password');
-
-    await userEvent.click(screen.getByRole('button', { name: /Show/i }));
-    expect(tokenInput).toHaveAttribute('type', 'text');
-
-    await userEvent.click(screen.getByRole('button', { name: /Hide/i }));
-    expect(tokenInput).toHaveAttribute('type', 'password');
   });
 
   it('registers the repository and points at its branches and notebooks', async () => {
@@ -135,6 +107,75 @@ describe('AddRepository', () => {
     await waitFor(() => {
       expect(screen.getByText(/rate limit exceeded/i)).toBeInTheDocument();
     });
+  });
+
+  function mockLinkedRepo(link: Record<string, unknown>, ...others: Record<string, unknown>[]) {
+    server.use(
+      http.get('http://localhost:8000/repos', () =>
+        HttpResponse.json([
+          {
+            id: 1,
+            github_url: 'https://github.com/testuser/ml-project',
+            notebooks: [
+              {
+                project_id: 7,
+                project_name: 'Demo',
+                branch: 'main',
+                notebook_path: 'notebooks/train.ipynb',
+                active_pipeline_id: 'pipe-1',
+                ...link,
+              },
+              ...others,
+            ],
+          },
+        ]),
+      ),
+      http.get('http://localhost:8000/repos/1/branches', () =>
+        HttpResponse.json([{ name: 'main', commit_sha: 'abc' }]),
+      ),
+      http.get('http://localhost:8000/repos/1/notebooks', () =>
+        HttpResponse.json(['notebooks/eda.ipynb', 'notebooks/train.ipynb']),
+      ),
+    );
+  }
+
+  it('the green dot of the linked notebook opens its active pipeline', async () => {
+    mockLinkedRepo({});
+    renderWithProviders();
+
+    const dot = await screen.findByRole('link', { name: /active pipeline of notebooks\/train/i });
+    expect(dot).toHaveAttribute('href', '/pipelines/canvas/7?run=pipe-1');
+    expect(screen.getAllByRole('link', { name: /active pipeline/i })).toHaveLength(1);
+    // The name still opens the notebook on GitHub.
+    expect(screen.getByRole('link', { name: 'notebooks/train.ipynb' })).toHaveAttribute(
+      'href',
+      'https://github.com/testuser/ml-project/blob/main/notebooks/train.ipynb',
+    );
+    expect(screen.getByText('webhook active')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Demo' })).toHaveAttribute('href', '/projects/7');
+  });
+
+  it('a linked notebook with nothing running gets a grey dot and no link', async () => {
+    mockLinkedRepo({ active_pipeline_id: null });
+    renderWithProviders();
+
+    expect(await screen.findByRole('img', { name: /linked to demo/i })).toBeInTheDocument();
+    expect(screen.getByText('webhook inactive')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /active pipeline/i })).not.toBeInTheDocument();
+  });
+
+  it('marks only the notebooks linked on the branch being explored', async () => {
+    // The card opens on main, where eda is linked; train is linked on develop.
+    mockLinkedRepo(
+      { notebook_path: 'notebooks/eda.ipynb', active_pipeline_id: 'pipe-eda' },
+      { project_id: 8, project_name: 'Other', branch: 'develop',
+        notebook_path: 'notebooks/train.ipynb', active_pipeline_id: 'pipe-train' },
+    );
+    renderWithProviders();
+
+    const dot = await screen.findByRole('link', { name: /active pipeline/i });
+    expect(dot).toHaveAttribute('href', '/pipelines/canvas/7?run=pipe-eda');
+    expect(screen.getAllByRole('link', { name: /active pipeline/i })).toHaveLength(1);
   });
 
   it('disables submit button during submission', async () => {

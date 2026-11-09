@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
@@ -40,6 +40,35 @@ class User(SQLModel, table=True):
     email: str | None = SQLField(default=None)
     is_active: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=_utcnow)
+    #: A GitHub sign-up has no password until the user sets one.
+    needs_password: bool = SQLField(default=False)
+
+
+class AuthProvider(SQLModel, table=True):
+    """A way of signing in. A new method is a new row, not a new column."""
+
+    __tablename__ = "auth_providers"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    code: str = SQLField(index=True, unique=True)  # "github" | "token"
+    name: str
+    username_suffix: str  # "@g" | "@t"
+
+
+class UserIdentity(SQLModel, table=True):
+    """How a user signed up, and the GitHub token that identity carries."""
+
+    __tablename__ = "user_identities"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    user_id: int = SQLField(foreign_key="users.id", index=True)
+    provider_id: int = SQLField(foreign_key="auth_providers.id")
+    #: GitHub's numeric user id; empty for the manual-token provider.
+    provider_user_id: str | None = SQLField(default=None, index=True)
+    github_token_encrypted: str = SQLField(default="")
+    github_token_masked: str = SQLField(default="")
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    updated_at: datetime = SQLField(default_factory=_utcnow)
 
 
 class ChangeToken(SQLModel, table=True):
@@ -84,9 +113,9 @@ class Project(SQLModel, table=True):
     which is why a project can exist, ingest and be explored with no repository
     at all, and why deleting the link does not touch the data.
 
-    Ownership lives here. A repository's owner is its project's owner; the
-    column it still carries is kept in step so that the multi-tenancy rules,
-    which every route depends on, did not all have to change at once.
+    Ownership lives here. A project may only link a notebook from a repository
+    of the same owner, so the repository's own column — which the multi-tenancy
+    rules for pipelines still read — always agrees with it.
     """
 
     __tablename__ = "projects"
@@ -101,45 +130,47 @@ class Project(SQLModel, table=True):
     owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
-
-
-class Repository(SQLModel, table=True):
-    """The code a project trains with: a GitHub repository and a notebook."""
-
-    __tablename__ = "repositories"
-
-    id: int | None = SQLField(default=None, primary_key=True)
-    #: The project this repository belongs to. Nullable only for rows that
-    #: predate projects; the migration gives every existing repository one.
-    project_id: int | None = SQLField(
-        default=None, foreign_key="projects.id", index=True
-    )
-    # Owner of the repository. Members only see and manage their own
-    # repositories (and everything derived from them: pipelines, datasets,
-    # deployments, insights); admins see all of them.
-    #
-    # Kept equal to the project's owner. The project is where ownership is
-    # decided; this column is the form every existing route already reads.
-    owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
-    github_url: str = SQLField(index=True)
-    github_token_masked: str = SQLField(
-        default="",
-        description="Masked token stored for display only (last 4 chars).",
-    )
+    #: The notebook this project trains with: one file on one branch of one
+    #: repository. The unit is the notebook, not the repository, so several
+    #: projects may share a repository — but a notebook runs in one project.
+    repo_id: int | None = SQLField(default=None, foreign_key="repositories.id", index=True)
     branch: str = SQLField(default="main")
-    # Selected when the repository is associated with a project. An
-    # unassociated repository is intentionally allowed to have no notebook.
     notebook_path: str = SQLField(default="")
     #: What the pipeline trains on: ``{"layer": "gold"}`` for the newest gold
     #: build, ``{"layer": "gold", "version": 3}`` for a particular one,
     #: ``{"layer": "silver", "source_id": 2}`` for one source's silver. Empty
     #: means the project's active dataset. See :mod:`core.pipeline_input`.
     pipeline_input: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: When this project's model deploys: on or off, the metric that decides,
+    #: its bar and direction, whether it must beat the version serving. Empty
+    #: means the platform's defaults. See :mod:`core.deploy_policy`.
+    deploy_policy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
+
+class Repository(SQLModel, table=True):
+    """A registered GitHub repository: code that projects pick notebooks from."""
+
+    __tablename__ = "repositories"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    # Owner of the repository. Members only see and manage their own
+    # repositories (and everything derived from them: pipelines, datasets,
+    # deployments, insights); admins see all of them. A notebook may only be
+    # linked to a project of the same owner, so the two never disagree.
+    owner_id: int | None = SQLField(default=None, foreign_key="users.id", index=True)
+    github_url: str = SQLField(index=True)
+    github_token_masked: str = SQLField(
+        default="",
+        description="Masked token stored for display only (last 4 chars).",
+    )
     github_token_encrypted: str = SQLField(default="")
     webhook_id: int | None = SQLField(default=None)
     webhook_url: str | None = SQLField(default=None)
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
+    #: False for every repository registered before sign-in identities: those
+    #: keep the token they were created with. True means "use my owner's token".
+    uses_owner_token: bool = SQLField(default=False)
 
 
 class Pipeline(SQLModel, table=True):
@@ -149,13 +180,20 @@ class Pipeline(SQLModel, table=True):
 
     id: str = SQLField(default_factory=_new_uuid, primary_key=True)
     repo_id: int = SQLField(foreign_key="repositories.id")
+    #: The project and notebook the run executed, fixed at launch so a later
+    #: re-link does not rewrite what an old run was.
+    project_id: int | None = SQLField(default=None, foreign_key="projects.id", index=True)
+    notebook_path: str = SQLField(default="")
     status: str = SQLField(default="queued")  # queued | running | success | failed
     commit_sha: str = SQLField(default="")
-    branch: str = SQLField(default="")  # branch the run was launched from ("" = repo default)
+    branch: str = SQLField(default="")  # branch the run was launched from
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
     phases: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
     metrics: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: Model name chosen in "Run pipeline". ``None`` for webhook runs, which
+    #: use the notebook's ``MODEL_NAME``.
+    requested_model_name: str | None = SQLField(default=None)
     #: What was actually mounted as DATASET_PATH: the layer, the objects and a
     #: label. The repository holds the choice; this holds what the choice
     #: meant on the day, so "follow the newest gold" still leaves each run
@@ -165,6 +203,21 @@ class Pipeline(SQLModel, table=True):
     #: after execution what each cell printed. Stored rather than re-read from
     #: GitHub, because the branch moves and the code that ran does not.
     cells: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
+    #: What the trained model expects and how it answers across that: its
+    #: inputs in order with their training ranges, and one sweep per input.
+    #: Built by the worker from the features the notebook wrote; empty when it
+    #: wrote none. See :mod:`core.model_card`.
+    model_card: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The model this run trained and the version it was given, fixed at
+    #: validation; and the MLflow run holding its artifact, once registered.
+    #: Together they make every registered run a version that can be deployed,
+    #: whether or not it cleared the auto-deploy bar.
+    model_name: str = SQLField(default="", index=True)
+    model_version: str = SQLField(default="")
+    mlflow_run_id: str = SQLField(default="")
+    #: Training parameters this run was launched with, injected into the
+    #: notebook alongside the platform's own.
+    parameters: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class ModelDeployment(SQLModel, table=True):
@@ -278,6 +331,9 @@ class DataSource(SQLModel, table=True):
     #: which is the behaviour you want: registering a source is not the same
     #: authority as minting access to one.
     password_env: str = SQLField(default="")
+    #: Or the password itself, Fernet-encrypted, for a user connecting their
+    #: own database (e.g. Supabase) without an operator. Wins over password_env.
+    password_encrypted: str = SQLField(default="")
 
     # --- Extraction ---
     #: SQL to run, containing the literal token ``:watermark``. It is bound as
@@ -469,6 +525,28 @@ class ProjectRepositoryResponse(BaseModel):
     notebook_path: str
 
 
+class ProjectDatasetResponse(BaseModel):
+    """The active dataset of a project, as shown before a run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    size_bytes: int
+
+
+class ProjectRunRequest(BaseModel):
+    """Payload of "Run pipeline" on a project."""
+
+    model_config = ConfigDict(strict=True, protected_namespaces=())
+
+    model_name: str = Field(
+        ..., description="Name of the model this run produces (letters, digits, _ . -)."
+    )
+    #: Injected into the notebook as variables, e.g. ``{"N_ESTIMATORS": 300}``.
+    parameters: dict[str, int | float | str | bool] = Field(default_factory=dict)
+
+
 class ProjectResponse(BaseModel):
     """A project and what it currently holds."""
 
@@ -485,6 +563,12 @@ class ProjectResponse(BaseModel):
     sources: int = 0
     #: Rows currently in the project's gold table, or 0 before its first build.
     gold_rows: int = 0
+    #: The dataset a pipeline of this project is handed (``None`` until the
+    #: gold layer has been built). "Run pipeline" requires it.
+    active_dataset: ProjectDatasetResponse | None = None
+    #: The model the linked notebook already deployed. When set, every run is a
+    #: new version of it and "Run pipeline" does not ask for a name.
+    deployed_model: str | None = None
 
 
 class RepoCreateRequest(BaseModel):
@@ -518,16 +602,87 @@ class LoadModelRequest(BaseModel):
 
 
 class RollbackRequest(BaseModel):
-    """Request to rollback a model to a previous version."""
+    """Which version of a model to serve.
+
+    ``pipeline_id`` names it exactly: the run that trained it. ``version`` is
+    kept for callers from before versions were listed.
+    """
 
     model_config = ConfigDict(strict=True)
 
-    version: str = Field(..., description="MLflow model version to rollback to.")
+    pipeline_id: str | None = Field(default=None, description="The run whose artifact to serve.")
+    version: str | None = Field(default=None, description="The model version to serve.")
+
+    @model_validator(mode="after")
+    def _names_one(self) -> "RollbackRequest":
+        if not self.pipeline_id and not self.version:
+            raise ValueError("Say which version: pipeline_id or version.")
+        return self
+
+
+class ModelVersionResponse(BaseModel):
+    """One version of a model: a run that registered an artifact."""
+
+    version: str
+    pipeline_id: str | None = None
+    mlflow_run_id: str = ""
+    trained_at: datetime | None = None
+    #: Every numeric metric the notebook logged, accuracy included.
+    metrics: dict[str, float] = Field(default_factory=dict)
+    accuracy: float | None = None
+    branch: str = ""
+    commit_sha: str = ""
+    #: What it trained on, e.g. "gold v3".
+    input_label: str = ""
+    #: The last time it was put in service, if it ever was.
+    deployed_at: datetime | None = None
+    #: Serving now.
+    is_active: bool = False
+    #: Has an artifact to load. A version without one is listed, not offered.
+    deployable: bool = True
+    #: The training parameters it was launched with.
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeployPolicyRequest(BaseModel):
+    """A project's deployment policy. Fields left out keep their value."""
+
+    auto_deploy: bool | None = None
+    metric: str | None = None
+    threshold: float | None = None
+    direction: str | None = None
+    must_beat_serving: bool | None = None
+    #: True puts the project back on the platform's defaults.
+    reset: bool = False
+
+
+class RunSettingsResponse(BaseModel):
+    """What a run of this project will do with its model, and how to tune it."""
+
+    policy: dict[str, Any]
+    #: The project has not set a policy and uses the platform's.
+    is_default: bool
+    #: Metrics the project's runs have logged, for choosing the deciding one.
+    metrics_available: list[str] = Field(default_factory=list)
+    #: The parameters of the latest run, to start the next one from.
+    last_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
+
+class LinkedNotebookResponse(BaseModel):
+    """One notebook of a repository, as an active project has linked it."""
+
+    project_id: int
+    project_name: str
+    branch: str
+    notebook_path: str
+    #: The run that makes the notebook "live": the newest one still queued or
+    #: running, else the newest behind a deployed model. ``None`` when neither.
+    active_pipeline_id: str | None = None
+
 
 class RepoResponse(BaseModel):
     """Repository read representation."""
@@ -538,12 +693,13 @@ class RepoResponse(BaseModel):
     owner_id: int | None
     github_url: str
     github_token_masked: str
-    branch: str
-    notebook_path: str
     webhook_id: int | None
     webhook_url: str | None
     created_at: datetime
     is_active: bool
+    #: The notebooks of this repository that active projects have linked.
+    #: Empty means pushes are ignored and the manual trigger is refused.
+    notebooks: list[LinkedNotebookResponse] = []
 
 
 class RepoCreatedResponse(BaseModel):
@@ -561,6 +717,9 @@ class PipelineResponse(BaseModel):
 
     id: str
     repo_id: int
+    #: The project the run belongs to; ``None`` for runs older than projects.
+    project_id: int | None = None
+    notebook_path: str = ""
     status: str
     commit_sha: str
     branch: str = ""
@@ -568,14 +727,22 @@ class PipelineResponse(BaseModel):
     finished_at: datetime | None
     phases: list[dict[str, Any]]
     metrics: dict[str, Any]
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    #: Whose run this is: the owner of its project (and repository).
+    owner_username: str | None = None
     mounted_input: dict[str, Any] = Field(default_factory=dict)
+    #: The model this run trained, its version and the MLflow run holding it.
+    #: Empty until validation (name, version) and registration (MLflow run).
+    model_name: str = ""
+    model_version: str = ""
+    mlflow_run_id: str = ""
 
 
 class PipelineDetailResponse(PipelineResponse):
     """One run, with the code it ran. Kept off the list, where it would be
     every notebook of every run on the page."""
-
     cells: list[dict[str, Any]] = Field(default_factory=list)
+    model_card: dict[str, Any] = Field(default_factory=dict)
 
 
 class PipelineListResponse(BaseModel):
@@ -615,7 +782,7 @@ class PipelineInputRequest(BaseModel):
 
 
 class PipelineInputResponse(BaseModel):
-    """A repository's choice, and what it resolves to right now.
+    """A project's choice, and what it resolves to right now.
 
     ``error`` is set when the choice no longer resolves — a source deleted,
     a pinned build removed — so the view can say so before a run fails on it.
@@ -654,6 +821,8 @@ class WebhookAccepted(BaseModel):
 
     status: str = "queued"
     pipeline_id: str
+    #: Every run the event started: a push may change several linked notebooks.
+    pipeline_ids: list[str] = []
 
 
 class ModelDeploymentResponse(BaseModel):
@@ -668,6 +837,13 @@ class ModelDeploymentResponse(BaseModel):
     deployed_at: datetime
     is_active: bool
     pipeline_id: str | None
+    #: Whose model this is: the owner of the pipeline that trained it.
+    owner_username: str | None = None
+    #: Project of the run that trained it, so the UI can open that run on its canvas.
+    project_id: int | None = None
+    #: The card of the run that produced it — what to send it, in what range,
+    #: and what it answers across that. Empty for models trained before cards.
+    model_card: dict[str, Any] = Field(default_factory=dict)
 
 
 class PredictResponse(BaseModel):
@@ -676,6 +852,9 @@ class PredictResponse(BaseModel):
     prediction: list[Any]
     model_name: str
     version: str
+    #: Per row, the probability of each class, when the model can say. A
+    #: classifier's answer without its confidence reads the same at 34% as at 99%.
+    probabilities: list[dict[str, float]] | None = None
 
 
 class HealthResponse(BaseModel):
@@ -733,7 +912,9 @@ class UserRegisterRequest(BaseModel):
 
     username: str = Field(..., min_length=3, max_length=64, pattern=USERNAME_PATTERN)
     password: str = Field(..., min_length=8, max_length=72)
-    invite_token: str = Field(..., description="Single-use invite token issued by an admin.")
+    email: str = Field(..., min_length=3, max_length=254)
+    github_token: str = Field(..., min_length=4)
+    invite_token: str | None = Field(default=None, description="Optional invite token.")
 
 
 class InviteCreateRequest(BaseModel):
@@ -759,6 +940,8 @@ class TokenResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+    #: "ok" | "expiring" | "invalid" | "missing" | "unknown"
+    github_token_status: str = "unknown"
 
 
 class UserResponse(BaseModel):
@@ -772,6 +955,28 @@ class UserResponse(BaseModel):
     email: str | None
     is_active: bool
     created_at: datetime
+    needs_password: bool = False
+    auth_provider: str = "token"  # "github" | "token"
+    has_github_token: bool = False
+    github_token_masked: str = ""
+
+
+class GithubTokenUpdateRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    github_token: str = Field(..., min_length=4)
+
+
+class SetPasswordRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    password: str = Field(..., min_length=8, max_length=72)
+
+
+class GithubConfirmNewRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    pending: str
 
 
 class DataSourceCreateRequest(BaseModel):
@@ -789,6 +994,8 @@ class DataSourceCreateRequest(BaseModel):
     #: The *name* of the environment variable holding the password. Constrained
     #: to the shape of a variable name so it cannot be mistaken for one.
     password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    #: Stored encrypted, never returned. Takes precedence over password_env.
+    password: str = Field(default="", max_length=256)
     extraction_sql: str = Field(..., min_length=1, max_length=20_000)
     watermark_column: str = Field(..., min_length=1, max_length=128)
     #: Set both to have missing codes filled in during extraction. Leaving
@@ -815,8 +1022,12 @@ class DataSourcePreviewRequest(BaseModel):
     database: str = Field(..., min_length=1, max_length=128)
     username: str = Field(..., min_length=1, max_length=128)
     password_env: str = Field(default="", max_length=128, pattern=r"^[A-Z0-9_]*$")
+    #: Stored encrypted, never returned. Takes precedence over password_env.
+    password: str = Field(default="", max_length=256)
     extraction_sql: str = Field(..., min_length=1, max_length=20_000)
     limit: int = Field(default=10, ge=1, le=50)
+    #: Preview a saved source with its stored (encrypted) password.
+    source_id: int | None = None
 
 
 class DataSourcePreviewResponse(BaseModel):
@@ -1267,7 +1478,7 @@ class TriggerPipelineRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    branch: str = Field(default="", description="Branch to run from (empty = repo default).")
+    branch: str = Field(default="", description="Branch to run from (empty = the linked one).")
 
 
 class BranchInfo(BaseModel):

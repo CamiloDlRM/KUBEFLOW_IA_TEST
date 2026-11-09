@@ -1,8 +1,8 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import MetricsPanels from '../../src/components/MetricsPanels';
+import MetricsPanels, { dashboardHeight } from '../../src/components/MetricsPanels';
 
 const API_BASE = 'http://api.test';
 
@@ -87,6 +87,27 @@ describe('MetricsPanels', () => {
     );
   });
 
+  it('hides the resources dashboard from non-admin users', async () => {
+    // CPU and memory of every container is the whole platform, not a tenant's.
+    renderPage({ isAdmin: false });
+    await screen.findByTitle('Grafana dashboard: My Models');
+
+    expect(screen.queryByRole('button', { name: 'Resources' })).not.toBeInTheDocument();
+  });
+
+  it('lets admins see what the server and every container are using', async () => {
+    renderPage({ isAdmin: true });
+    await screen.findByTitle('Grafana dashboard: My Models');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resources' }));
+
+    const frame = await screen.findByTitle('Grafana dashboard: Resources');
+    expect(frame).toHaveAttribute(
+      'src',
+      `${API_BASE}/grafana/d/mlops-resources/?kiosk&theme=dark&refresh=30s&from=now-30d&to=now`,
+    );
+  });
+
   it('shows an actionable error and a retry when the embed never loads', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -114,5 +135,56 @@ describe('MetricsPanels', () => {
     );
 
     vi.useRealTimers();
+  });
+});
+
+describe('dashboardHeight', () => {
+  it('adds up the grid rows the lowest panel reaches, with the gaps and kiosk padding', () => {
+    // Bottom at row 10: 10 rows of 30px, 9 gaps of 8px, 48px of padding.
+    expect(dashboardHeight([{ gridPos: { y: 0, h: 4 } }, { gridPos: { y: 4, h: 6 } }])).toBe(300 + 72 + 48);
+  });
+
+  it('knows nothing about a dashboard with no panels', () => {
+    expect(dashboardHeight([])).toBeNull();
+  });
+});
+
+describe('the Grafana frame', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is as tall as the dashboard, so the page scrolls instead of the frame', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          url.includes('/api/dashboards/uid/')
+            ? { dashboard: { panels: [{ gridPos: { y: 0, h: 10 } }] } }
+            : { embed_url: '/grafana/embed?ticket=t&uid=mlops-ml' },
+      })),
+    );
+    renderPage();
+
+    const frame = await screen.findByTitle('Grafana dashboard: My Models');
+    await waitFor(() => expect(frame).toHaveStyle({ height: '420px' }));
+    expect(frame).toHaveAttribute('scrolling', 'no');
+  });
+});
+
+describe('Open in Grafana', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is offered to admins only', async () => {
+    const { unmount } = renderPage({ isAdmin: false });
+    await screen.findByTitle('Grafana dashboard: My Models');
+    expect(screen.queryByRole('link', { name: /Open in Grafana/i })).not.toBeInTheDocument();
+    unmount();
+
+    renderPage({ isAdmin: true });
+    await screen.findByTitle('Grafana dashboard: My Models');
+    expect(screen.getByRole('link', { name: /Open in Grafana/i })).toBeInTheDocument();
   });
 });

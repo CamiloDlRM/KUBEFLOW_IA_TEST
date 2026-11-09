@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { GripVertical, RotateCcw } from 'lucide-react';
 import type { InputStream, PipelineInputChoice, PipelineInputOptions } from '../../types';
 import { formatBytes } from '../../utils/format';
+import { LAYER_THEME, layerStyle, type LayerName } from '../flow/layerTheme';
 import { INPUT_DRAG_TYPE, encodeChoice, sameChoice } from './phases';
 
 /**
@@ -39,13 +40,13 @@ export default function InputPalette({
 
   const empty = !options.gold.length && !options.silver.length && !options.bronze.length;
 
-  const chip = (choice: PipelineInputChoice, label: string, detail: string, tone: string) => (
+  const chip = (choice: PipelineInputChoice, label: string, detail: string, layer: LayerName) => (
     <Chip
       key={label}
       choice={choice}
       label={label}
       detail={detail}
-      tone={tone}
+      layer={layer}
       active={sameChoice(choice, current)}
       open={previewing !== null && sameChoice(choice, previewing)}
       disabled={disabled}
@@ -53,13 +54,13 @@ export default function InputPalette({
     />
   );
 
-  const streams = (layer: 'silver' | 'bronze', items: InputStream[], tone: string) =>
+  const streams = (layer: 'silver' | 'bronze', items: InputStream[]) =>
     items.map((stream) =>
       chip(
         { layer, source_id: stream.source_id },
         `${layer} · ${stream.source_name}`,
         `${stream.objects} object${stream.objects === 1 ? '' : 's'} · ${formatBytes(stream.size_bytes)}`,
-        tone,
+        layer,
       ),
     );
 
@@ -73,28 +74,28 @@ export default function InputPalette({
       )}
 
       {options.gold.length > 0 && (
-        <Group title="Gold" className="text-yellow-300">
-          {chip({ layer: 'gold' }, 'gold · newest', 'follows every new build', GOLD)}
+        <Group title="Gold" layer="gold">
+          {chip({ layer: 'gold' }, 'gold · newest', 'follows every new build', 'gold')}
           {options.gold.map((build) =>
             chip(
               { layer: 'gold', version: build.version },
               `gold v${build.version}`,
               `${build.latest ? 'newest · ' : ''}${formatBytes(build.size_bytes)}`,
-              GOLD,
+              'gold',
             ),
           )}
         </Group>
       )}
 
       {options.silver.length > 0 && (
-        <Group title="Silver" className="text-slate-200">
-          {streams('silver', options.silver, SILVER)}
+        <Group title="Silver" layer="silver">
+          {streams('silver', options.silver)}
         </Group>
       )}
 
       {options.bronze.length > 0 && (
-        <Group title="Bronze · uncleaned" className="text-amber-300">
-          {streams('bronze', options.bronze, BRONZE)}
+        <Group title="Bronze · uncleaned" layer="bronze">
+          {streams('bronze', options.bronze)}
         </Group>
       )}
 
@@ -111,15 +112,15 @@ export default function InputPalette({
   );
 }
 
-const GOLD = 'border-yellow-700/60 bg-yellow-900/20 text-yellow-100';
-const SILVER = 'border-slate-500/60 bg-slate-400/10 text-slate-100';
-const BRONZE = 'border-amber-800/70 bg-amber-950/30 text-amber-100';
-
-function Group({ title, className, children }: { title: string; className: string; children: ReactNode }) {
+function Group({ title, layer, children }: { title: string; layer: LayerName; children: ReactNode }) {
   return (
     <section>
-      <h4 className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wider ${className}`}>{title}</h4>
-      <ul className="space-y-1.5">{children}</ul>
+      <h4 className="mb-1 font-display text-[11px] font-semibold uppercase tracking-wider" style={{ color: LAYER_THEME[layer].accent }}>
+        {title}
+      </h4>
+      {/* One row per layer; many builds or sources scroll sideways instead of growing the panel.
+          The padding is room for the selected card's ring, which the scroll box would otherwise clip. */}
+      <ul className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2 pt-1">{children}</ul>
     </section>
   );
 }
@@ -128,7 +129,7 @@ function Chip({
   choice,
   label,
   detail,
-  tone,
+  layer,
   active,
   open,
   disabled,
@@ -137,7 +138,7 @@ function Chip({
   choice: PipelineInputChoice;
   label: string;
   detail: string;
-  tone: string;
+  layer: LayerName;
   /** In use: the input the next run mounts. */
   active: boolean;
   open: boolean;
@@ -145,7 +146,7 @@ function Chip({
   onPreview: (choice: PipelineInputChoice, label: string) => void;
 }) {
   return (
-    <li>
+    <li className="w-56 shrink-0">
       <button
         type="button"
         draggable={!disabled}
@@ -159,7 +160,8 @@ function Chip({
         title="Click to preview · drag onto Input to use"
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={`flex w-full cursor-grab items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition hover:brightness-125 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 ${tone} ${
+        style={layerStyle(layer)}
+        className={`flex w-full cursor-grab items-center gap-2 rounded-lg border px-2.5 py-2 text-left font-body shadow-sm shadow-black/30 transition hover:brightness-125 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 ${
           active ? 'ring-2 ring-brand-400' : open ? 'ring-1 ring-slate-300/60' : ''
         }`}
       >

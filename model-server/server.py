@@ -124,6 +124,7 @@ class PredictResponse(BaseModel):
     prediction: list[Any]
     model_name: str
     version: str
+    probabilities: list[dict[str, float]] | None = None
 
 
 class ModelInfoResponse(BaseModel):
@@ -276,6 +277,22 @@ async def load_model(
         )
 
 
+def _probabilities(model: Any, data: list[list[float]]) -> list[dict[str, float]] | None:
+    """Each row's probability per class, or None when the model has none.
+
+    Best effort: a classifier that cannot produce probabilities still answers
+    the prediction, which is what the request was for.
+    """
+    if not hasattr(model, "predict_proba") or not hasattr(model, "classes_"):
+        return None
+    try:
+        rows = model.predict_proba(data)
+    except Exception:  # noqa: BLE001
+        return None
+    labels = [str(label) for label in model.classes_]
+    return [{label: round(float(p), 6) for label, p in zip(labels, row)} for row in rows]
+
+
 @app.post(
     "/predict/{model_name}",
     response_model=PredictResponse,
@@ -303,6 +320,7 @@ async def predict(
         prediction = entry.model.predict(body.data)
         entry.request_count += 1
         result = prediction.tolist() if hasattr(prediction, "tolist") else list(prediction)
+        probabilities = _probabilities(entry.model, body.data)
 
         logger.info(
             "model.predict",
@@ -314,6 +332,7 @@ async def predict(
             prediction=result,
             model_name=model_name,
             version=entry.version,
+            probabilities=probabilities,
         )
     except Exception as exc:
         logger.exception("model.predict_failed", model_name=model_name, error=str(exc))

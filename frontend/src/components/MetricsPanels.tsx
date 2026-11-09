@@ -39,6 +39,12 @@ const DASHBOARD_TABS: DashboardTab[] = [
     blurb: 'Cluster-wide health of the MLOps platform services.',
     adminOnly: true,
   },
+  {
+    uid: 'mlops-resources',
+    label: 'Resources',
+    blurb: 'CPU, memory, disk and network of the server and of every container in the stack.',
+    adminOnly: true,
+  },
 ];
 
 /**
@@ -51,8 +57,22 @@ const DASHBOARD_TABS: DashboardTab[] = [
  * The query string is assembled by hand instead of with `URLSearchParams`
  * because `kiosk` is a valueless flag (`?kiosk`, not `?kiosk=`).
  */
-export function buildGrafanaEmbedUrl(uid: string): string {
-  const query = ['kiosk', 'theme=dark', 'refresh=30s', 'from=now-30d', 'to=now'].join('&');
+export function buildGrafanaEmbedUrl(
+  uid: string,
+  vars: Record<string, string> = {},
+  from = 'now-30d',
+): string {
+  const query = [
+    'kiosk',
+    'theme=dark',
+    'refresh=30s',
+    `from=${from}`,
+    'to=now',
+    // Dashboard template variables (e.g. `var-model=iris` for mlops-model).
+    ...Object.entries(vars).map(
+      ([name, value]) => `var-${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
+    ),
+  ].join('&');
   return `${GRAFANA_BASE}/d/${uid}/?${query}`;
 }
 
@@ -132,6 +152,50 @@ function extractTicket(embedUrl?: string): string | null {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Fitting the frame to the dashboard                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The iframe is on another origin, so its content cannot be measured. Its
+ * height can be worked out from the dashboard's layout instead: Grafana places
+ * panels on a grid of 30px rows with 8px between them (GRID_CELL_HEIGHT and
+ * GRID_CELL_VMARGIN, unchanged through Grafana 11), and kiosk mode pads the page.
+ */
+const GRID_ROW_PX = 30;
+const GRID_GAP_PX = 8;
+/** Kiosk mode's padding above and below the grid, plus a little room to spare. */
+const KIOSK_PADDING_PX = 48;
+/** Below this width Grafana stacks every panel in one column, and the grid no longer says how tall it is. */
+const GRAFANA_STACKS_BELOW_PX = 769;
+
+interface GridPanel {
+  gridPos?: { y?: number; h?: number };
+}
+
+/** The pixel height of a dashboard whose top-level panels are `panels`. */
+export function dashboardHeight(panels: GridPanel[]): number | null {
+  const rows = Math.max(0, ...panels.map((panel) => (panel.gridPos?.y ?? 0) + (panel.gridPos?.h ?? 0)));
+  if (rows === 0) return null;
+  return rows * GRID_ROW_PX + (rows - 1) * GRID_GAP_PX + KIOSK_PADDING_PX;
+}
+
+/** Asks Grafana, through the proxy, for a dashboard's layout. Null when it cannot. */
+async function fetchDashboardHeight(uid: string): Promise<number | null> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  try {
+    const res = await fetch(`${GRAFANA_BASE}/api/dashboards/uid/${encodeURIComponent(uid)}`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { dashboard?: { panels?: GridPanel[] } };
+    return dashboardHeight(body.dashboard?.panels ?? []);
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  The section                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -154,24 +218,10 @@ export default function MetricsPanels() {
   );
 
   const [activeUid, setActiveUid] = useState<string>(DASHBOARD_TABS[0].uid);
-  const [status, setStatus] = useState<EmbedStatus>('loading');
-  // Bumped on "Retry" to force a full remount of the iframe. Any value > 0
-  // also means "the direct URL already failed once", so the ticket bootstrap
-  // is used instead.
-  const [attempt, setAttempt] = useState(0);
-  const [session, setSession] = useState<{ ready: boolean; ticket: string | null }>({
-    ready: false,
-    ticket: null,
-  });
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeTab = tabs.find((tab) => tab.uid === activeUid) ?? tabs[0];
   /** Canonical, human-shareable dashboard URL (also used by "Open in Grafana"). */
   const embedUrl = buildGrafanaEmbedUrl(activeTab.uid);
-  const frameSrc =
-    attempt > 0 && session.ticket
-      ? buildGrafanaBootstrapUrl(activeTab.uid, session.ticket)
-      : embedUrl;
 
   // If an admin-only tab is selected and the user loses admin, fall back.
   useEffect(() => {
@@ -179,39 +229,6 @@ export default function MetricsPanels() {
       setActiveUid(tabs[0].uid);
     }
   }, [tabs, activeUid]);
-
-  /** Opens (or refreshes) the proxy session before the iframe is mounted. */
-  const openSession = useCallback(async () => {
-    setSession({ ready: false, ticket: null });
-    const { ticket } = await primeGrafanaSession();
-    setSession({ ready: true, ticket });
-  }, []);
-
-  useEffect(() => {
-    void openSession();
-  }, [openSession]);
-
-  // Watchdog: an unreachable Grafana can leave the iframe hanging forever
-  // without ever firing `onError`, so fall back to a timeout.
-  useEffect(() => {
-    if (!session.ready || status !== 'loading') return;
-    timerRef.current = setTimeout(() => setStatus('error'), LOAD_TIMEOUT_MS);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [session.ready, status, activeUid, attempt]);
-
-  const handleSelect = useCallback((uid: string) => {
-    setActiveUid(uid);
-    setStatus('loading');
-  }, []);
-
-  const handleRetry = useCallback(() => {
-    setStatus('loading');
-    setAttempt((n) => n + 1);
-    // A ticket is single-use, so ask for a fresh one on every retry.
-    void openSession();
-  }, [openSession]);
 
   return (
     <section className="space-y-4">
@@ -225,15 +242,7 @@ export default function MetricsPanels() {
             from Grafana. Refreshes itself every 30 seconds.
           </p>
         </div>
-        <a
-          href={embedUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-slate-500 transition hover:text-brand-400"
-        >
-          Open in Grafana
-          <ExternalLinkIcon />
-        </a>
+        <OpenInGrafanaLink url={embedUrl} />
       </div>
 
       {/* Dashboard switcher (only meaningful when more than one is available) */}
@@ -242,7 +251,7 @@ export default function MetricsPanels() {
           {tabs.map((tab) => (
             <button
               key={tab.uid}
-              onClick={() => handleSelect(tab.uid)}
+              onClick={() => setActiveUid(tab.uid)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                 tab.uid === activeTab.uid
                   ? 'bg-brand-600/20 text-brand-400'
@@ -258,41 +267,144 @@ export default function MetricsPanels() {
         </div>
       )}
 
-      {/* Embed */}
-      <div className="relative min-h-[420px] overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
-        {status === 'error' ? (
-          <GrafanaUnavailable url={embedUrl} onRetry={handleRetry} />
-        ) : (
-          <>
-            {session.ready && (
-              <iframe
-                key={`${activeTab.uid}-${attempt}`}
-                title={`Grafana dashboard: ${activeTab.label}`}
-                src={frameSrc}
-                onLoad={() => setStatus('ready')}
-                onError={() => setStatus('error')}
-                // A share of the viewport rather than "the rest of the page":
-                // this no longer starts near the top, so subtracting a fixed
-                // header height would leave it hanging off the bottom.
-                className="h-[70vh] min-h-[420px] w-full border-0"
-              />
-            )}
-            {status === 'loading' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900">
-                <Spinner size="lg" />
-                <p className="text-sm text-slate-400">Loading dashboard...</p>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+      {/* Remount per dashboard so status and retry state start fresh. */}
+      <GrafanaFrame
+        key={activeTab.uid}
+        uid={activeTab.uid}
+        title={`Grafana dashboard: ${activeTab.label}`}
+      />
     </section>
+  );
+}
+
+interface GrafanaFrameProps {
+  uid: string;
+  title: string;
+  /** Dashboard template variables, sent as `var-<name>=<value>`. */
+  vars?: Record<string, string>;
+  /** Start of the time range, Grafana syntax (`now-24h`). */
+  from?: string;
+}
+
+/**
+ * One embedded Grafana dashboard: primes the proxy session, mounts the iframe
+ * and falls back to a retry screen when Grafana does not answer in time.
+ */
+export function GrafanaFrame({ uid, title, vars, from }: GrafanaFrameProps) {
+  const [status, setStatus] = useState<EmbedStatus>('loading');
+  // Bumped on "Retry" to force a full remount of the iframe. Any value > 0
+  // also means "the direct URL already failed once", so the ticket bootstrap
+  // is used instead.
+  const [attempt, setAttempt] = useState(0);
+  const [session, setSession] = useState<{ ready: boolean; ticket: string | null }>({
+    ready: false,
+    ticket: null,
+  });
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const embedUrl = buildGrafanaEmbedUrl(uid, vars, from);
+  // shortcut: the ticket bootstrap drops `var-*`, so a retried per-model embed
+  // shows an empty model; extend /grafana/embed to forward vars if that bites.
+  const frameSrc =
+    attempt > 0 && session.ticket ? buildGrafanaBootstrapUrl(uid, session.ticket) : embedUrl;
+
+  /** Opens (or refreshes) the proxy session before the iframe is mounted. */
+  const openSession = useCallback(async () => {
+    setSession({ ready: false, ticket: null });
+    const { ticket } = await primeGrafanaSession();
+    setSession({ ready: true, ticket });
+  }, []);
+
+  useEffect(() => {
+    void openSession();
+  }, [openSession]);
+
+  // As tall as the dashboard, so the page scrolls instead of the frame. Unknown
+  // (or on a narrow screen, where Grafana stacks the panels) it keeps a share of
+  // the viewport and scrolls inside.
+  const [height, setHeight] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (window.innerWidth < GRAFANA_STACKS_BELOW_PX) return;
+    void fetchDashboardHeight(uid).then((px) => {
+      if (!cancelled) setHeight(px);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
+  // Watchdog: an unreachable Grafana can leave the iframe hanging forever
+  // without ever firing `onError`, so fall back to a timeout.
+  useEffect(() => {
+    if (!session.ready || status !== 'loading') return;
+    timerRef.current = setTimeout(() => setStatus('error'), LOAD_TIMEOUT_MS);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [session.ready, status, attempt]);
+
+  const handleRetry = useCallback(() => {
+    setStatus('loading');
+    setAttempt((n) => n + 1);
+    // A ticket is single-use, so ask for a fresh one on every retry.
+    void openSession();
+  }, [openSession]);
+
+  return (
+    <div className="relative min-h-[420px] overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+      {status === 'error' ? (
+        <GrafanaUnavailable url={embedUrl} onRetry={handleRetry} />
+      ) : (
+        <>
+          {session.ready && (
+            <iframe
+              key={attempt}
+              title={title}
+              src={frameSrc}
+              onLoad={() => setStatus('ready')}
+              onError={() => setStatus('error')}
+              // The dashboard's own height when known (no inner scroll); otherwise
+              // a share of the viewport rather than "the rest of the page", which
+              // would leave it hanging off the bottom.
+              style={height ? { height } : undefined}
+              scrolling={height ? 'no' : undefined}
+              className={`w-full border-0 ${height ? '' : 'h-[70vh] min-h-[420px]'}`}
+            />
+          )}
+          {status === 'loading' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900">
+              <Spinner size="lg" />
+              <p className="text-sm text-slate-400">Loading dashboard...</p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Leaves the app for Grafana itself, which only admins are meant to work in. */
+export function OpenInGrafanaLink({ url }: { url: string }) {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-slate-500 transition hover:text-brand-400"
+    >
+      Open in Grafana
+      <ExternalLinkIcon />
+    </a>
   );
 }
 
 /* ---- Sub-components ---- */
 
 function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void }) {
+  const { isAdmin } = useAuth();
   return (
     <div className="flex h-[70vh] min-h-[420px] flex-col items-center justify-center gap-4 px-6 text-center">
       <div className="rounded-full bg-red-900/30 p-3 text-red-400">
@@ -305,13 +417,13 @@ function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void
         <p className="text-sm text-slate-400">
           The metrics service did not respond. It is probably not running yet -
           start the monitoring stack (Grafana and Prometheus) with{' '}
-          <code className="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-slate-300">
+          <code className="rounded bg-slate-800 px-1 py-0.5 font-display text-xs text-slate-300">
             docker compose up -d grafana prometheus
           </code>{' '}
           and try again. If it is running, check that the dashboard exists and
           that your session has access to it.
         </p>
-        <p className="break-all font-mono text-xs text-slate-600">{url}</p>
+        <p className="break-all font-display text-xs text-slate-600">{url}</p>
       </div>
       <div className="flex flex-wrap justify-center gap-3">
         <button
@@ -320,14 +432,16 @@ function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void
         >
           Retry
         </button>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
-        >
-          Open in Grafana
-        </a>
+        {isAdmin && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
+          >
+            Open in Grafana
+          </a>
+        )}
       </div>
     </div>
   );

@@ -3,7 +3,13 @@ import type { WebSocketLogMessage, ConnectionStatus } from '../types';
 
 interface LogViewerProps {
   messages: WebSocketLogMessage[];
-  status: ConnectionStatus;
+  /** The live stream's state. Left out for stored logs, which have no connection to show. */
+  status?: ConnectionStatus;
+  title?: string;
+  /** What to say when there is nothing to show. */
+  emptyText?: string;
+  /** Take the full height of the parent instead of a fixed 20rem. */
+  fill?: boolean;
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
@@ -82,12 +88,18 @@ function LogEntry({ msg }: { msg: WebSocketLogMessage }) {
     <div className="flex gap-2">
       <span className="shrink-0 text-slate-600">{time}</span>
       <span className={`shrink-0 w-24 ${color}`}>[{msg.phase}]</span>
-      <span className={color}>{msg.logs}</span>
+      <span className={`min-w-0 whitespace-pre-wrap break-words ${color}`}>{msg.logs}</span>
     </div>
   );
 }
 
-export default function LogViewer({ messages, status }: LogViewerProps) {
+export default function LogViewer({
+  messages,
+  status,
+  title = 'Pipeline Logs',
+  emptyText = 'Waiting for log output...',
+  fill = false,
+}: LogViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,27 +110,30 @@ export default function LogViewer({ messages, status }: LogViewerProps) {
   }, [messages]);
 
   return (
-    <div className="flex flex-col rounded-lg border border-slate-700 bg-slate-900">
+    <div className={`flex flex-col rounded-lg border border-slate-700 bg-slate-900 ${fill ? 'h-full min-h-0' : ''}`}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-700 px-4 py-2">
-        <span className="text-xs font-medium text-slate-400">Pipeline Logs</span>
-        <span className={`flex items-center gap-1.5 text-xs font-medium ${statusColors[status]}`}>
-          <span
-            className={`inline-block h-2 w-2 rounded-full ${
-              status === 'connected' ? 'bg-emerald-400' : status === 'disconnected' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'
-            }`}
-          />
-          {statusLabels[status]}
-        </span>
+        <span className="text-xs font-medium text-slate-400">{title}</span>
+        {status && (
+          <span className={`flex items-center gap-1.5 text-xs font-medium ${statusColors[status]}`}>
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                status === 'connected' ? 'bg-emerald-400' : status === 'disconnected' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'
+              }`}
+            />
+            {statusLabels[status]}
+          </span>
+        )}
       </div>
 
       {/* Log body */}
       <div
         ref={containerRef}
-        className="h-80 overflow-y-auto p-4 font-mono text-xs leading-relaxed"
+        data-testid="log-viewer"
+        className={`overflow-y-auto p-4 font-display text-xs leading-relaxed ${fill ? 'min-h-0 flex-1' : 'h-80'}`}
       >
         {messages.length === 0 ? (
-          <p className="text-slate-500">Waiting for log output...</p>
+          <p className="text-slate-500">{emptyText}</p>
         ) : (
           messages.map((msg, i) => <LogEntry key={i} msg={msg} />)
         )}

@@ -54,6 +54,7 @@ function OneSource({ projectId, source }: { projectId: number; source: DataSourc
         username: source.username,
         password_env: source.password_env,
         extraction_sql: source.extraction_sql,
+        source_id: source.id,
         limit: 8,
       }),
     retry: false,
@@ -63,7 +64,7 @@ function OneSource({ projectId, source }: { projectId: number; source: DataSourc
     <section className="rounded-lg border border-slate-700 bg-slate-900/40">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-800 px-5 py-3">
         <h3 className="text-sm font-semibold text-slate-100">{source.name}</h3>
-        <p className="font-mono text-xs text-slate-500">
+        <p className="font-display text-xs text-slate-500">
           {source.host}:{source.port}/{source.database}
         </p>
       </header>
@@ -111,7 +112,7 @@ function PreviewTable({ preview }: { preview: SourcePreview }) {
                   {/* The inferred type is a read of these rows, not a promise —
                       the cleaning standard decides the real one later, and says
                       so where it can be checked. */}
-                  <span className="ml-1.5 font-mono text-[10px] font-normal text-slate-500">
+                  <span className="ml-1.5 font-display text-[10px] font-normal text-slate-500">
                     {preview.profile[column]?.inferred_type}
                   </span>
                 </th>

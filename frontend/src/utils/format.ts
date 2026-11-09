@@ -64,3 +64,11 @@ export function formatBytes(bytes: number | null | undefined): string {
 export function truncate(str: string, len = 7): string {
   return str.length > len ? str.slice(0, len) : str;
 }
+
+/**
+ * A username as shown to people: without the `@t` / `@g` suffix that marks how
+ * the account signs in (an icon says that next to it). The stored name keeps it.
+ */
+export function displayName(username: string | undefined | null): string {
+  return (username ?? '').replace(/@[gt]$/, '');
+}

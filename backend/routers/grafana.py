@@ -46,9 +46,10 @@ from starlette.background import BackgroundTask
 
 from core.config import AppSettings, get_settings
 from core.grafana_queries import QueryNotAllowed, authorize_query, is_query_path
+from core.ownership import restrict_by_pipeline
 from core.security import get_current_user
 from db import get_session
-from models.schemas import USERNAME_PATTERN, User
+from models.schemas import USERNAME_PATTERN, ModelDeployment, User
 
 logger = structlog.get_logger(__name__)
 
@@ -605,6 +606,21 @@ async def grafana_embed(
 # ---------------------------------------------------------------------------
 
 
+def _owns_model(session: Session, user: User, model_name: str) -> bool:
+    """Whether ``user`` can see any deployment named ``model_name``.
+
+    Unlike ``routers.models._assert_model_visible`` an unknown name is refused:
+    nothing in the database vouches for it.
+    """
+    statement = restrict_by_pipeline(
+        select(ModelDeployment.id).where(ModelDeployment.model_name == model_name),
+        ModelDeployment.pipeline_id,
+        session,
+        user,
+    )
+    return session.exec(statement).first() is not None
+
+
 @router.api_route("/{path:path}", methods=_PROXY_METHODS, include_in_schema=False)
 async def grafana_proxy(
     path: str,
@@ -636,7 +652,12 @@ async def grafana_proxy(
     # Every request reaches Grafana through here, so this is where it is caught.
     if is_query_path(path):
         try:
-            authorize_query(body or b"", user, settings)
+            authorize_query(
+                body or b"",
+                user,
+                settings,
+                owns_model=lambda name: _owns_model(session, user, name),
+            )
         except QueryNotAllowed as exc:
             logger.warning(
                 "grafana.query_rejected",

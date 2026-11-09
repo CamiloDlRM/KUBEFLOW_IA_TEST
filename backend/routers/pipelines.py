@@ -10,7 +10,7 @@ from sqlmodel import Session, func, select
 import structlog
 
 from core.config import AppSettings, get_settings
-from core.ownership import get_visible_pipeline_or_404, restrict_by_repo
+from core.ownership import get_visible_pipeline_or_404, pipeline_owners, restrict_by_repo
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
@@ -35,6 +35,7 @@ async def list_pipelines(
     page: int = Query(default=1, ge=1, description="Page number."),
     size: int = Query(default=20, ge=1, le=100, description="Page size."),
     repo_id: int | None = Query(default=None, description="Only this repository's runs."),
+    project_id: int | None = Query(default=None, description="Only this project's runs."),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> PipelineListResponse:
@@ -57,6 +58,10 @@ async def list_pipelines(
     if repo_id is not None:
         total_stmt = total_stmt.where(Pipeline.repo_id == repo_id)
         list_stmt = list_stmt.where(Pipeline.repo_id == repo_id)
+    # Several projects may share a repository, so its runs are not one project's.
+    if project_id is not None:
+        total_stmt = total_stmt.where(Pipeline.project_id == project_id)
+        list_stmt = list_stmt.where(Pipeline.project_id == project_id)
     total: int = session.exec(total_stmt).one()
 
     offset = (page - 1) * size
@@ -64,7 +69,11 @@ async def list_pipelines(
         list_stmt.order_by(Pipeline.started_at.desc()).offset(offset).limit(size)  # type: ignore[union-attr]
     ).all()
 
-    items = [PipelineResponse.model_validate(p) for p in pipelines]
+    owners = pipeline_owners(session, [p.id for p in pipelines])
+    items = [
+        PipelineResponse.model_validate(p).model_copy(update={"owner_username": owners.get(p.id)})
+        for p in pipelines
+    ]
     return PipelineListResponse(items=items, total=total, page=page, size=size)
 
 
@@ -86,7 +95,9 @@ async def get_pipeline(
         pipeline_id: UUID of the pipeline.
     """
     pipeline = get_visible_pipeline_or_404(session, pipeline_id, current_user)
-    return PipelineDetailResponse.model_validate(pipeline)
+    return PipelineDetailResponse.model_validate(pipeline).model_copy(
+        update={"owner_username": pipeline_owners(session, [pipeline.id]).get(pipeline.id)}
+    )
 
 
 @router.get(

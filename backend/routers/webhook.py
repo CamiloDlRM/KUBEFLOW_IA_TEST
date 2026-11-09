@@ -15,6 +15,7 @@ import structlog
 
 from core.config import AppSettings, get_settings
 from core.github import verify_webhook_signature
+from core.ownership import linked_projects
 from core.pipeline import get_pipeline_runner
 from db import get_session
 from models.schemas import Pipeline, Repository, WebhookAccepted
@@ -98,83 +99,85 @@ async def github_webhook(
             detail="No registered repository matches this webhook.",
         )
 
-    repo = repos[0]
-
-    # Registering a repository only enables exploration. Until a project has
-    # selected a notebook there is no training target for a push event.
-    if not repo.notebook_path:
-        logger.info("webhook.repo_not_configured", repo_id=repo.id)
+    # A pipeline trains on its project's data: a notebook no active project
+    # links has nothing to run, whatever GitHub's own webhook flag says.
+    # Several accounts may register the same URL, so every row is considered.
+    links = [(repo, project) for repo in repos for project in linked_projects(session, repo)]
+    if not links:
+        logger.info("webhook.repo_without_project", repo_url=repo_url)
         raise HTTPException(
             status_code=status.HTTP_200_OK,
-            detail="Repository registered; select a notebook in a project first.",
+            detail="Push ignored: repository is not in a project.",
         )
 
-    # Check branch
-    if repo.branch != branch:
+    on_branch = [(repo, project) for repo, project in links if project.branch == branch]
+    if not on_branch:
         logger.info(
             "webhook.branch_mismatch",
-            expected=repo.branch,
+            expected=sorted({p.branch for _, p in links}),
             received=branch,
         )
         raise HTTPException(
             status_code=status.HTTP_200_OK,
-            detail=f"Push to branch '{branch}' ignored (monitoring '{repo.branch}').",
+            detail=f"Push to branch '{branch}' ignored (no notebook is linked on it).",
         )
 
-    # Check if push modifies a .ipynb file
-    modified_files: list[str] = []
+    modified_files: set[str] = set()
     for commit_data in payload.get("commits", []):
-        modified_files.extend(commit_data.get("added", []))
-        modified_files.extend(commit_data.get("modified", []))
+        modified_files.update(commit_data.get("added", []))
+        modified_files.update(commit_data.get("modified", []))
 
-    notebook_changed = any(f.endswith(".ipynb") for f in modified_files)
-    if not notebook_changed:
-        logger.info("webhook.no_notebook_changes", files=modified_files)
+    # Only the notebooks whose own file changed: one project's push must not
+    # retrain every other notebook that happens to live in the same repository.
+    changed = [(repo, project) for repo, project in on_branch if project.notebook_path in modified_files]
+    if not changed:
+        logger.info("webhook.no_notebook_changes", files=sorted(modified_files))
         raise HTTPException(
             status_code=status.HTTP_200_OK,
             detail="No notebook files modified in this push.",
         )
 
-    # Deduplication: skip if an identical run is already queued or running
-    existing = session.exec(
-        select(Pipeline).where(
-            Pipeline.repo_id == repo.id,
-            Pipeline.commit_sha == commit_sha,
-            Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
-        )
-    ).first()
-
-    if existing:
-        logger.info(
-            "webhook.duplicate_pipeline_skipped",
-            existing_pipeline_id=existing.id,
-            repo_id=repo.id,
-            commit_sha=commit_sha,
-        )
-        return WebhookAccepted(
-            status="already_queued",
-            pipeline_id=existing.id,
-        )
-
-    # Create pipeline record
-    pipeline = Pipeline(
-        repo_id=repo.id,  # type: ignore[arg-type]
-        status="queued",
-        commit_sha=commit_sha,
-        branch=branch,
-    )
-    session.add(pipeline)
-    session.commit()
-    session.refresh(pipeline)
-
-    # Enqueue pipeline run
     runner = get_pipeline_runner()
-    await runner.run(pipeline.id, repo.id, commit_sha)  # type: ignore[arg-type]
+    accepted: list[str] = []
+    for repo, project in changed:
+        # Deduplication: skip if an identical run is already queued or running
+        existing = session.exec(
+            select(Pipeline).where(
+                Pipeline.project_id == project.id,
+                Pipeline.commit_sha == commit_sha,
+                Pipeline.status.in_(["queued", "running"]),  # type: ignore[union-attr]
+            )
+        ).first()
+        if existing:
+            logger.info(
+                "webhook.duplicate_pipeline_skipped",
+                existing_pipeline_id=existing.id,
+                project_id=project.id,
+                commit_sha=commit_sha,
+            )
+            continue
 
-    logger.info(
-        "webhook.pipeline_queued",
-        pipeline_id=pipeline.id,
-        repo_id=repo.id,
-    )
+        pipeline = Pipeline(
+            repo_id=repo.id,  # type: ignore[arg-type]
+            project_id=project.id,
+            notebook_path=project.notebook_path,
+            status="queued",
+            commit_sha=commit_sha,
+            branch=branch,
+        )
+        session.add(pipeline)
+        session.commit()
+        session.refresh(pipeline)
 
-    return WebhookAccepted(pipeline_id=pipeline.id)
+        await runner.run(pipeline.id, repo.id, commit_sha)  # type: ignore[arg-type]
+        logger.info(
+            "webhook.pipeline_queued",
+            pipeline_id=pipeline.id,
+            repo_id=repo.id,
+            project_id=project.id,
+        )
+        accepted.append(pipeline.id)
+
+    if not accepted:
+        return WebhookAccepted(status="already_queued", pipeline_id=existing.id)  # type: ignore[union-attr]
+    return WebhookAccepted(pipeline_id=accepted[0], pipeline_ids=accepted)

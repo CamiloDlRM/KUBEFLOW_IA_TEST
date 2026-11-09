@@ -73,6 +73,17 @@ class TestGetPipeline:
         assert len(data["phases"]) == 2
         assert data["metrics"]["accuracy"] == 0.95
 
+    def test_get_pipeline_names_the_model_it_registered(self, test_app, db_session):
+        repo = seed_repo(db_session)
+        pipeline = seed_pipeline(
+            db_session, repo.id, status="success",
+            model_name="ejemplo2", model_version="3", mlflow_run_id="acd8d8c2",
+        )
+
+        data = test_app.get(f"/pipelines/{pipeline.id}").json()
+
+        assert (data["model_name"], data["model_version"], data["mlflow_run_id"]) == ("ejemplo2", "3", "acd8d8c2")
+
     def test_get_pipeline_when_not_found_should_return_404(
         self,
         test_app,
@@ -160,3 +171,44 @@ class TestRunPipeline:
 
         with pytest.raises(ValueError, match="mlops:preprocessing"):
             validate_required_tags(invalid_notebook)
+
+
+class TestNextModelVersion:
+    """Versions are assigned by the platform, never reused."""
+
+    def test_first_version_is_one(self, db_session):
+        from tasks.celery_tasks import next_model_version
+
+        assert next_model_version(db_session, "brand-new") == "1"
+
+    def test_next_is_highest_numeric_plus_one(self, db_session):
+        from tasks.celery_tasks import next_model_version
+        from tests.conftest import seed_model_deployment
+
+        for version in ("1", "3", "legacy-x"):
+            seed_model_deployment(db_session, model_name="iris", version=version)
+        seed_model_deployment(db_session, model_name="other", version="9")
+
+        assert next_model_version(db_session, "iris") == "4"
+
+
+class TestDeployedModelName:
+    """A notebook that has deployed keeps one model line."""
+
+    def test_the_latest_deployment_of_the_notebook_names_the_model(self, db_session):
+        from datetime import datetime, timedelta, timezone
+
+        from tasks.celery_tasks import deployed_model_name
+        from tests.conftest import seed_model_deployment, seed_pipeline, seed_repo_in_project
+
+        repo = seed_repo_in_project(db_session)
+        first, second = seed_pipeline(db_session, repo.id), seed_pipeline(db_session, repo.id)
+        project_id, notebook = first.project_id, first.notebook_path
+        now = datetime.now(timezone.utc)
+        seed_model_deployment(db_session, model_name="old", pipeline_id=first.id, deployed_at=now - timedelta(days=1))
+        seed_model_deployment(db_session, model_name="churn", pipeline_id=second.id, deployed_at=now)
+
+        assert deployed_model_name(db_session, project_id, notebook) == "churn"
+        # Another notebook of the project, or none at all, has no model yet.
+        assert deployed_model_name(db_session, project_id, "other.ipynb") is None
+        assert deployed_model_name(db_session, project_id, "") is None

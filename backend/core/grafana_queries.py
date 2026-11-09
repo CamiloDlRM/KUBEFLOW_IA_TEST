@@ -50,11 +50,13 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Final
 
 import structlog
 
 from core.config import AppSettings, get_settings
+from core.notebook_parser import MODEL_NAME_PATTERN
 from models.schemas import User
 
 logger = structlog.get_logger(__name__)
@@ -80,6 +82,12 @@ _USER_VARIABLE_ALIASES: Final[tuple[str, ...]] = (
 
 _WHITESPACE = re.compile(r"\s+")
 
+#: The per-model dashboard (``mlops-model``) variable. Grafana interpolates it
+#: before the query reaches us, so a template holding it is matched as a
+#: pattern whose slot only admits identifier characters - never a quote.
+_MODEL_VARIABLE: Final[str] = "${model}"
+_MODEL_VALUE: Final[str] = MODEL_NAME_PATTERN
+
 
 def is_query_path(path: str) -> bool:
     """Whether ``path`` (proxy-relative, no leading slash) is a query endpoint."""
@@ -101,8 +109,8 @@ def normalise_sql(sql: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _iter_raw_sql(node: Any) -> list[str]:
-    """Collect every ``rawSql`` value anywhere in a dashboard document.
+def _iter_raw_sql(node: Any, key: str = "rawSql") -> list[str]:
+    """Collect every ``key`` value (``rawSql`` by default) anywhere in a dashboard.
 
     Walks the whole tree rather than assuming ``panels[].targets[]`` so that
     SQL inside row panels, repeated panels or template variables is picked up
@@ -111,14 +119,14 @@ def _iter_raw_sql(node: Any) -> list[str]:
     """
     found: list[str] = []
     if isinstance(node, dict):
-        raw = node.get("rawSql")
+        raw = node.get(key)
         if isinstance(raw, str) and raw.strip():
             found.append(raw)
         for value in node.values():
-            found.extend(_iter_raw_sql(value))
+            found.extend(_iter_raw_sql(value, key))
     elif isinstance(node, list):
         for value in node:
-            found.extend(_iter_raw_sql(value))
+            found.extend(_iter_raw_sql(value, key))
     return found
 
 
@@ -126,9 +134,11 @@ def _dashboards_dir(settings: AppSettings) -> Path:
     return Path(settings.grafana_dashboards_dir)
 
 
-@lru_cache(maxsize=1)
-def _load_templates(directory: str) -> frozenset[str]:
-    """Read every provisioned dashboard and return the normalised SQL set.
+@lru_cache(maxsize=2)
+def _load_templates(directory: str, key: str = "rawSql") -> frozenset[str]:
+    """Read every provisioned dashboard and return the normalised ``key`` set.
+
+    ``key`` is ``rawSql`` for SQL panels and ``expr`` for Prometheus ones.
 
     Cached on the directory path: the dashboards are baked into the image and
     mounted read-only, so re-reading them per request would be pure overhead.
@@ -151,12 +161,13 @@ def _load_templates(directory: str) -> frozenset[str]:
                 "grafana.query_allowlist_unreadable", file=str(file), error=str(exc)
             )
             continue
-        for raw in _iter_raw_sql(document):
+        for raw in _iter_raw_sql(document, key):
             templates.add(normalise_sql(raw))
 
     logger.info(
         "grafana.query_allowlist_loaded",
         directory=directory,
+        key=key,
         queries=len(templates),
     )
     return frozenset(templates)
@@ -196,6 +207,32 @@ def allowed_queries_for(username: str, settings: AppSettings) -> frozenset[str]:
 def reset_cache() -> None:
     """Drop the cached allow-list (used by tests)."""
     _load_templates.cache_clear()
+
+
+@lru_cache(maxsize=256)
+def _model_pattern(template: str) -> re.Pattern[str]:
+    """Compile a template holding ``${model}`` into a full-match pattern.
+
+    Every occurrence must carry the *same* value (back-reference), so a query
+    cannot mix two model names into one panel.
+    """
+    head, *rest = template.split(_MODEL_VARIABLE)
+    parts = [re.escape(head)]
+    for index, chunk in enumerate(rest):
+        parts.append(f"(?P<model>{_MODEL_VALUE})" if index == 0 else "(?P=model)")
+        parts.append(re.escape(chunk))
+    return re.compile("".join(parts))
+
+
+def _match_model_template(query: str, templates: frozenset[str]) -> str | None:
+    """Return the model name if ``query`` is a ``${model}`` template, else ``None``."""
+    for template in templates:
+        if _MODEL_VARIABLE not in template:
+            continue
+        match = _model_pattern(template).fullmatch(query)
+        if match:
+            return match.group("model")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -245,14 +282,27 @@ def _extract_queries(body: bytes) -> list[dict[str, Any]]:
     return [q for q in queries if isinstance(q, dict)]
 
 
-def authorize_query(body: bytes, user: User, settings: AppSettings | None = None) -> None:
+def authorize_query(
+    body: bytes,
+    user: User,
+    settings: AppSettings | None = None,
+    owns_model: Callable[[str], bool] | None = None,
+) -> None:
     """Allow or refuse a datasource query on behalf of ``user``.
 
     Admins pass unconditionally. For everyone else each query in the payload
-    must be SQL that matches a provisioned panel with their own username
-    substituted; anything else — hand-written SQL, another user's name, or a
-    non-SQL (Prometheus) target belonging to the platform dashboard — is
-    refused.
+    must be one of:
+
+    - SQL matching a provisioned panel with their own username substituted
+      (a ``${model}`` slot may hold any identifier: the SQL is already scoped
+      to the user's rows, so the model name cannot widen it);
+    - PromQL matching a provisioned ``${model}`` panel whose model
+      ``owns_model`` confirms belongs to the user. Prometheus has no notion of
+      tenants, so ownership is checked here; without ``owns_model`` every
+      PromQL query is refused (fail closed).
+
+    Anything else - hand-written SQL, another user's name, a platform-wide
+    Prometheus target - is refused.
 
     Raises:
         QueryNotAllowed: when any query in the payload is not permitted.
@@ -273,13 +323,22 @@ def authorize_query(body: bytes, user: User, settings: AppSettings | None = None
 
     for query in queries:
         raw_sql = query.get("rawSql")
-        if not isinstance(raw_sql, str) or not raw_sql.strip():
-            # No SQL means a Prometheus/other target. Those live only on the
-            # platform dashboard, which is not a member's to read.
-            raise QueryNotAllowed("only SQL dashboard queries are permitted")
-
-        normalised = normalise_sql(raw_sql)
-        if normalised not in allowed:
+        if isinstance(raw_sql, str) and raw_sql.strip():
+            normalised = normalise_sql(raw_sql)
+            if normalised in allowed or _match_model_template(normalised, allowed):
+                continue
             raise QueryNotAllowed(
                 "query does not match a provisioned dashboard panel", normalised
+            )
+
+        expr = query.get("expr")
+        if not isinstance(expr, str) or not expr.strip():
+            raise QueryNotAllowed("only dashboard SQL or PromQL queries are permitted")
+        normalised = normalise_sql(expr)
+        prom_templates = _load_templates(str(_dashboards_dir(settings)), "expr")
+        model = _match_model_template(normalised, prom_templates)
+        if model is None or owns_model is None or not owns_model(model):
+            # Platform-wide PromQL (no ${model}) stays admin-only.
+            raise QueryNotAllowed(
+                "query does not match a model panel the user owns", normalised
             )

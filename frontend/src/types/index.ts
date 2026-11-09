@@ -6,17 +6,26 @@ export interface Repository {
   id: number;
   github_url: string;
   github_token_masked: string;
-  branch: string;
-  notebook_path: string;
   webhook_id: number | null;
   webhook_url: string | null;
   created_at: string;
   is_active: boolean;
+  /** Notebooks active projects have linked; empty means pushes are ignored. */
+  notebooks: LinkedNotebook[];
+}
+
+/** One notebook of a repository, linked by one project. */
+export interface LinkedNotebook {
+  project_id: number;
+  project_name: string;
+  branch: string;
+  notebook_path: string;
+  /** Newest run in flight, else the newest behind a deployed model; null when neither. */
+  active_pipeline_id: string | null;
 }
 
 export interface CreateRepoPayload {
   github_url: string;
-  github_token: string;
 }
 
 export interface RepoCreatedResponse {
@@ -45,6 +54,9 @@ export interface PipelineMetrics {
 export interface Pipeline {
   id: string;
   repo_id: number;
+  /** `null` for runs older than projects, which have no pipeline canvas. */
+  project_id?: number | null;
+  notebook_path?: string;
   status: PipelineStatus;
   commit_sha: string;
   branch: string;
@@ -52,8 +64,13 @@ export interface Pipeline {
   finished_at: string | null;
   phases: PipelinePhase[];
   metrics: PipelineMetrics;
+  /** Owner of the run's project; shown to admins, who see everyone's. */
+  owner_username: string | null;
   /** What was mounted as DATASET_PATH. Empty for runs older than the record. */
   mounted_input?: MountedInput | Record<string, never>;
+  /** The model this run trained and its version: empty until validation. */
+  model_name?: string;
+  model_version?: string;
   /** The code this run executed. Only on the detail, never on the list. */
   cells?: NotebookCell[];
 }
@@ -164,12 +181,113 @@ export interface ModelDeployment {
   deployed_at: string;
   is_active: boolean;
   pipeline_id: string;
+  /** Project of the run that trained it; null for models older than projects. */
+  project_id?: number | null;
+  /** Owner of the pipeline that trained it; shown to admins. */
+  owner_username: string | null;
+  /** What to send the model and what it answers across that. `{}` when the
+   *  notebook wrote no training features. */
+  model_card?: ModelCard;
+}
+
+/** One input of a trained model, with the range it saw in training. */
+export interface ModelInput {
+  name: string;
+  type?: 'number' | 'category';
+  min?: number | null;
+  p05?: number | null;
+  /** The typical value — the median, or the commonest category. */
+  median?: number | string | null;
+  p95?: number | null;
+  max?: number | null;
+  values?: string[];
+  missing?: number;
+  /** What the input is, in the notebook author's words. */
+  description?: string;
+  unit?: string;
+}
+
+/** A range of one input, and what the model answered for the training rows in it. */
+export interface EffectSegment {
+  from: number;
+  to: number;
+  prediction: string | number;
+  /** How many of the rows in this range got that answer. */
+  share: number;
+  rows: number;
+}
+
+export interface ModelEffect {
+  input: string;
+  segments?: EffectSegment[];
+  ranges?: { from: number; to: number; mean: number; rows: number }[];
+  categories?: { value: string; prediction?: string | number; share?: number; mean?: number; rows: number }[];
+}
+
+export interface ModelCard {
+  kind?: 'classifier' | 'regressor';
+  rows?: number;
+  inputs?: ModelInput[];
+  baseline?: {
+    values: (number | string | null)[];
+    prediction: unknown;
+    probabilities?: Record<string, number>;
+  };
+  effects?: ModelEffect[];
+  classes?: (string | number)[];
+  /** What the model predicts, when the notebook said. */
+  target?: { name: string; description: string };
+  /** What each answer means, when the notebook said. */
+  class_notes?: Record<string, string>;
+  note?: string;
+}
+
+/** When a project's model goes to production. */
+export interface DeployPolicy {
+  auto_deploy: boolean;
+  /** Any metric the notebook logs to MLflow. */
+  metric: string;
+  threshold: number;
+  /** Whether a higher or a lower value is better (errors like RMSE: lower). */
+  direction: 'higher' | 'lower';
+  /** Also require beating the version serving now. */
+  must_beat_serving: boolean;
+}
+
+export interface RunSettings {
+  policy: DeployPolicy;
+  /** The project set no policy and uses the platform's. */
+  is_default: boolean;
+  metrics_available: string[];
+  last_parameters: Record<string, TrainingParameter>;
+}
+
+export type TrainingParameter = number | string | boolean;
+
+/** One version of a model: a run that registered an artifact, deployed or not. */
+export interface ModelVersion {
+  version: string;
+  pipeline_id: string | null;
+  mlflow_run_id: string;
+  trained_at: string | null;
+  metrics: Record<string, number>;
+  accuracy: number | null;
+  branch: string;
+  commit_sha: string;
+  input_label: string;
+  /** The last time it was put in service; null if it never was. */
+  deployed_at: string | null;
+  is_active: boolean;
+  deployable: boolean;
+  parameters?: Record<string, TrainingParameter>;
 }
 
 export interface PredictionResult {
   prediction: unknown[];
   model_name: string;
   version: string;
+  /** Per row, each class's probability, when the model can say. */
+  probabilities?: Record<string, number>[] | null;
 }
 
 export interface HealthResponse {
@@ -197,12 +315,17 @@ export interface LoginPayload {
 export interface RegisterPayload {
   username: string;
   password: string;
-  invite_token: string;
+  email: string;
+  github_token: string;
+  invite_token?: string;
 }
+
+export type GithubTokenStatus = 'ok' | 'expiring' | 'invalid' | 'missing' | 'unknown';
 
 export interface TokenResponse {
   access_token: string;
   token_type: string;
+  github_token_status: GithubTokenStatus;
 }
 
 export interface UserResponse {
@@ -212,6 +335,10 @@ export interface UserResponse {
   email: string | null;
   is_active: boolean;
   created_at: string;
+  needs_password: boolean;
+  auth_provider: 'github' | 'token';
+  has_github_token: boolean;
+  github_token_masked: string;
 }
 
 export interface ChangePasswordPayload {
@@ -380,6 +507,10 @@ export interface Project {
   repository: ProjectRepository | null;
   sources: number;
   gold_rows: number;
+  /** The gold build a pipeline is handed; `null` until the gold layer is built. */
+  active_dataset: { id: number; name: string; size_bytes: number } | null;
+  /** The model the linked notebook already deployed; runs add versions to it. */
+  deployed_model?: string | null;
 }
 
 export type Layer = 'bronze' | 'silver' | 'gold';

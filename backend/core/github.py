@@ -41,6 +41,38 @@ def _headers(token: str) -> dict[str, str]:
     }
 
 
+async def check_github_token(token: str) -> str:
+    """Ping GitHub with ``token``: "ok", "expiring" (<7 days), "invalid" or "unknown".
+
+    A 401 means expired, revoked or wrong. Fine-grained/classic PATs with an
+    expiry report it in ``github-authentication-token-expiration``; OAuth tokens
+    don't expire but can be revoked, which the 401 catches.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if not token:
+        return "missing"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{_GITHUB_API}/user", headers=_headers(token))
+    except httpx.HTTPError:
+        return "unknown"
+    if resp.status_code == 401:
+        return "invalid"
+    if resp.status_code != 200:
+        return "unknown"
+    expiry = resp.headers.get("github-authentication-token-expiration")
+    if expiry:
+        try:
+            # e.g. "2026-11-05 12:00:00 UTC" or "... -0500"
+            when = datetime.strptime(expiry.replace("UTC", "+0000"), "%Y-%m-%d %H:%M:%S %z")
+        except ValueError:
+            return "ok"
+        if when - datetime.now(timezone.utc) < timedelta(days=7):
+            return "expiring"
+    return "ok"
+
+
 async def _find_existing_webhook(
     client: httpx.AsyncClient,
     owner: str,
@@ -65,17 +97,19 @@ async def create_webhook(
     token: str,
     webhook_url: str,
     secret: str,
+    active: bool = True,
 ) -> dict[str, Any]:
     """Create a push-event webhook on the repository.
 
-    If a webhook for ``webhook_url`` already exists, returns it without error.
+    If a webhook for ``webhook_url`` already exists, returns it without error
+    (its ``active`` flag is left as GitHub has it).
     Returns the GitHub API response body (includes ``id``).
     """
     owner, repo = parse_repo_url(repo_url)
     url = f"{_GITHUB_API}/repos/{owner}/{repo}/hooks"
     payload = {
         "name": "web",
-        "active": True,
+        "active": active,
         "events": ["push"],
         "config": {
             "url": webhook_url,
@@ -142,6 +176,27 @@ async def delete_webhook(
             owner=owner,
             repo=repo,
             hook_id=webhook_id,
+        )
+
+
+async def set_webhook_active(
+    repo_url: str,
+    token: str,
+    webhook_id: int,
+    active: bool,
+) -> None:
+    """Enable or disable a webhook without deleting it."""
+    owner, repo = parse_repo_url(repo_url)
+    url = f"{_GITHUB_API}/repos/{owner}/{repo}/hooks/{webhook_id}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(url, json={"active": active}, headers=_headers(token))
+        resp.raise_for_status()
+        logger.info(
+            "github.webhook_toggled",
+            owner=owner,
+            repo=repo,
+            hook_id=webhook_id,
+            active=active,
         )
 
 

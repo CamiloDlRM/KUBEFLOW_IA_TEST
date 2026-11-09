@@ -1,5 +1,7 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import AuthProviderIcon from './AuthProviderIcon';
+import { displayName } from '../utils/format';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon },
@@ -7,9 +9,10 @@ const navItems = [
   // now, and burying it under "My Repos" would put the code back in front of
   // the data.
   { to: '/projects', label: 'Projects', icon: ProjectsIcon },
+  { to: '/pipelines', label: 'Pipelines', icon: PipelinesIcon },
   { to: '/models', label: 'Models', icon: ModelsIcon },
   { to: '/repos/new', label: 'My Repos', icon: RepositoriesIcon },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon },
+  // The account is not here: it is opened rarely, so it sits with Sign out at the bottom.
 ];
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
@@ -21,13 +24,18 @@ function navLinkClass({ isActive }: { isActive: boolean }) {
 }
 
 export default function Layout() {
-  const { logout, isAdmin, currentUser } = useAuth();
+  const { logout, isAdmin, currentUser, githubTokenStatus } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+
+  const fullScreen = pathname.startsWith('/pipelines/canvas');
 
   function handleLogout() {
     logout();
     navigate('/login');
   }
+
+  if (currentUser?.needs_password) return <Navigate to="/set-password" replace />;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -52,14 +60,24 @@ export default function Layout() {
           )}
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-800">
-          <p className="font-body2 mb-2 truncate px-3 text-sm leading-tight max-w-xs text-slate-500">
-            Hello, {currentUser?.username}!
-            {isAdmin && (
-              <span className="ml-1 rounded-full bg-brand-600/20 px-1.5 py-0.5 text-brand-400">
-                admin
-              </span>
-            )}
-          </p>
+          {/* The name gets a line of its own and wraps, so a long one is never cut off.
+              Its @t/@g suffix is left out: the icon already says how the account signs in. */}
+          <div className="font-body2 mb-2 px-3 text-sm leading-tight text-slate-500">
+            <p className="flex items-center gap-1.5">
+              <AuthProviderIcon provider={currentUser?.auth_provider} />
+              Hello,
+              {isAdmin && (
+                <span className="rounded-full bg-brand-600/20 px-1.5 py-0.5 text-brand-400">admin</span>
+              )}
+            </p>
+            <p className="mt-1 break-words text-slate-300" title={currentUser?.username}>
+              {displayName(currentUser?.username)}!
+            </p>
+          </div>
+          <NavLink to="/account" className={navLinkClass}>
+            <SettingsIcon />
+            Account
+          </NavLink>
           <button
             onClick={handleLogout}
             className="flex w-full font-body2 items-center gap-2 rounded-lg px-3 py-2 text-base font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
@@ -84,6 +102,9 @@ export default function Layout() {
               <AdminIcon />
             </NavLink>
           )}
+          <NavLink to="/account" className={navLinkClass} aria-label="Account">
+            <SettingsIcon />
+          </NavLink>
           <button
             onClick={handleLogout}
             className="flex items-center rounded-lg px-3 py-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
@@ -94,7 +115,19 @@ export default function Layout() {
       </div>
 
       {/* Main content */}
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6 pt-16 md:pt-6">
+      <main className={`min-h-0 min-w-0 flex-1 ${fullScreen ? 'overflow-hidden pt-16 md:pt-0' : 'overflow-y-auto p-6 pt-16 md:pt-6'}`}>
+        {(githubTokenStatus === 'invalid' || githubTokenStatus === 'expiring') && (
+          <div role="alert" className="mb-4 rounded-lg border border-yellow-700 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
+            {githubTokenStatus === 'invalid'
+              ? 'Your GitHub token has expired or is not valid. Repositories using it will fail.'
+              : 'Your GitHub token expires in less than 7 days.'}{' '}
+            {currentUser?.auth_provider === 'github' ? (
+              'Sign in again with GitHub to renew it.'
+            ) : (
+              <Link to="/account" className="font-medium underline hover:text-yellow-200">Update it in your account</Link>
+            )}
+          </div>
+        )}
         <Outlet />
       </main>
     </div>
@@ -127,6 +160,14 @@ function ModelsIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+    </svg>
+  );
+}
+
+function PipelinesIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h4v4H4zM16 14h4v4h-4zM8 8h4a2 2 0 012 2v4a2 2 0 002 2" />
     </svg>
   );
 }

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+  GithubTokenStatus,
   Repository,
   CreateRepoPayload,
   RepoCreatedResponse,
@@ -43,6 +44,10 @@ import type {
   PipelineInputOptions,
   PipelineInputState,
   RepoNotebook,
+  ModelVersion,
+  DeployPolicy,
+  RunSettings,
+  TrainingParameter,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -103,6 +108,35 @@ export async function login(payload: LoginPayload): Promise<TokenResponse> {
 
 export async function register(payload: RegisterPayload): Promise<UserResponse> {
   const { data } = await apiClient.post<UserResponse>('/auth/register', payload);
+  return data;
+}
+
+export const GITHUB_LOGIN_URL = `${API_BASE}/auth/github/login`;
+
+export async function githubConfirmNew(pending: string): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/github/confirm-new', { pending });
+  return data;
+}
+
+export async function setPassword(password: string): Promise<UserResponse> {
+  const { data } = await apiClient.post<UserResponse>('/auth/set-password', { password });
+  return data;
+}
+
+export async function updateGithubToken(github_token: string): Promise<UserResponse> {
+  const { data } = await apiClient.put<UserResponse>('/auth/github-token', { github_token });
+  return data;
+}
+
+/** Pings GitHub with the stored token: whether it still works, and if it expires soon. */
+export async function getGithubTokenStatus(): Promise<GithubTokenStatus> {
+  const { data } = await apiClient.get<{ status: GithubTokenStatus }>('/auth/github-token/status');
+  return data.status;
+}
+
+/** A fresh token for a still-valid one; keeps the session open while it is used. */
+export async function refreshToken(): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/refresh');
   return data;
 }
 
@@ -178,25 +212,25 @@ export async function triggerPipeline(
 }
 
 /** The notebook as `branch` has it now, by phase. Defaults to the repo's branch. */
-export async function getRepoNotebook(repoId: number, branch = ''): Promise<RepoNotebook> {
-  const { data } = await apiClient.get<RepoNotebook>(`/repos/${repoId}/notebook`, {
+export async function getProjectNotebook(projectId: number, branch = ''): Promise<RepoNotebook> {
+  const { data } = await apiClient.get<RepoNotebook>(`/projects/${projectId}/notebook`, {
     params: branch ? { branch } : {},
   });
   return data;
 }
 
-export async function getPipelineInput(repoId: number): Promise<PipelineInputState> {
-  const { data } = await apiClient.get<PipelineInputState>(`/repos/${repoId}/pipeline-input`);
+export async function getPipelineInput(projectId: number): Promise<PipelineInputState> {
+  const { data } = await apiClient.get<PipelineInputState>(`/projects/${projectId}/pipeline-input`);
   return data;
 }
 
 /** Point the pipeline at a layer. An empty choice goes back to the active dataset. */
 export async function setPipelineInput(
-  repoId: number,
+  projectId: number,
   choice: PipelineInputChoice,
 ): Promise<PipelineInputState> {
   const { data } = await apiClient.put<PipelineInputState>(
-    `/repos/${repoId}/pipeline-input`,
+    `/projects/${projectId}/pipeline-input`,
     choice,
   );
   return data;
@@ -215,6 +249,33 @@ export async function getPipelineInputOptions(projectId: number): Promise<Pipeli
 
 export async function getProjects(): Promise<Project[]> {
   const { data } = await apiClient.get<Project[]>('/projects');
+  return data;
+}
+
+export async function runProject(
+  projectId: number,
+  modelName: string,
+  parameters: Record<string, TrainingParameter> = {},
+): Promise<TriggerAccepted> {
+  const { data } = await apiClient.post<TriggerAccepted>(`/projects/${projectId}/run`, {
+    model_name: modelName,
+    parameters,
+  });
+  return data;
+}
+
+/** The project's deployment policy, its runs' metrics and its last parameters. */
+export async function getRunSettings(projectId: number): Promise<RunSettings> {
+  const { data } = await apiClient.get<RunSettings>(`/projects/${projectId}/run-settings`);
+  return data;
+}
+
+/** Change part of the policy, or `{ reset: true }` to go back to the platform's. */
+export async function setDeployPolicy(
+  projectId: number,
+  changes: Partial<DeployPolicy> & { reset?: boolean },
+): Promise<RunSettings> {
+  const { data } = await apiClient.put<RunSettings>(`/projects/${projectId}/deploy-policy`, changes);
   return data;
 }
 
@@ -325,10 +386,10 @@ export async function getDatasetPreview(datasetId: number): Promise<DatasetPrevi
 export async function getPipelines(
   page = 1,
   size = 20,
-  repoId?: number,
+  projectId?: number,
 ): Promise<PaginatedPipelines> {
   const { data } = await apiClient.get<PaginatedPipelines>('/pipelines', {
-    params: repoId === undefined ? { page, size } : { page, size, repo_id: repoId },
+    params: projectId === undefined ? { page, size } : { page, size, project_id: projectId },
   });
   return data;
 }
@@ -393,10 +454,23 @@ export async function predict(
   return data;
 }
 
-export async function rollbackModel(modelName: string): Promise<ModelDeployment> {
-  const { data } = await apiClient.post<ModelDeployment>(
-    `/models/${modelName}/rollback`,
-  );
+/** Every version of a model that can be served, newest first. */
+export async function getModelVersions(modelName: string): Promise<ModelVersion[]> {
+  const { data } = await apiClient.get<ModelVersion[]>(`/models/${modelName}/versions`);
+  return data;
+}
+
+/**
+ * Put one version of a model in service, named by the run that trained it.
+ * Older or newer, deployed before or not: the run is what makes it exact.
+ */
+export async function serveModelVersion(
+  modelName: string,
+  pipelineId: string,
+): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>(`/models/${modelName}/rollback`, {
+    pipeline_id: pipelineId,
+  });
   return data;
 }
 
@@ -449,6 +523,8 @@ export interface CreateSourceRequest {
   database: string;
   username: string;
   password_env: string;
+  /** Sent once, stored encrypted, never returned. */
+  password?: string;
   extraction_sql: string;
   watermark_column: string;
   normalize_text_column?: string;
@@ -488,7 +564,7 @@ export async function getIngestionRuns(sourceId: number): Promise<IngestionRun[]
  * it. Nothing is stored and no watermark moves.
  */
 export async function previewSource(
-  body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number },
+  body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number; source_id?: number },
 ): Promise<SourcePreview> {
   const { data } = await apiClient.post<SourcePreview>('/sources/preview', body);
   return data;

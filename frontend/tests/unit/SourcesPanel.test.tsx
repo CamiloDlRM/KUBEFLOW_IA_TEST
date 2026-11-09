@@ -138,6 +138,13 @@ describe('SourcesPanel', () => {
     await waitFor(() => expect(runIngestion).toHaveBeenCalledWith(1));
   });
 
+  it('shows an extraction in progress without expanding the source', async () => {
+    getIngestionRuns.mockResolvedValue([{ ...RUN, status: 'running' }]);
+    renderPanel();
+    expect(await screen.findByText(/this can take a few minutes/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /extracting/i })).toBeDisabled();
+  });
+
   it('shows what normalisation achieved, including what it refused', async () => {
     renderPanel();
     await userEvent.click(await screen.findByText('Hospital HIS'));
@@ -255,15 +262,12 @@ describe('SourcesPanel', () => {
     expect(await screen.findByText(/stored without normalising/i)).toBeInTheDocument();
   });
 
-  it('asks for a variable name, not a password', async () => {
+  it('takes a password directly or a variable name', async () => {
     renderPanel();
     await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
 
-    expect(
-      screen.getByText(/the name of a variable set on the worker/i),
-    ).toBeInTheDocument();
-    // Never a password input: there is no password to collect.
-    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(screen.getByText(/the name of a variable set on the worker/i)).toBeInTheDocument();
+    expect(document.querySelector('input[type="password"]')).not.toBeNull();
   });
 
   it('submits a new source', async () => {
