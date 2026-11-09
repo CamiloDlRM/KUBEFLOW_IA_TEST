@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { Archive, Check, Copy, Rocket } from 'lucide-react';
 import type { MountedInput, Pipeline } from '../../types';
 import CodeEditor from './CodeEditor';
@@ -103,10 +104,6 @@ function stepState(status: string | undefined, runFinished: boolean): StepState 
   return runFinished ? 'skipped' : 'pending';
 }
 
-function endpointOf(deployLog: string | undefined): string | undefined {
-  return deployLog?.match(/Endpoint: (\S+)/)?.[1];
-}
-
 function CopyValue({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -169,13 +166,18 @@ const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   </div>
 );
 
-/** What became of a run's model: its registration in MLflow, its deployment and its metrics. */
-export function ModelSummary({ run }: { run: Pipeline }) {
+/**
+ * What became of a run's model: its registration in MLflow, its deployment and its metrics.
+ *
+ * Deployed, it shows the model's public link (`shareUrl`) rather than the
+ * model-server address in the deploy log: that one is internal to the
+ * platform's network and answers nobody outside it.
+ */
+export function ModelSummary({ run, shareUrl }: { run: Pipeline; shareUrl?: string | null }) {
   const phases = latestPhases(run.phases);
   const finished = run.status === 'success' || run.status === 'failed';
   const register = stepState(phases.register?.status, finished);
   const deploy = stepState(phases.deploy?.status, finished);
-  const endpoint = endpointOf(phases.deploy?.logs);
   const reason = typeof run.metrics.deploy_reason === 'string' ? run.metrics.deploy_reason : undefined;
   const accuracy = typeof run.metrics.accuracy === 'number' ? run.metrics.accuracy : undefined;
   const metrics = Object.entries(run.metrics).filter(
@@ -216,10 +218,23 @@ export function ModelSummary({ run }: { run: Pipeline }) {
           state={deploy}
           stateLabel={deploy === 'done' ? 'Live' : undefined}
         >
-          {endpoint ? (
-            <Field label="Endpoint">
-              <CopyValue value={endpoint} label="endpoint" />
-            </Field>
+          {deploy === 'done' ? (
+            shareUrl ? (
+              <Field label="Public link">
+                <CopyValue value={shareUrl} label="public link" />
+                <p className="text-[11px] text-slate-500">
+                  Anyone with it can ask for predictions, no sign-in. It answers with whichever version is serving.
+                </p>
+              </Field>
+            ) : (
+              <p className="text-xs text-slate-400">
+                Not shared yet.{' '}
+                <Link to="/models" className="text-brand-400 hover:underline">
+                  Share a public link from Models
+                </Link>{' '}
+                so anyone can call it without signing in.
+              </p>
+            )
           ) : deploy === 'failed' ? (
             <p className="text-xs text-red-300">{phases.deploy?.logs}</p>
           ) : (

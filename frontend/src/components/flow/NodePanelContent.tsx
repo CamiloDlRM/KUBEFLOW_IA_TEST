@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, type UseMutationResult } from '@tanstack/react-query';
 import { Database, Info } from 'lucide-react';
-import { getPipelineInput, getPipelineInputOptions, getWsUrl } from '../../api/client';
+import { getModels, getPipelineInput, getPipelineInputOptions, getWsUrl } from '../../api/client';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { MountedInput, Pipeline, PipelineInputChoice, PipelineInputState } from '../../types';
 import { truncate } from '../../utils/format';
@@ -231,6 +231,11 @@ export function PhasePanel({ phaseId, projectId, view }: { phaseId: string } & N
 /** Registration in MLflow and, when the metrics clear the bar, deployment — plus the run's metrics and logs. */
 export function ModelPanel({ view, openMaia }: NodePanelContext) {
     const run = view.shownRun;
+    // The model's public link, from the same list the Models page shows, so
+    // sharing it there shows here too. Asked only once the run deployed it.
+    const deployed = latestPhases(run?.phases ?? []).deploy?.status === 'success';
+    const models = useQuery({ queryKey: ['models'], queryFn: getModels, enabled: deployed });
+    const shareUrl = models.data?.find((m) => m.model_name === run?.model_name)?.share_url ?? null;
     if (!run) {
         return (
             <p className="text-sm text-slate-400">
@@ -249,7 +254,7 @@ export function ModelPanel({ view, openMaia }: NodePanelContext) {
     return (
         <div className="space-y-6">
             <section className="space-y-3">
-                <ModelSummary run={run} />
+                <ModelSummary run={run} shareUrl={shareUrl} />
             </section>
 
             <section>

@@ -15,6 +15,7 @@ vi.mock('../../src/api/client', () => ({
   getWsUrl: (id: string) => `ws://test/${id}`,
   getPipelineInput: vi.fn(),
   getPipelineInputOptions: vi.fn(),
+  getModels: () => Promise.resolve([]),
 }));
 vi.mock('../../src/hooks/useWebSocket', () => ({
   useWebSocket: (url: string | null) => useWebSocket(url),

@@ -10,6 +10,7 @@ import righarrow_icon from '../assets/rightarrow_icon.svg';
 import { PipelineTimeline, type PipelineStep } from '@/components/PipelineTimeline';
 import { Database, GitBranch, Cpu, Rocket, LineChart, ShieldCheck, Sparkles, ChevronDown, BookOpen } from "lucide-react";
 import AboutUs from "@/components/AboutUs/AboutUs";
+import LandingMaia, { type LandingStop } from '@/components/LandingMaia';
 
 
 const steps: PipelineStep[] = [

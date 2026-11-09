@@ -188,6 +188,18 @@ export interface ModelDeployment {
   /** What to send the model and what it answers across that. `{}` when the
    *  notebook wrote no training features. */
   model_card?: ModelCard;
+  /** The model's public link, which answers anyone without signing in. Null when not shared. */
+  share_url?: string | null;
+}
+
+/** A model's public link, as its owner sees it. */
+export interface ShareLink {
+  model_name: string;
+  enabled: boolean;
+  url: string | null;
+  per_ip_per_minute: number;
+  per_link_per_minute: number;
+  max_rows: number;
 }
 
 /** One input of a trained model, with the range it saw in training. */

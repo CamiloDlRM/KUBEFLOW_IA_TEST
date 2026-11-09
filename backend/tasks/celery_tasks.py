@@ -25,6 +25,7 @@ from celery import Celery
 from celery.signals import worker_process_init, worker_shutting_down
 
 from core.config import get_settings
+from core.model_server import model_server_headers
 from core.metrics import (
     pipeline_finished,
     pipeline_started,
@@ -1133,6 +1134,7 @@ def run_pipeline(
                             "mlflow_run_id": mlflow_run_id,
                             "version": model_version,
                         },
+                        headers=model_server_headers(settings),
                         timeout=120,
                     )
                     deploy_resp.raise_for_status()

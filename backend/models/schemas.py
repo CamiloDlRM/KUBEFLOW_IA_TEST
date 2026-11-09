@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
@@ -234,6 +234,28 @@ class ModelDeployment(SQLModel, table=True):
     deployed_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
     pipeline_id: str | None = SQLField(default=None, foreign_key="pipelines.id")
+
+
+class ModelShareLink(SQLModel, table=True):
+    """The public link to a model: anyone holding it can ask for predictions.
+
+    One per model *name*, so the link survives new versions and rollbacks: it
+    always answers with whichever version is serving. The URL carries a random
+    token rather than the name, because names are short words anyone can guess
+    and walk through; a token can only be had from someone who shared it.
+    """
+
+    __tablename__ = "model_share_links"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    model_name: str = SQLField(index=True, unique=True)
+    #: 32 bytes from ``secrets.token_urlsafe``: unguessable, and URL-safe as is.
+    token: str = SQLField(index=True, unique=True)
+    #: Off stops the link answering without forgetting it; turning it back on
+    #: restores the same URL. Regenerating the token is how a leaked one dies.
+    enabled: bool = SQLField(default=True)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    created_by: int | None = SQLField(default=None, foreign_key="users.id")
 
 
 class PipelineInsight(SQLModel, table=True):
@@ -581,15 +603,31 @@ class RepoCreateRequest(BaseModel):
 
 
 class PredictRequest(BaseModel):
-    """Payload for model inference."""
+    """Payload for model inference.
+
+    Shaped here, before any of it reaches a model: numbers only and finite
+    (NaN and Infinity parse as JSON but mean nothing to a model), at least one
+    row, and every row the same length. How many rows, and how long a row must
+    be for *this* model, are checked by the endpoint (core.predict_input).
+    """
 
     model_config = ConfigDict(strict=True)
 
-    data: list[list[float]] = Field(
+    data: list[list[FiniteFloat]] = Field(
         ...,
+        min_length=1,
         description="2-D array of feature vectors.",
         examples=[[[5.1, 3.5, 1.4, 0.2]]],
     )
+
+    @field_validator("data")
+    @classmethod
+    def _rows_are_rectangular(cls, data: list[list[float]]) -> list[list[float]]:
+        if any(len(row) == 0 for row in data):
+            raise ValueError("every row needs at least one number")
+        if len({len(row) for row in data}) > 1:
+            raise ValueError("every row must have the same number of values")
+        return data
 
 
 class LoadModelRequest(BaseModel):
@@ -844,6 +882,45 @@ class ModelDeploymentResponse(BaseModel):
     #: The card of the run that produced it — what to send it, in what range,
     #: and what it answers across that. Empty for models trained before cards.
     model_card: dict[str, Any] = Field(default_factory=dict)
+    #: The model's public link: where anyone can ask it for predictions without
+    #: signing in. None when it has never been shared or is switched off.
+    share_url: str | None = None
+
+
+class ShareLinkResponse(BaseModel):
+    """A model's public link, as its owner sees it."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_name: str
+    enabled: bool
+    #: The full URL to share. None until the link is first switched on.
+    url: str | None = None
+    #: Requests one client may make per minute, and the link may answer in all.
+    per_ip_per_minute: int
+    per_link_per_minute: int
+    max_rows: int
+
+
+class ShareLinkUpdate(BaseModel):
+    """Switch a model's public link on or off."""
+
+    enabled: bool
+
+
+class PublicModelInfo(BaseModel):
+    """What a public link answers to GET: enough to call it correctly, nothing more."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_name: str
+    version: str
+    #: Each input in the order a row must list them: name and, when known, type.
+    inputs: list[dict[str, Any]] = Field(default_factory=list)
+    #: The classes a classifier answers with, when it says.
+    classes: list[Any] = Field(default_factory=list)
+    max_rows: int
+    per_ip_per_minute: int
 
 
 class PredictResponse(BaseModel):

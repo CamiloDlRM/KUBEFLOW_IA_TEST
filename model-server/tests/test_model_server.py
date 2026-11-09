@@ -225,3 +225,47 @@ class TestProbabilities:
 
         assert body["prediction"] == [6.0]
         assert body["probabilities"] is None
+
+
+class TestHardening:
+    """The model-server answers the platform only, and only well-formed input."""
+
+    def test_every_endpoint_but_health_needs_the_internal_token(self, model_server_client, loaded_model, monkeypatch):
+        from server import settings
+
+        monkeypatch.setattr(settings, "model_server_internal_token", "s3cret")
+
+        assert model_server_client.get("/health").status_code == 200
+        assert model_server_client.get("/models").status_code == 401
+        assert model_server_client.delete("/models/test-model").status_code == 401
+        assert model_server_client.post("/predict/test-model", json={"data": [[1.0]]}).status_code == 401
+        assert model_server_client.post(
+            "/internal/load/x", json={"mlflow_run_id": "r", "version": "1"}
+        ).status_code == 401
+        wrong = model_server_client.get("/models", headers={"X-Internal-Token": "guess"})
+        assert wrong.status_code == 401
+        assert model_server_client.get("/models", headers={"X-Internal-Token": "s3cret"}).status_code == 200
+
+    def test_rejects_nan_ragged_rows_and_empty_data(self, model_server_client, loaded_model):
+        for body in ('{"data": [[NaN, 1.0]]}', '{"data": [[1.0], [1.0, 2.0]]}', '{"data": []}'):
+            resp = model_server_client.post(
+                "/predict/test-model", content=body, headers={"Content-Type": "application/json"}
+            )
+            assert resp.status_code == 422, body
+
+    def test_a_row_of_the_wrong_length_is_refused_before_the_model(self, model_server_client, mock_model, loaded_model):
+        mock_model.n_features_in_ = 4
+
+        resp = model_server_client.post("/predict/test-model", json={"data": [[1.0, 2.0]]})
+
+        assert resp.status_code == 422
+        assert "4 values" in resp.json()["detail"]
+        mock_model.predict.assert_not_called()
+
+    def test_a_failure_does_not_leak_the_exception_text(self, model_server_client, mock_model, loaded_model):
+        mock_model.predict.side_effect = ValueError("/secret/path/model.joblib shape (3,) mismatch")
+
+        resp = model_server_client.post("/predict/test-model", json={"data": [[1.0, 2.0, 3.0]]})
+
+        assert resp.status_code == 500
+        assert "/secret/path" not in resp.text
