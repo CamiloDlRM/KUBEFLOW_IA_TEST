@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -11,6 +11,7 @@ const deleteSource = vi.fn();
 const runIngestion = vi.fn();
 const getIngestionRuns = vi.fn();
 const previewSource = vi.fn();
+const getSourcePasswordEnvs = vi.fn().mockResolvedValue([]);
 
 vi.mock('../../src/api/client', () => ({
   getSources: (...args: unknown[]) => getSources(...args),
@@ -19,6 +20,7 @@ vi.mock('../../src/api/client', () => ({
   runIngestion: (...args: unknown[]) => runIngestion(...args),
   getIngestionRuns: (...args: unknown[]) => getIngestionRuns(...args),
   previewSource: (...args: unknown[]) => previewSource(...args),
+  getSourcePasswordEnvs: () => getSourcePasswordEnvs(),
 }));
 
 const SOURCE: DataSource = {
@@ -266,7 +268,7 @@ describe('SourcesPanel', () => {
     renderPanel();
     await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
 
-    expect(screen.getByText(/the name of a variable set on the worker/i)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /password environment variable/i })).toBeInTheDocument();
     expect(document.querySelector('input[type="password"]')).not.toBeNull();
   });
 
@@ -276,9 +278,9 @@ describe('SourcesPanel', () => {
     await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
 
     await userEvent.type(screen.getByPlaceholderText('Hospital HIS'), 'HIS');
-    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
-    // Database and username share a placeholder, so address them by position.
-    const [database, username] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(screen.getByPlaceholderText('aws-0-<region>.pooler.supabase.com'), 'db');
+    const database = screen.getByPlaceholderText('postgres');
+    const username = screen.getByPlaceholderText('postgres.<project-ref>');
     await userEvent.type(database, 'hosp');
     await userEvent.type(username, 'user');
     await userEvent.click(screen.getByRole('button', { name: /connect source/i }));
@@ -300,8 +302,9 @@ describe('SourcesPanel', () => {
     });
     renderPanel();
     await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
-    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
-    const [database, username] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(screen.getByPlaceholderText('aws-0-<region>.pooler.supabase.com'), 'db');
+    const database = screen.getByPlaceholderText('postgres');
+    const username = screen.getByPlaceholderText('postgres.<project-ref>');
     await userEvent.type(database, 'hosp');
     await userEvent.type(username, 'user');
 
@@ -327,8 +330,9 @@ describe('SourcesPanel', () => {
     });
     renderPanel();
     await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
-    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
-    const [db2, user2] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(screen.getByPlaceholderText('aws-0-<region>.pooler.supabase.com'), 'db');
+    const db2 = screen.getByPlaceholderText('postgres');
+    const user2 = screen.getByPlaceholderText('postgres.<project-ref>');
     await userEvent.type(db2, 'h');
     await userEvent.type(user2, 'u');
     await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
@@ -340,8 +344,9 @@ describe('SourcesPanel', () => {
     previewSource.mockRejectedValue(new Error('relation "procedures" does not exist'));
     renderPanel();
     await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
-    await userEvent.type(screen.getByPlaceholderText('hospital-db'), 'db');
-    const [db3, user3] = screen.getAllByPlaceholderText('hospital');
+    await userEvent.type(screen.getByPlaceholderText('aws-0-<region>.pooler.supabase.com'), 'db');
+    const db3 = screen.getByPlaceholderText('postgres');
+    const user3 = screen.getByPlaceholderText('postgres.<project-ref>');
     await userEvent.type(db3, 'h');
     await userEvent.type(user3, 'u');
     await userEvent.click(screen.getByRole('button', { name: /preview data/i }));
@@ -361,5 +366,52 @@ describe('SourcesPanel', () => {
     renderPanel();
 
     expect(await screen.findByText(/no source connected/i)).toBeInTheDocument();
+  });
+});
+
+describe('the Supabase guide', () => {
+  it('says only Supabase is supported, and opens to how to connect it', async () => {
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+
+    const toggle = screen.getByRole('button', { name: /only supabase is supported/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    // Scoped to the guide: the form's example query says the same thing.
+    const guide = within(document.getElementById('supabase-guide')!);
+    expect(guide.getByText(/Session pooler/)).toBeInTheDocument();
+    expect(guide.getByText(/SUPABASE_DB_PASSWORD=/)).toBeInTheDocument();
+    expect(guide.getByText(/WHERE recorded_at > :watermark/)).toBeInTheDocument();
+  });
+});
+
+describe('the password variable', () => {
+  it('is chosen from the variables set on the platform, not typed', async () => {
+    getSourcePasswordEnvs.mockResolvedValue(['HOSPITAL_DB_PASSWORD', 'SUPABASE_DB_PASSWORD']);
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+
+    const select = screen.getByRole('combobox', { name: /password environment variable/i });
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'None — use the password above',
+      'HOSPITAL_DB_PASSWORD',
+      'SUPABASE_DB_PASSWORD',
+    ]);
+
+    await userEvent.selectOptions(select, 'SUPABASE_DB_PASSWORD');
+    expect(select).toHaveValue('SUPABASE_DB_PASSWORD');
+  });
+
+  it('says how to add one when none is set', async () => {
+    getSourcePasswordEnvs.mockResolvedValue([]);
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /add source/i }));
+
+    expect(await screen.findByText(/None set yet/)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /password environment variable/i })).toBeDisabled();
   });
 });

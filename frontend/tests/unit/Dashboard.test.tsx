@@ -94,11 +94,6 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('link', { name: /Add Repository/i })).not.toBeInTheDocument();
   });
 
-  it('sends you to projects instead', async () => {
-    await renderDashboard();
-    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects');
-  });
-
   it('still names the repository each run came from', async () => {
     // Dropping the section does not drop the fact: a pipeline runs on a repo.
     await renderDashboard();

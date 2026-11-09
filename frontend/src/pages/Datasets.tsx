@@ -15,6 +15,7 @@ import Spinner from '../components/Spinner';
 import SourcesPanel from '../components/SourcesPanel';
 import MedallionPanel from '../components/MedallionPanel';
 import { formatDate, formatBytes, repoNameFromUrl } from '../utils/format';
+import MaiaEmptyState from '../components/MaiaEmptyState';
 
 const ACCEPTED = '.csv,.parquet';
 
@@ -100,11 +101,7 @@ export default function Datasets() {
       )}
 
       {datasets && datasets.length === 0 && (
-        <div className="rounded-lg border border-dashed border-slate-700 py-16 text-center">
-          <p className="text-slate-400">
-            No datasets uploaded yet. Upload a CSV or parquet file to get started.
-          </p>
-        </div>
+        <MaiaEmptyState>No datasets uploaded yet. Upload a CSV or parquet file to get started.</MaiaEmptyState>
       )}
 
       {datasets && datasets.length > 0 && (

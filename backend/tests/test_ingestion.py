@@ -378,15 +378,23 @@ class TestPasswordResolution:
     def test_missing_environment_variable_is_a_clear_error(self, monkeypatch):
         from core.ingestion import resolve_password
 
-        monkeypatch.delenv("SOME_SOURCE_PASSWORD", raising=False)
+        monkeypatch.delenv("SOME_SOURCE_DB_PASSWORD", raising=False)
         with pytest.raises(IngestionError, match="is not set on the worker"):
-            resolve_password(make_source(password_env="SOME_SOURCE_PASSWORD"))
+            resolve_password(make_source(password_env="SOME_SOURCE_DB_PASSWORD"))
 
     def test_password_comes_from_the_environment(self, monkeypatch):
         from core.ingestion import resolve_password
 
-        monkeypatch.setenv("SOME_SOURCE_PASSWORD", "s3cret")
-        assert resolve_password(make_source(password_env="SOME_SOURCE_PASSWORD")) == "s3cret"
+        monkeypatch.setenv("SOME_SOURCE_DB_PASSWORD", "s3cret")
+        assert resolve_password(make_source(password_env="SOME_SOURCE_DB_PASSWORD")) == "s3cret"
+
+    def test_a_source_saved_naming_a_platform_secret_cannot_read_it(self, monkeypatch):
+        """Checked on the worker too, for sources stored before the rule existed."""
+        from core.ingestion import resolve_password
+
+        monkeypatch.setenv("JWT_SECRET_KEY", "do-not-send")
+        with pytest.raises(IngestionError, match="cannot be used as a source password"):
+            resolve_password(make_source(password_env="JWT_SECRET_KEY"))
 
     def test_no_variable_named_means_no_password(self):
         from core.ingestion import resolve_password

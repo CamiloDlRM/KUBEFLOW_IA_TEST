@@ -6,6 +6,7 @@ import {
   getIngestionRuns,
   getSources,
   previewSource,
+  getSourcePasswordEnvs,
   runIngestion,
   type CreateSourceRequest,
 } from '../api/client';
@@ -17,6 +18,7 @@ import type {
   SourcePreview,
 } from '../types';
 import Spinner from './Spinner';
+import SupabaseGuide from './SupabaseGuide';
 
 /**
  * Connecting an external system and extracting from it.
@@ -536,6 +538,13 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
     onSuccess: onDone,
   });
 
+  // The variables set on the platform that a source may use, for the dropdown.
+  const passwordEnvs = useQuery({
+    queryKey: ['source-password-envs'],
+    queryFn: getSourcePasswordEnvs,
+    staleTime: 60_000,
+  });
+
   // Looking before committing. The query runs against a live database, so
   // seeing ten rows first is the difference between writing it and guessing.
   const look = useMutation({
@@ -568,6 +577,8 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
       }}
       className="space-y-4 border-b border-slate-800 bg-slate-950/40 px-5 py-5"
     >
+      <SupabaseGuide />
+
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="text-sm">
           <span className="text-slate-400">Name</span>
@@ -585,7 +596,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
             required
             value={form.host}
             onChange={(e) => set('host')(e.target.value)}
-            placeholder="hospital-db"
+            placeholder="aws-0-<region>.pooler.supabase.com"
             className={`mt-1 ${field}`}
           />
         </label>
@@ -595,7 +606,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
             required
             value={form.database}
             onChange={(e) => set('database')(e.target.value)}
-            placeholder="hospital"
+            placeholder="postgres"
             className={`mt-1 ${field}`}
           />
         </label>
@@ -605,7 +616,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
             required
             value={form.username}
             onChange={(e) => set('username')(e.target.value)}
-            placeholder="hospital"
+            placeholder="postgres.<project-ref>"
             className={`mt-1 ${field}`}
           />
         </label>
@@ -627,16 +638,25 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
 
       <label className="block text-sm">
         <span className="text-slate-400">Password environment variable</span>
-        <input
+        <select
           value={form.password_env}
-          onChange={(e) => set('password_env')(e.target.value.toUpperCase())}
-          placeholder="HOSPITAL_DB_PASSWORD"
-          pattern="[A-Z0-9_]*"
-          className={`mt-1 font-display ${field}`}
-        />
+          onChange={(e) => set('password_env')(e.target.value)}
+          disabled={!passwordEnvs.data?.length}
+          className={`mt-1 font-display ${field} disabled:opacity-60`}
+        >
+          <option value="">None — use the password above</option>
+          {passwordEnvs.data?.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
         <span className="mt-1 block text-xs text-slate-500">
-          Optional: the name of a variable set on the worker, for operator-provisioned
-          credentials.
+          {passwordEnvs.isError
+            ? 'Could not load the variables set on the platform.'
+            : passwordEnvs.data && passwordEnvs.data.length === 0
+              ? "None set yet. Add one named <NAME>_DB_PASSWORD to the platform's .env and restart the backend and worker."
+              : 'Optional: a variable set on the platform, named <NAME>_DB_PASSWORD, for operator-provisioned credentials.'}
         </span>
       </label>
 

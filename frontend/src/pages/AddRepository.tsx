@@ -6,6 +6,7 @@ import { createRepo, getRepoBranches, getRepoNotebooks, getRepos } from '../api/
 import type { LinkedNotebook, Repository } from '../types';
 import Spinner from '../components/Spinner';
 import { ChevronDown } from 'lucide-react';
+import MaiaEmptyState from '../components/MaiaEmptyState';
 
 const GITHUB_URL_REGEX = /^https:\/\/github\.com\/[\w.\-]+\/[\w.\-]+\/?$/;
 
@@ -143,9 +144,10 @@ export default function AddRepository() {
           </p>
         )}
         {repos.data?.length === 0 && (
-          <p className="rounded-lg border border-dashed border-slate-700 px-4 py-8 text-center text-sm text-slate-500">
-            No repositories registered yet.
-          </p>
+          <MaiaEmptyState>
+            No repositories registered yet. Add one with its GitHub URL and its notebooks become available to your
+            projects.
+          </MaiaEmptyState>
         )}
         {repos.data && repos.data.length > 0 && (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
