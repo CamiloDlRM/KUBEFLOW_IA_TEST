@@ -58,7 +58,7 @@ class AppSettings(BaseSettings):
 
     # --- Public prediction links ---
     public_predict_per_ip_per_minute: int = Field(
-        default=60,
+        default=30,
         description="Predictions one client IP may ask of one public link per minute.",
     )
     public_predict_per_link_per_minute: int = Field(
