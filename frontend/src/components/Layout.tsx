@@ -1,6 +1,7 @@
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import AuthProviderIcon from './AuthProviderIcon';
+import { displayName } from '../utils/format';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon },
@@ -59,15 +60,20 @@ export default function Layout() {
           )}
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-800">
-          <p className="font-body2 mb-2 truncate px-3 text-sm leading-tight max-w-xs text-slate-500">
-            <AuthProviderIcon provider={currentUser?.auth_provider} />{' '}
-            Hello, {currentUser?.username}!
-            {isAdmin && (
-              <span className="ml-1 rounded-full bg-brand-600/20 px-1.5 py-0.5 text-brand-400">
-                admin
-              </span>
-            )}
-          </p>
+          {/* The name gets a line of its own and wraps, so a long one is never cut off.
+              Its @t/@g suffix is left out: the icon already says how the account signs in. */}
+          <div className="font-body2 mb-2 px-3 text-sm leading-tight text-slate-500">
+            <p className="flex items-center gap-1.5">
+              <AuthProviderIcon provider={currentUser?.auth_provider} />
+              Hello,
+              {isAdmin && (
+                <span className="rounded-full bg-brand-600/20 px-1.5 py-0.5 text-brand-400">admin</span>
+              )}
+            </p>
+            <p className="mt-1 break-words text-slate-300" title={currentUser?.username}>
+              {displayName(currentUser?.username)}!
+            </p>
+          </div>
           <NavLink to="/account" className={navLinkClass}>
             <SettingsIcon />
             Account

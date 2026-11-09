@@ -49,10 +49,13 @@ export default function AddRepository() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-bold text-slate-100">My Repos</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Register a GitHub repository to monitor for notebook changes. A webhook will be
-              created to trigger pipelines on push events.
-            </p>
+            <div>
+              <h3 className="text-lg font-semibold text-slate-200 pt-4">Add a new repository</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Register a GitHub repository to monitor for notebook changes. A webhook will be
+                created to trigger pipelines on push events.
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -80,7 +83,7 @@ export default function AddRepository() {
 
       {/* Form */}
       {formOpen && (
-        <form id="add-repository-form" onSubmit={handleSubmit} className="mx-auto max-w-lg space-y-5 rounded-lg border border-slate-700 bg-slate-900/40 p-5">
+        <form id="add-repository-form" onSubmit={handleSubmit} className="mx-auto max-w-lg space-y-3 rounded-lg border border-slate-700 bg-slate-900/40 p-5">
           {/* Validation / mutation errors */}
           {(validationError || mutation.isError) && (
             <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
@@ -105,7 +108,7 @@ export default function AddRepository() {
           </div>
 
           {/* Actions */}
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-2">
             <button
               type="submit"
               disabled={mutation.isPending}
@@ -303,11 +306,10 @@ function RepositoryExplorer({
                       onBranchChange(item.name);
                       setBranchMenuOpen(false);
                     }}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                      item.name === branch
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${item.name === branch
                         ? 'bg-brand-600/25 text-brand-300'
                         : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
-                    }`}
+                      }`}
                   >
                     {item.name}
                   </button>

@@ -1,0 +1,18 @@
+# What the image does not need. Without this the build context was the whole
+# folder, ~900 MB of it a local Windows .venv the container never uses: it
+# installs its own dependencies from requirements.txt.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Models trained locally; in the containers this path is the mlops-models volume.
+model_artifacts/*
+
+# Local SQLite files; the containers use Postgres.
+*.db

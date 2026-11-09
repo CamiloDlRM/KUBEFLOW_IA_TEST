@@ -38,7 +38,8 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="font-body2 text-[11px] uppercase tracking-wider text-slate-500">{label}</dt>
-      <dd className="mt-1 truncate text-sm text-slate-100">{children}</dd>
+      {/* Wraps rather than cutting off: this is where people come to read their details in full. */}
+      <dd className="mt-1 break-words text-sm text-slate-100">{children}</dd>
     </div>
   );
 }
