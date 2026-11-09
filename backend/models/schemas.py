@@ -1569,6 +1569,29 @@ class BranchInfo(BaseModel):
 # Datasets (MinIO)
 # ---------------------------------------------------------------------------
 
+class UploadStatusResponse(BaseModel):
+    """An uploaded file, and how far it has got through the layers.
+
+    The upload request returns as soon as the file is stored; the worker then
+    carries it through bronze, silver and gold. This is what lets the page say
+    which of those it has reached, instead of "uploaded" and then nothing.
+    """
+
+    dataset_id: int
+    name: str
+    size_bytes: int
+    created_at: datetime
+    #: ``queued`` until the worker picks it up, then ``running``, ``success`` or ``failed``.
+    status: str
+    error: str = ""
+    #: Rows read from the file into bronze, and rows the cleaning kept in silver.
+    rows_in: int | None = None
+    rows_kept: int | None = None
+    #: The stream it landed in — the upload's name in the layers.
+    source_id: int | None = None
+    source_name: str = ""
+
+
 class DatasetResponse(BaseModel):
     """Dataset read representation."""
 

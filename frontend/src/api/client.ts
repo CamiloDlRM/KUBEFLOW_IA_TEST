@@ -49,6 +49,7 @@ import type {
   DeployPolicy,
   RunSettings,
   TrainingParameter,
+  UploadStatus,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -336,6 +337,12 @@ export async function archiveProject(projectId: number): Promise<void> {
 
 export async function getDatasets(projectId: number): Promise<Dataset[]> {
   const { data } = await apiClient.get<Dataset[]>(`/projects/${projectId}/datasets`);
+  return data;
+}
+
+/** The project's latest uploads, each with how far it has got through the layers. */
+export async function getUploads(projectId: number): Promise<UploadStatus[]> {
+  const { data } = await apiClient.get<UploadStatus[]>(`/projects/${projectId}/uploads`);
   return data;
 }
 

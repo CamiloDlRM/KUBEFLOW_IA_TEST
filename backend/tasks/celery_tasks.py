@@ -1539,6 +1539,11 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
             session.commit()
             session.refresh(run)
             run_id = run.id
+            # The upload row names the run carrying it through the layers, so
+            # the page can follow the file from "uploaded" to "in silver".
+            dataset.ingestion_run_id = run_id
+            session.add(dataset)
+            session.commit()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             local = Path(tmpdir) / (Path(filename).name or "upload")
