@@ -115,7 +115,7 @@ export default function PipelineDetail() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-100">
-              Pipeline <span className="font-mono text-base text-slate-400">{truncate(pipeline.id, 12)}</span>
+              Pipeline <span className="font-display text-base text-slate-400">{truncate(pipeline.id, 12)}</span>
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-slate-400">
               <span>Repo: <span className="text-slate-200">{repoName}</span></span>

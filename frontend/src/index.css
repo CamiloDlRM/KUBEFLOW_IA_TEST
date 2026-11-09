@@ -18,25 +18,3 @@
     background: rgb(71 85 105);
   }
 }
-
-/* The pipeline node whose panel is open: a soft white glow around its border. */
-.react-flow__node.node-open {
-  box-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.85),
-    0 0 14px 3px rgb(255 255 255 / 0.35);
-  animation: node-open-glow 2.4s ease-in-out infinite;
-}
-
-@keyframes node-open-glow {
-  50% {
-    box-shadow:
-      0 0 0 1px rgb(255 255 255 / 0.95),
-      0 0 22px 5px rgb(255 255 255 / 0.5);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .react-flow__node.node-open {
-    animation: none;
-  }
-}

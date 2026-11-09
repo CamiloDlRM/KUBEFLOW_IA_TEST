@@ -1,4 +1,4 @@
-import type { WebSocketLogMessage } from '../../types';
+import type { PipelinePhase, WebSocketLogMessage } from '../../types';
 import type { PhaseCard } from '../canvas/phases';
 
 /**
@@ -53,6 +53,28 @@ export function logsForNode(nodeId: string, messages: WebSocketLogMessage[], err
     if (nodeId === 'model') return AFTER_NOTEBOOK.has(msg.phase);
     return false;
   });
+}
+
+/**
+ * Every log line of a run. The run's phases are the record — kept in the
+ * database for good, where Redis drops its copy after a day — and while the
+ * run is in flight the WebSocket adds whatever came after the last saved one.
+ */
+export function runLogLines(
+  pipelineId: string,
+  phases: PipelinePhase[],
+  live: WebSocketLogMessage[] = [],
+): WebSocketLogMessage[] {
+  const saved = phases.map((phase) => ({
+    pipeline_id: pipelineId,
+    phase: phase.name,
+    status: phase.status,
+    logs: phase.logs,
+    timestamp: phase.timestamp,
+  }));
+  // Both sides stamp with the worker's ISO UTC clock, so the strings compare in time order.
+  const last = saved[saved.length - 1]?.timestamp ?? '';
+  return [...saved, ...live.filter((msg) => msg.timestamp > last)];
 }
 
 /** A phase's cells as log lines: what each printed, then any error it raised. */

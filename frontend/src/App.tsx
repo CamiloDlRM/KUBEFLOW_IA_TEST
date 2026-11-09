@@ -15,7 +15,7 @@ import Pipelines from './pages/Pipelines';
 import PipelineCanva from './pages/PipelineCanva';
 import Models from './pages/Models';
 import Admin from './pages/Admin';
-import Settings from './pages/Settings';
+import Account from './pages/Account';
 import ConfirmChange from './pages/ConfirmChange';
 import GithubCallback from './pages/GithubCallback';
 import SetPassword from './pages/SetPassword';
@@ -73,7 +73,9 @@ export default function App() {
             redirect because the old path is in people's bookmarks. */}
         <Route path="/dashboards" element={<Navigate to="/" replace />} />
         <Route path="/admin" element={<Admin />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/account" element={<Account />} />
+        {/* The page was called Settings; kept as a redirect for bookmarks. */}
+        <Route path="/settings" element={<Navigate to="/account" replace />} />
       </Route>
     </Routes>
   );

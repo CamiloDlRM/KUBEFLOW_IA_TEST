@@ -328,7 +328,7 @@ function RepositoryExplorer({
           {notebooks.data.map((path) => {
             const link = linked.find((n) => n.notebook_path === path);
             return (
-              <li key={path} className="flex items-center gap-2 font-mono">
+              <li key={path} className="flex items-center gap-2 font-display">
                 {link?.active_pipeline_id ? (
                   <Link
                     to={runLink(link.active_pipeline_id, link.project_id)}

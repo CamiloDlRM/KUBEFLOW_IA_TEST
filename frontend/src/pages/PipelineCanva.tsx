@@ -5,28 +5,37 @@ import { getPipelineInput, getProjects, setPipelineInput } from '../api/client';
 import type { PipelineInputChoice } from '../types';
 import { ReactFlow, Background, Controls, Panel } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import '../components/flow/canvas.css';
 import type { Node, NodeOrigin, ReactFlowInstance } from '@xyflow/react';
 import { INPUT_DRAG_TYPE, decodeChoice } from '../components/canvas/phases';
 import RunPipelineModal from '../components/RunPipelineModal';
-import NodePanel, { CODE_PANEL_WIDTH, PANEL_MARGIN, PANEL_WIDTH } from '../components/flow/NodePanel';
+import { BACK_BUTTON_CLASS } from '../components/BackLink';
+import NodePanel, { PANEL_MARGIN, PANEL_WIDTH } from '../components/flow/NodePanel';
 import { renderNodePanelContent } from '../components/flow/NodePanelContent';
+import { MAIA_PANEL, MaiaAvatar, MaiaPanelContent, maiaMoodFor } from '../components/flow/Maia';
 import RunPicker from '../components/flow/RunPicker';
-import { buildNodes, edges, isPhase, steps } from '../components/flow/pipelineNodes';
+import { buildNodes, edges, steps } from '../components/flow/pipelineNodes';
 import { ACTIVE, usePipelineView } from '../components/flow/usePipelineView';
-import { ChevronDown, Play } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Play } from 'lucide-react';
 
 const FOCUS_ZOOM = 1.8; // React Flow's default maxZoom is 2
 const CAMERA_DURATION = 600;
 /** Extra screen pixels the focused node moves left, so it sits clear of the panel rather than near it. */
 const FOCUS_NUDGE = 60;
+/** How far Maia moves left with a panel open: to the middle of the space the panel leaves. */
+const MAIA_SHIFT = (PANEL_WIDTH + PANEL_MARGIN) / 2;
+/** Matches the move's CSS transition (duration-700) plus a beat to settle. */
+const SWIM_DURATION = 800;
+/** Maia at rest at the bottom, and opened: about the width of a node. */
+const MAIA_SIZE = 80;
+const MAIA_EXPANDED = 150;
+/** React Flow's gap between a panel and the canvas edge. */
+const MAIA_BOTTOM = 15;
 
 // A node's position is its left edge and vertical middle, not its top-left corner.
 // Nodes differ in height (some have more lines), so with top-left anchoring their
 // middles — and the arrows between them — would not line up.
 const NODE_ORIGIN: NodeOrigin = [0, 0.5];
-
-/** Phases (code) and the model (metrics and logs) open wider. */
-const panelWidthFor = (nodeId: string) => (isPhase(nodeId) || nodeId === 'model' ? CODE_PANEL_WIDTH : PANEL_WIDTH);
 
 // React Flow's dark mode, tuned to the app's slate palette.
 const darkTheme = {
@@ -145,7 +154,7 @@ export default function PipelineCanva() {
     // From the node's anchor (NODE_ORIGIN) to its middle.
     const centerX = node.position.x + width * (0.5 - NODE_ORIGIN[0]);
     const centerY = node.position.y + height * (0.5 - NODE_ORIGIN[1]);
-    const offset = ((panelWidthFor(node.id) + PANEL_MARGIN) / 2 + FOCUS_NUDGE) / FOCUS_ZOOM;
+    const offset = ((PANEL_WIDTH + PANEL_MARGIN) / 2 + FOCUS_NUDGE) / FOCUS_ZOOM;
     flow.setCenter(centerX + offset, centerY, { zoom: FOCUS_ZOOM, duration: CAMERA_DURATION });
   }
 
@@ -155,10 +164,84 @@ export default function PipelineCanva() {
     flow?.fitView({ duration: CAMERA_DURATION });
   }
 
+  // Maia's panel takes the place of a node's: one panel open at a time. The camera
+  // stays put, since she talks about the whole run rather than one node.
+  const maiaOpen = openNode === MAIA_PANEL;
+
+  // While she moves out of the panel's way (or back), she swims: leaning into the move,
+  // tentacles beating faster. Only on open and close, not when one panel replaces another.
+  const panelOpen = openNode !== null;
+  const [swimming, setSwimming] = useState<'left' | 'right' | null>(null);
+  const wasOpen = useRef(panelOpen);
+  useEffect(() => {
+    if (wasOpen.current === panelOpen) return;
+    wasOpen.current = panelOpen;
+    setSwimming(panelOpen ? 'left' : 'right');
+    const timer = window.setTimeout(() => setSwimming(null), SWIM_DURATION);
+    return () => window.clearTimeout(timer);
+  }, [panelOpen]);
+  // The canvas's size, to place Maia in the middle of the space the panel leaves.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const element = canvasRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height }),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const freeWidth = Math.max(canvasSize.width - PANEL_WIDTH - PANEL_MARGIN, 0);
+
+  // Opened, Maia grows to about a node's size in the middle of the free space, and the
+  // nodes move up out of her way to the top of it.
+  function openMaia() {
+    setOpenNode(MAIA_PANEL);
+    if (!flow || !canvasSize.width) return;
+    const bounds = flow.getNodesBounds(flow.getNodes());
+    const zoom = Math.min(1.2, (freeWidth * 0.85) / Math.max(bounds.width, 1));
+    const screenX = freeWidth / 2;
+    const screenY = canvasSize.height * 0.24;
+    flow.setViewport(
+      {
+        x: screenX - (bounds.x + bounds.width / 2) * zoom,
+        y: screenY - (bounds.y + bounds.height / 2) * zoom,
+        zoom,
+      },
+      { duration: CAMERA_DURATION },
+    );
+  }
+  // From her spot at the bottom to the middle of the free space, a little below centre
+  // so the nodes above have room. The sideways move is already done by MAIA_SHIFT.
+  const maiaRise = MAIA_BOTTOM + MAIA_SIZE / 2 - canvasSize.height * 0.4;
+  const maiaExpanded: CSSProperties | undefined = maiaOpen
+    ? { transform: `translateY(${maiaRise}px) scale(${MAIA_EXPANDED / MAIA_SIZE})` }
+    : undefined;
+
+  // Each click on her gives off a flash; the key restarts its animation.
+  const [flash, setFlash] = useState(0);
+  function toggleMaia() {
+    setFlash((count) => count + 1);
+    if (maiaOpen) closePanel();
+    else openMaia();
+  }
+
   function chooseProject(id: number) {
     setPickerOpen(false);
     setSelection(null); // another project's runs
-    navigate(`/pipelines/canvas/${id}`);
+    // Replace, not push: switching projects here should not become a stop for Back.
+    navigate(`/pipelines/canvas/${id}`, { replace: true });
+  }
+
+  // Back to wherever the canvas was opened from. Opened directly (a bookmark, a new
+  // tab), there is no such place in the app, so it goes to the list of runs instead.
+  // React Router numbers each history entry it makes (`idx`); a replace keeps the number,
+  // so a redirect into the canvas still counts as the first page.
+  const cameFromApp = ((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0;
+  function goBack() {
+    if (cameFromApp) navigate(-1);
+    else navigate('/pipelines');
   }
 
   if (!projectId && projects?.length) {
@@ -169,6 +252,7 @@ export default function PipelineCanva() {
 
   return (
     <div
+      ref={canvasRef}
       className="relative w-full h-full [&_.react-flow\_\_handle]:opacity-0"
       onDragOver={handleDragOver}
       onDrop={handleDrop}
@@ -202,6 +286,17 @@ export default function PipelineCanva() {
           </button>
           <RunPicker runs={view.runs} selected={view.runId} branch={view.repo?.branch ?? ''} onSelect={setSelection} />
         </Panel>
+        <Panel position="top-right">
+          {/* Same look as the Home button on the sign-in pages. */}
+          <button
+            type="button"
+            onClick={goBack}
+            className={BACK_BUTTON_CLASS}
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            {cameFromApp ? 'Back' : 'Pipelines'}
+          </button>
+        </Panel>
         <Panel position="top-center">
           <div className="relative">
             <button type="button" onClick={() => setPickerOpen((open) => !open)} aria-expanded={pickerOpen} className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/90 px-4 py-2 font-display text-sm font-medium text-slate-100 shadow-lg backdrop-blur transition hover:border-slate-500">
@@ -230,7 +325,13 @@ export default function PipelineCanva() {
             }
           </div>
         </Panel>
-        <Panel position="bottom-center" className="max-w-xl space-y-2">
+        <Panel position="bottom-center" className="max-w-xl">
+          {/* With a panel open on the right, Maia (and the notices with her) swim left to the
+              middle of the space that is left, so the panel never covers her. */}
+          <div
+            className="flex flex-col items-center gap-2 transition-transform duration-700 ease-in-out motion-reduce:transition-none"
+            style={{ transform: openNode ? `translateX(-${MAIA_SHIFT}px)` : undefined }}
+          >
           {project && !view.repo && (
             <p className="rounded-lg border border-slate-700 bg-slate-900/90 px-4 py-2 text-sm text-slate-300">
               This project has no repository linked, so there is no notebook to run.{' '}
@@ -258,6 +359,25 @@ export default function PipelineCanva() {
               {view.head.error.message}
             </p>
           )}
+          {/* Maia floats at the bottom, under any notice; she looks at the cursor and
+              closes her eyes when it is on her (`maia-hover`). Opened, she grows and rises
+              to the middle of the free space (maiaExpanded). */}
+          <button
+            type="button"
+            onClick={toggleMaia}
+            aria-label="Ask Maia, your AI advisor"
+            aria-pressed={maiaOpen}
+            title="Ask Maia about this run"
+            style={maiaExpanded}
+            // A glow that follows her outline: with no backdrop, a box shadow would draw a circle.
+            className={`maia-hover relative mt-2 rounded-full transition duration-500 ease-in-out hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 motion-reduce:transition-none ${
+              maiaOpen ? 'drop-shadow-[0_0_12px_rgba(167,139,250,0.9)]' : 'drop-shadow-[0_2px_6px_rgba(0,0,0,0.5)]'
+            }`}
+          >
+            {flash > 0 && <span key={flash} aria-hidden="true" className="maia-flash" />}
+            <MaiaAvatar size={MAIA_SIZE} followCursor swimming={swimming} mood={maiaMoodFor(view, openNode)} />
+          </button>
+          </div>
         </Panel>
       </ReactFlow>
       {runOpen && project && (
@@ -268,13 +388,23 @@ export default function PipelineCanva() {
           <NodePanel
             title={openStep.label}
             caption={openStep.caption}
-            width={panelWidthFor(openStep.id)}
             onClose={closePanel}
           >
-            {renderNodePanelContent(openStep.id, { projectId: project?.id, chooseInput, view })}
+            {renderNodePanelContent(openStep.id, { projectId: project?.id, chooseInput, view, openMaia })}
           </NodePanel>
         )
       }
+      {maiaOpen && (
+        <NodePanel
+          title="Maia"
+          // The gradient "Maia" is written in across the app (sidebar, landing, sign-in).
+          titleClassName="bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent"
+          caption="Your AI training advisor · reviews this run's code, metrics and history"
+          onClose={closePanel}
+        >
+          <MaiaPanelContent view={view} />
+        </NodePanel>
+      )}
     </div>
   );
 }

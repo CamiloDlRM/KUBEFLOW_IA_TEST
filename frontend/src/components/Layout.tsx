@@ -11,7 +11,7 @@ const navItems = [
   { to: '/pipelines', label: 'Pipelines', icon: PipelinesIcon },
   { to: '/models', label: 'Models', icon: ModelsIcon },
   { to: '/repos/new', label: 'My Repos', icon: RepositoriesIcon },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon },
+  // The account is not here: it is opened rarely, so it sits with Sign out at the bottom.
 ];
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
@@ -68,6 +68,10 @@ export default function Layout() {
               </span>
             )}
           </p>
+          <NavLink to="/account" className={navLinkClass}>
+            <SettingsIcon />
+            Account
+          </NavLink>
           <button
             onClick={handleLogout}
             className="flex w-full font-body2 items-center gap-2 rounded-lg px-3 py-2 text-base font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
@@ -92,6 +96,9 @@ export default function Layout() {
               <AdminIcon />
             </NavLink>
           )}
+          <NavLink to="/account" className={navLinkClass} aria-label="Account">
+            <SettingsIcon />
+          </NavLink>
           <button
             onClick={handleLogout}
             className="flex items-center rounded-lg px-3 py-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
@@ -111,7 +118,7 @@ export default function Layout() {
             {currentUser?.auth_provider === 'github' ? (
               'Sign in again with GitHub to renew it.'
             ) : (
-              <Link to="/settings" className="font-medium underline hover:text-yellow-200">Update it in Settings</Link>
+              <Link to="/account" className="font-medium underline hover:text-yellow-200">Update it in your account</Link>
             )}
           </div>
         )}

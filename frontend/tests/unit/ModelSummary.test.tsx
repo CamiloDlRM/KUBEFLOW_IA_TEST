@@ -32,7 +32,8 @@ describe('ModelSummary', () => {
     expect(screen.getByText('ejemplo2')).toBeInTheDocument();
     expect(screen.getByText('v3')).toBeInTheDocument();
     expect(screen.getByText('96.67%')).toBeInTheDocument();
-    expect(screen.getByText('acd8d8c223334cda8d9f4270bb4c2596')).toBeInTheDocument();
+    // The MLflow run id means nothing to most users, so it is not shown.
+    expect(screen.queryByText('acd8d8c223334cda8d9f4270bb4c2596')).not.toBeInTheDocument();
     expect(screen.getByText('http://model-server:8001/predict/ejemplo2')).toBeInTheDocument();
     expect(screen.getByText('Live')).toBeInTheDocument();
     expect(screen.getByText('f1')).toBeInTheDocument();

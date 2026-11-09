@@ -1,0 +1,216 @@
+/*
+ * Maia, the AI's avatar (Maia.tsx): how she floats, blinks, reacts to hover,
+ * swims out of a panel's way, flashes when clicked, and shows her moods.
+ * Order matters: the mood rules come last so they override her usual motion.
+ */
+
+/* She floats, her tentacles sway and she blinks. */
+.maia .maia-body {
+  animation: maia-float 3.2s ease-in-out infinite;
+}
+.maia .maia-tentacles {
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: maia-sway 2.4s ease-in-out infinite;
+}
+.maia .maia-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: maia-blink 5s ease-in-out infinite;
+  transition: opacity 120ms ease;
+}
+.maia .maia-head {
+  transition: transform 150ms ease-out;
+}
+
+/* Hovered, she closes her eyes contentedly. */
+.maia .maia-eyes-closed {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.maia-hover:hover .maia .maia-eyes {
+  opacity: 0;
+}
+.maia-hover:hover .maia .maia-eyes-closed {
+  opacity: 1;
+}
+
+@keyframes maia-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+@keyframes maia-sway {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+@keyframes maia-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maia .maia-body,
+  .maia .maia-tentacles,
+  .maia .maia-eyes {
+    animation: none;
+  }
+}
+
+/* Swimming out of a panel's way: she leans into the move and her tentacles beat faster. */
+.maia.maia-swim-left,
+.maia.maia-swim-right {
+  transform-origin: 50% 40%;
+}
+.maia.maia-swim-left {
+  animation: maia-lean-left 0.8s ease-in-out;
+}
+.maia.maia-swim-right {
+  animation: maia-lean-right 0.8s ease-in-out;
+}
+.maia.maia-swim-left .maia-tentacles,
+.maia.maia-swim-right .maia-tentacles {
+  animation-duration: 0.3s;
+}
+
+@keyframes maia-lean-left {
+  0%, 100% { transform: rotate(0); }
+  30% { transform: rotate(-14deg) translateY(-4px); }
+  70% { transform: rotate(-8deg) translateY(-2px); }
+}
+@keyframes maia-lean-right {
+  0%, 100% { transform: rotate(0); }
+  30% { transform: rotate(14deg) translateY(-4px); }
+  70% { transform: rotate(8deg) translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maia.maia-swim-left,
+  .maia.maia-swim-right {
+    animation: none;
+  }
+}
+
+/* The flash Maia gives off when clicked: a burst of light and a ring spreading out. */
+.maia-flash {
+  position: absolute;
+  inset: -35%;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: radial-gradient(circle, rgb(255 255 255 / 0.95) 0%, rgb(196 181 253 / 0.65) 30%, rgb(167 139 250 / 0) 70%);
+  animation: maia-flash 0.6s ease-out forwards;
+}
+.maia-flash::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 9999px;
+  border: 2px solid rgb(255 255 255 / 0.9);
+  animation: maia-flash-ring 0.7s ease-out forwards;
+}
+
+@keyframes maia-flash {
+  0% { transform: scale(0.3); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+@keyframes maia-flash-ring {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maia-flash,
+  .maia-flash::after {
+    animation-duration: 0.01s;
+  }
+}
+
+/* Maia's moods (MaiaMood in Maia.tsx): the face for each fades in over her usual one. */
+.maia .maia-face-sad,
+.maia .maia-face-alert {
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+.maia.maia-sad .maia-face-sad,
+.maia.maia-alert .maia-face-alert {
+  opacity: 1;
+}
+.maia .maia-gaze {
+  transition: transform 400ms ease;
+}
+
+/* Sad: she sinks a little and floats slowly, eyes down, tentacles limp. */
+.maia.maia-sad .maia-body {
+  animation: maia-float-sad 4.8s ease-in-out infinite;
+}
+.maia.maia-sad .maia-tentacles {
+  animation-duration: 4.5s;
+}
+.maia.maia-sad .maia-gaze {
+  transform: translateY(6px);
+}
+
+@keyframes maia-float-sad {
+  0%, 100% { transform: translateY(8px); }
+  50% { transform: translateY(2px); }
+}
+
+/* Alert: her right tentacle goes up and waves, and she bobs eagerly. */
+.maia .maia-tentacle-right {
+  transform-box: view-box;
+  transform-origin: 240px 232px;
+}
+.maia.maia-alert .maia-tentacle-right {
+  transform: rotate(-80deg);
+  animation:
+    maia-raise 0.45s ease-out,
+    maia-wave 0.9s 0.45s ease-in-out infinite;
+}
+.maia.maia-alert .maia-body {
+  animation-duration: 1.8s;
+}
+
+@keyframes maia-raise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-80deg); }
+}
+@keyframes maia-wave {
+  0%, 100% { transform: rotate(-80deg); }
+  50% { transform: rotate(-62deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maia.maia-sad .maia-body,
+  .maia.maia-alert .maia-tentacle-right {
+    animation: none;
+  }
+}
+
+/* Happy: eyes closed in a smile, and every so often a little spin with a hop. */
+.maia.maia-happy .maia-eyes {
+  opacity: 0;
+}
+.maia.maia-happy .maia-eyes-closed {
+  opacity: 1;
+}
+.maia .maia-spin {
+  transform-box: view-box;
+  transform-origin: 200px 200px;
+}
+.maia.maia-happy .maia-spin {
+  animation: maia-spin 2.6s ease-in-out infinite;
+}
+.maia.maia-happy .maia-tentacles {
+  animation-duration: 1.2s;
+}
+
+@keyframes maia-spin {
+  0%, 45% { transform: translateY(0) rotate(0deg); }
+  60% { transform: translateY(-10px) rotate(180deg); }
+  75%, 100% { transform: translateY(0) rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maia.maia-happy .maia-spin {
+    animation: none;
+  }
+}

@@ -71,8 +71,6 @@ export interface Pipeline {
   /** The model this run trained and its version: empty until validation. */
   model_name?: string;
   model_version?: string;
-  /** The MLflow run holding the artifact: empty until registration. */
-  mlflow_run_id?: string;
   /** The code this run executed. Only on the detail, never on the list. */
   cells?: NotebookCell[];
 }

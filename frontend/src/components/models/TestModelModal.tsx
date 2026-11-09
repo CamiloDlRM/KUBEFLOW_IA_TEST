@@ -96,7 +96,7 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
             </p>
             {card.target && (
               <p className="mt-1 text-xs text-slate-300">
-                Predicts <span className="font-mono text-slate-100">{card.target.name}</span>
+                Predicts <span className="font-display text-slate-100">{card.target.name}</span>
                 {card.target.description && ` — ${card.target.description}`}
               </p>
             )}
@@ -113,7 +113,7 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
               {card.note ||
                 "This model's run did not record its training features, so its inputs cannot be described."}{' '}
               To get the guide, write the frame the model was fitted on in the notebook's export cell —{' '}
-              <code className="font-mono text-amber-100">X_train.to_parquet(TRAINING_FEATURES_PATH)</code> — and
+              <code className="font-display text-amber-100">X_train.to_parquet(TRAINING_FEATURES_PATH)</code> — and
               run the pipeline again. Until then, send one number per input, in the order it was trained on.
             </p>
           )}
@@ -147,7 +147,7 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
                       .filter((label) => card.class_notes?.[String(label)])
                       .map((label) => (
                         <div key={String(label)} className="contents">
-                          <dt className="flex items-center gap-1.5 font-mono text-slate-200">
+                          <dt className="flex items-center gap-1.5 font-display text-slate-200">
                             <span aria-hidden="true" className="h-2 w-2 rounded-sm" style={{ background: classColor(card.classes, label) }} />
                             {String(label)}
                           </dt>
@@ -201,10 +201,10 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
                 value={json}
                 onChange={(event) => setJson(event.target.value)}
                 rows={5}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-display text-xs text-slate-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             ) : (
-              <pre className="overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 font-mono text-xs text-slate-300">
+              <pre className="overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 font-display text-xs text-slate-300">
                 {JSON.stringify({ data: [numbers.map((n) => (Number.isFinite(n) ? n : null))] })}
               </pre>
             )}
@@ -269,8 +269,8 @@ function InputRow({
     <li className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_9rem]">
       <div className="min-w-0">
         <label htmlFor={id} className="flex items-baseline gap-2">
-          <span aria-hidden="true" className="font-mono text-[11px] text-slate-500">{index + 1}</span>
-          <span className="truncate font-mono text-sm text-slate-100">{input.name}</span>
+          <span aria-hidden="true" className="font-display text-[11px] text-slate-500">{index + 1}</span>
+          <span className="truncate font-display text-sm text-slate-100">{input.name}</span>
           {input.unit && (
             <span className="shrink-0 rounded bg-slate-800 px-1.5 py-px text-[10px] text-slate-300">{input.unit}</span>
           )}
@@ -293,7 +293,7 @@ function InputRow({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className={`h-9 w-full rounded-lg border bg-slate-950 px-3 font-mono text-sm text-slate-100 focus:outline-none focus:ring-1 disabled:opacity-40 ${
+        className={`h-9 w-full rounded-lg border bg-slate-950 px-3 font-display text-sm text-slate-100 focus:outline-none focus:ring-1 disabled:opacity-40 ${
           outside ? 'border-amber-600 focus:ring-amber-500' : 'border-slate-700 focus:border-brand-500 focus:ring-brand-500'
         }`}
       />
@@ -323,7 +323,7 @@ function Answer({ result, classes }: { result: PredictionResult; classes: (strin
         return (
           <div key={index} className="space-y-2">
             <p className="flex items-center gap-2 text-sm text-slate-300">
-              {rows.length > 1 && <span className="font-mono text-[11px] text-slate-500">row {index + 1}</span>}
+              {rows.length > 1 && <span className="font-display text-[11px] text-slate-500">row {index + 1}</span>}
               <span aria-hidden="true" className="h-3 w-3 rounded-sm" style={{ background: classColor(classes, prediction) }} />
               <span className="text-base font-semibold text-slate-100">{String(prediction)}</span>
               {ranked.length > 0 && (
@@ -341,7 +341,7 @@ function Answer({ result, classes }: { result: PredictionResult; classes: (strin
                         style={{ width: `${Math.max(p * 100, 0.5)}%`, background: classColor(classes, label) }}
                       />
                     </span>
-                    <span className="text-right font-mono tabular-nums text-slate-400">{(p * 100).toFixed(1)}%</span>
+                    <span className="text-right font-display tabular-nums text-slate-400">{(p * 100).toFixed(1)}%</span>
                   </li>
                 ))}
               </ul>
@@ -351,7 +351,7 @@ function Answer({ result, classes }: { result: PredictionResult; classes: (strin
       })}
       <details className="text-[11px] text-slate-500">
         <summary className="cursor-pointer select-none hover:text-slate-300">Raw response</summary>
-        <pre className="mt-1 overflow-x-auto font-mono text-slate-400">{JSON.stringify(result, null, 2)}</pre>
+        <pre className="mt-1 overflow-x-auto font-display text-slate-400">{JSON.stringify(result, null, 2)}</pre>
       </details>
     </section>
   );
@@ -381,10 +381,10 @@ function ApiReference({ model, card, row }: { model: ModelDeployment; card: Mode
       </summary>
       <div className="space-y-3 border-t border-slate-800 px-3 py-3 text-[11px] text-slate-400">
         <p>
-          <span className="font-mono text-slate-200">POST {url}</span> with a JSON body: <code className="text-slate-200">data</code> is
+          <span className="font-display text-slate-200">POST {url}</span> with a JSON body: <code className="text-slate-200">data</code> is
           a list of rows, and each row is {inputs.length} numbers in this order. Several rows are answered in one call.
         </p>
-        <table className="w-full border-separate border-spacing-0 font-mono">
+        <table className="w-full border-separate border-spacing-0 font-display">
           <thead>
             <tr className="text-left text-slate-500">
               <th scope="col" className="border-b border-slate-800 py-1 pr-3 font-normal">#</th>

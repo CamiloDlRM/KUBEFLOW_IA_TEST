@@ -32,9 +32,10 @@ import { runLink } from '../utils/links';
 export default function Dashboard() {
   const { data: repos } = useRepos();
   const { data: pipelinesPage, isLoading: pipelinesLoading, error: pipelinesError } = usePipelines(1, 5);
-  const { data: health } = useServiceHealth();
-  // Members only ever see their own runs, so the column would say nothing.
+  // Members only ever see their own runs, so the User column would say nothing; and the
+  // platform's services are the admins' to look after, so only they see their health.
   const { isAdmin } = useAuth();
+  const { data: health } = useServiceHealth(isAdmin);
 
   const pipelines = pipelinesPage?.items ?? [];
 
@@ -45,7 +46,7 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-bold text-slate-100">Dashboard</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Recent pipeline runs and service health.
+            Recent pipeline runs{isAdmin ? ' and service health' : ''}.
           </p>
         </div>
         <Link
@@ -57,17 +58,19 @@ export default function Dashboard() {
       </div>
 
       {/* Service health */}
-      <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Service Health
-        </h3>
-        <div className="flex flex-wrap gap-4">
-          <HealthDot label="Backend" ok={Boolean(health)} />
-          <HealthDot label="Redis" ok={health?.redis ?? false} />
-          <HealthDot label="MLflow" ok={health?.mlflow ?? false} />
-          <HealthDot label="Model Server" ok={health?.model_server ?? false} />
+      {isAdmin && (
+        <div className="rounded-lg border border-slate-700 bg-slate-800/60 p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Service Health
+          </h3>
+          <div className="flex flex-wrap gap-4">
+            <HealthDot label="Backend" ok={Boolean(health)} />
+            <HealthDot label="Redis" ok={health?.redis ?? false} />
+            <HealthDot label="MLflow" ok={health?.mlflow ?? false} />
+            <HealthDot label="Model Server" ok={health?.model_server ?? false} />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Recent pipelines */}
       <section>
@@ -118,7 +121,7 @@ export default function Dashboard() {
                     <td className="px-4 py-3">
                       <Link
                         to={runLink(p.id, p.project_id)}
-                        className="font-mono text-xs text-brand-400 hover:underline"
+                        className="font-display text-xs text-brand-400 hover:underline"
                       >
                         {truncate(p.id, 8)}
                       </Link>
@@ -131,7 +134,7 @@ export default function Dashboard() {
                     {isAdmin && (
                       <td className="px-4 py-3 text-slate-300">{p.owner_username ?? '--'}</td>
                     )}
-                    <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                    <td className="px-4 py-3 font-display text-xs text-slate-400">
                       {truncate(p.commit_sha)}
                     </td>
                     <td className="px-4 py-3">

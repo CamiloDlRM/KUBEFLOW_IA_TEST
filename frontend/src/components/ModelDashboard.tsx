@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import type { ModelDeployment } from '../types';
+import { BACK_BUTTON_CLASS } from './BackLink';
 import { formatDate } from '../utils/format';
 import { runLink } from '../utils/links';
 import { GrafanaFrame, OpenInGrafanaLink, buildGrafanaEmbedUrl } from './MetricsPanels';
@@ -26,13 +28,11 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
   return (
     <div className="space-y-6">
       <div>
-        <button
-          onClick={onBack}
-          className="inline-flex items-center gap-1 text-xs font-medium text-brand-400 hover:text-brand-300"
-        >
-          ← All models
+        <button type="button" onClick={onBack} className={BACK_BUTTON_CLASS}>
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          All models
         </button>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <h2 className="text-2xl font-bold text-slate-100">{model.model_name}</h2>
           <span className="text-sm text-slate-400">v{model.version}</span>
           <ModelStatusBadge active={model.is_active} />
@@ -44,14 +44,14 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <InfoCard label="Accuracy">
-          <span className="font-mono">{(model.accuracy * 100).toFixed(1)}%</span>
+          <span className="font-display">{(model.accuracy * 100).toFixed(1)}%</span>
         </InfoCard>
         <InfoCard label="Deployed">{formatDate(model.deployed_at)}</InfoCard>
         <InfoCard label="Produced by">
           {model.pipeline_id ? (
             <Link
               to={runLink(model.pipeline_id, model.project_id)}
-              className="font-mono text-brand-400 hover:underline"
+              className="font-display text-brand-400 hover:underline"
             >
               {model.pipeline_id.slice(0, 8)}
             </Link>

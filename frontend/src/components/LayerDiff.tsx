@@ -138,7 +138,7 @@ function ColumnHeader({ column }: { column: DiffColumn }) {
     return (
       <th className="px-2 py-1.5 font-medium">
         <span className="text-slate-500 line-through">{column.bronze}</span>
-        <span className="ml-1.5 block font-mono text-[10px] font-normal text-rose-400/70">
+        <span className="ml-1.5 block font-display text-[10px] font-normal text-rose-400/70">
           dropped — empty
         </span>
       </th>
@@ -148,7 +148,7 @@ function ColumnHeader({ column }: { column: DiffColumn }) {
     return (
       <th className="px-2 py-1.5 font-medium">
         <span className="text-emerald-300">{column.silver}</span>
-        <span className="ml-1.5 block font-mono text-[10px] font-normal text-emerald-400/70">
+        <span className="ml-1.5 block font-display text-[10px] font-normal text-emerald-400/70">
           added — {column.silver_type}
         </span>
       </th>
@@ -165,7 +165,7 @@ function ColumnHeader({ column }: { column: DiffColumn }) {
       ) : (
         <span className="text-slate-200">{column.silver}</span>
       )}
-      <span className="block font-mono text-[10px] font-normal text-slate-600">
+      <span className="block font-display text-[10px] font-normal text-slate-600">
         {column.bronze_type === column.silver_type ? (
           column.silver_type
         ) : (
@@ -189,7 +189,7 @@ function DiffRows({ row, columns }: { row: DiffRow; columns: DiffColumn[] }) {
   if (row.removed) {
     return (
       <tr className="border-b border-slate-800/60 bg-rose-950/30">
-        <td className="px-2 py-1 font-mono text-[10px] text-rose-400">−{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-rose-400">−{row.row}</td>
         {columns.map((_, index) => (
           <td key={index} className="px-2 py-1 text-rose-200/60 line-through">
             <Cell value={row.bronze[index]} />
@@ -203,7 +203,7 @@ function DiffRows({ row, columns }: { row: DiffRow; columns: DiffColumn[] }) {
   if (untouched) {
     return (
       <tr className="border-b border-slate-800/60">
-        <td className="px-2 py-1 font-mono text-[10px] text-slate-700">{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-slate-700">{row.row}</td>
         {columns.map((column, index) => (
           <td key={index} className="px-2 py-1 text-slate-400">
             {column.change === 'dropped' ? (
@@ -220,7 +220,7 @@ function DiffRows({ row, columns }: { row: DiffRow; columns: DiffColumn[] }) {
   return (
     <>
       <tr className="bg-amber-950/20">
-        <td className="px-2 py-1 font-mono text-[10px] text-amber-500/80">−{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-amber-500/80">−{row.row}</td>
         {columns.map((column, index) => (
           <td
             key={index}
@@ -239,7 +239,7 @@ function DiffRows({ row, columns }: { row: DiffRow; columns: DiffColumn[] }) {
         ))}
       </tr>
       <tr className="border-b border-slate-800/60 bg-slate-700/15">
-        <td className="px-2 py-1 font-mono text-[10px] text-slate-400">+{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-slate-400">+{row.row}</td>
         {columns.map((column, index) => (
           <td
             key={index}
@@ -290,10 +290,10 @@ function Cell({ value }: { value: unknown }) {
     return <span className="italic text-slate-600">null</span>;
   }
   if (typeof value !== 'string') {
-    return <span className="font-mono">{String(value)}</span>;
+    return <span className="font-display">{String(value)}</span>;
   }
   return (
-    <span className="whitespace-pre font-mono">
+    <span className="whitespace-pre font-display">
       <span className="text-slate-600">"</span>
       <span>{value}</span>
       <span className="text-slate-600">"</span>

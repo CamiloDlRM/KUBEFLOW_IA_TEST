@@ -265,7 +265,7 @@ function LayerDetail({ projectId, summary }: { projectId: number; summary: Layer
                       {/* The stored Parquet type, not an inferred guess. In
                           bronze every column reads "string" — which is the
                           layer keeping its promise, not a failure to detect. */}
-                      <span className="ml-1.5 font-mono text-[10px] text-slate-500">
+                      <span className="ml-1.5 font-display text-[10px] text-slate-500">
                         {column.type}
                       </span>
                     </th>

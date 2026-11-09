@@ -16,6 +16,7 @@ import RunPipelineModal from '../components/RunPipelineModal';
 import DeployPolicyPanel from '../components/DeployPolicyPanel';
 import { repoNameFromUrl } from '../utils/format';
 import { ChevronDown } from 'lucide-react';
+import BackLink from '../components/BackLink';
 
 /**
  * One project: its data factory, and the code it trains with.
@@ -54,13 +55,8 @@ export default function ProjectDetail() {
   return (
     <div className="space-y-6">
       <div>
-        <Link
-          to="/projects"
-          className="inline-flex items-center gap-1 text-xs font-medium text-brand-400 hover:text-brand-300"
-        >
-          ← All projects
-        </Link>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+        <BackLink to="/projects">All projects</BackLink>
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-2xl font-bold text-slate-100">{project.name}</h2>
             {project.description && (
@@ -208,7 +204,7 @@ function RepositorySection({ project }: { project: Project }) {
               <p className="truncate font-medium text-slate-100">
                 {repoNameFromUrl(project.repository.github_url)}
               </p>
-              <p className="truncate font-mono text-xs text-slate-500">
+              <p className="truncate font-display text-xs text-slate-500">
                 {project.repository.branch} · {project.repository.notebook_path}
               </p>
             </div>

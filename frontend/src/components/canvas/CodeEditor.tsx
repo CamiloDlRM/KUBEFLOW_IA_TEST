@@ -43,7 +43,7 @@ function Code({ source }: { source: string }) {
   return (
     <Highlight code={code} language="python" theme={THEME}>
       {({ tokens, getLineProps, getTokenProps }) => (
-        <pre className="overflow-x-auto py-2 font-mono text-[12.5px] leading-[1.6]" style={{ color: THEME.plain.color }}>
+        <pre className="overflow-x-auto py-2 font-display text-[12.5px] leading-[1.6]" style={{ color: THEME.plain.color }}>
           {/* inline-block grows to the longest line, so every row — and its
               hover — is as wide as the widest, and the gutter keeps one width
               however long the code beside it runs. */}
@@ -76,7 +76,7 @@ function Cell({ cell, fromRun, hideOutput }: { cell: NotebookCell; fromRun: bool
   return (
     <article aria-label={`cell ${cell.index + 1}`} className="relative flex">
       <span aria-hidden="true" className={`w-[3px] shrink-0 rounded-full ${fromRun ? state.bar : 'bg-transparent'}`} />
-      <div className="w-14 shrink-0 pt-2.5 text-center font-mono text-[11px] text-[#858585]">
+      <div className="w-14 shrink-0 pt-2.5 text-center font-display text-[11px] text-[#858585]">
         {fromRun ? (
           <span className="inline-flex items-center gap-1" title={state.label}>
             {state.icon}
@@ -89,7 +89,7 @@ function Cell({ cell, fromRun, hideOutput }: { cell: NotebookCell; fromRun: bool
           {tags.length > 0 && (
             <div className="flex gap-1 border-b border-[#2b2b2b] px-3 py-1">
               {tags.map((tag) => (
-                <span key={tag} className="rounded bg-[#2d2d2d] px-1.5 py-px font-mono text-[10px] text-[#9cdcfe]">
+                <span key={tag} className="rounded bg-[#2d2d2d] px-1.5 py-px font-display text-[10px] text-[#9cdcfe]">
                   {tag}
                 </span>
               ))}
@@ -98,12 +98,12 @@ function Cell({ cell, fromRun, hideOutput }: { cell: NotebookCell; fromRun: bool
           <Code source={cell.source} />
         </div>
         {cell.output && !hideOutput && (
-          <pre className="mt-1 max-h-56 overflow-auto px-3 py-1.5 font-mono text-[12px] leading-relaxed text-[#cccccc]">
+          <pre className="mt-1 max-h-56 overflow-auto px-3 py-1.5 font-display text-[12px] leading-relaxed text-[#cccccc]">
             {cell.output}
           </pre>
         )}
         {cell.error && !hideOutput && (
-          <pre className="mt-1 overflow-x-auto rounded-md border-l-2 border-[#f14c4c] bg-[#5a1d1d]/40 px-3 py-1.5 font-mono text-[12px] text-[#f48771]">
+          <pre className="mt-1 overflow-x-auto rounded-md border-l-2 border-[#f14c4c] bg-[#5a1d1d]/40 px-3 py-1.5 font-display text-[12px] text-[#f48771]">
             {cell.error}
           </pre>
         )}

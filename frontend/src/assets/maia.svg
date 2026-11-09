@@ -1,10 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
-  <title>Maya</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="65 65 270 270" width="270" height="270">
+  <title>Maia</title>
   <defs>
-    <radialGradient id="bg" cx="50%" cy="45%" r="70%">
-      <stop offset="0" stop-color="#F4F2FF"/>
-      <stop offset="1" stop-color="#DCD7F7"/>
-    </radialGradient>
     <radialGradient id="head" cx="38%" cy="30%" r="75%">
       <stop offset="0" stop-color="#EEEBFF"/>
       <stop offset="0.22" stop-color="#B9AEFF"/>
@@ -24,17 +20,11 @@
     </filter>
   </defs>
 
-  <rect width="400" height="400" rx="40" fill="url(#bg)"/>
 
   <!-- aura -->
   <circle cx="200" cy="200" r="120" fill="#8B7CF6" opacity="0.35" filter="url(#blur-lg)"/>
 
-  <!-- orbita trasera -->
-  <path d="M60 205 A140 38 -12 0 1 340 145" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.55"/>
 
-  <!-- piso -->
-  <ellipse cx="200" cy="335" rx="120" ry="16" fill="#FFFFFF" opacity="0.5"/>
-  <ellipse cx="200" cy="335" rx="70" ry="8" fill="#6A57E3" opacity="0.18" filter="url(#blur-sm)"/>
 
   <!-- tentaculos -->
   <g fill="none" stroke="url(#tent)" stroke-width="30" stroke-linecap="round">
@@ -67,8 +57,4 @@
   <circle cx="176" cy="182" r="3" fill="#FFFFFF"/>
   <circle cx="228" cy="182" r="3" fill="#FFFFFF"/>
 
-  <!-- orbita delantera -->
-  <path d="M340 145 A140 38 -12 0 1 60 205" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.8"/>
-  <circle cx="72" cy="214" r="4" fill="#FFFFFF" filter="url(#glow)"/>
-  <circle cx="330" cy="140" r="3" fill="#FFFFFF" filter="url(#glow)"/>
 </svg>

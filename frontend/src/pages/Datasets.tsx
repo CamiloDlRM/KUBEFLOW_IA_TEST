@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import BackLink from '../components/BackLink';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getDatasets,
@@ -61,14 +62,8 @@ export default function Datasets() {
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-1 text-xs font-medium text-brand-400 hover:text-brand-300"
-          >
-            <ArrowLeftIcon />
-            Back to Dashboard
-          </Link>
-          <h2 className="mt-2 truncate text-2xl font-bold text-slate-100">Data</h2>
+          <BackLink to="/">Back to Dashboard</BackLink>
+          <h2 className="mt-4 truncate text-2xl font-bold text-slate-100">Data</h2>
           <p className="mt-1 text-sm text-slate-400">
             Training data for <span className="text-slate-200">{repoName}</span>.
             Connect the system that holds it, or upload a file directly. The
@@ -138,7 +133,7 @@ export default function Datasets() {
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-300">
+                  <td className="px-4 py-3 font-display text-xs text-slate-300">
                     {formatBytes(d.size_bytes)}
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400">
@@ -397,7 +392,7 @@ function PreviewModal({
                         {row.map((cell, j) => (
                           <td
                             key={j}
-                            className="whitespace-nowrap px-3 py-2 font-mono text-slate-300"
+                            className="whitespace-nowrap px-3 py-2 font-display text-slate-300"
                           >
                             {renderCell(cell)}
                           </td>
@@ -436,14 +431,6 @@ function renderCell(value: unknown): string {
 }
 
 /* ---- Icons ---- */
-
-function ArrowLeftIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-    </svg>
-  );
-}
 
 function UploadIcon() {
   return (

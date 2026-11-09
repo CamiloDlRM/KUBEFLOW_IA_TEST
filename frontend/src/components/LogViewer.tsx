@@ -129,7 +129,8 @@ export default function LogViewer({
       {/* Log body */}
       <div
         ref={containerRef}
-        className={`overflow-y-auto p-4 font-mono text-xs leading-relaxed ${fill ? 'min-h-0 flex-1' : 'h-80'}`}
+        data-testid="log-viewer"
+        className={`overflow-y-auto p-4 font-display text-xs leading-relaxed ${fill ? 'min-h-0 flex-1' : 'h-80'}`}
       >
         {messages.length === 0 ? (
           <p className="text-slate-500">{emptyText}</p>

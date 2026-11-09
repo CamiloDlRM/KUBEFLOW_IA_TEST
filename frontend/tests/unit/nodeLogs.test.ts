@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellLogs, errorNodeOf, logsForNode } from '../../src/components/flow/nodeLogs';
+import { cellLogs, errorNodeOf, logsForNode, runLogLines } from '../../src/components/flow/nodeLogs';
 import type { PhaseCard } from '../../src/components/canvas/phases';
 import type { NotebookCell, WebSocketLogMessage } from '../../src/types';
 
@@ -73,5 +73,27 @@ describe('cellLogs', () => {
       ['cell 5', 'success', 'epoch 1'],
       ['cell 5', 'failed', 'ValueError: bad shape'],
     ]);
+  });
+});
+
+describe('runLogLines', () => {
+  const saved = [
+    { name: 'download', status: 'success' as const, timestamp: '2026-10-01T00:00:10Z', logs: 'downloaded' },
+    { name: 'register', status: 'running' as const, timestamp: '2026-10-01T00:04:00Z', logs: 'registering' },
+  ];
+
+  it("reads a run's saved phases as log lines", () => {
+    expect(runLogLines('run-1', saved).map((l) => [l.phase, l.logs])).toEqual([
+      ['download', 'downloaded'],
+      ['register', 'registering'],
+    ]);
+  });
+
+  it('adds only the streamed lines newer than the last saved one', () => {
+    const streamed = [
+      { ...msg('register', 'registering', 'running'), timestamp: '2026-10-01T00:04:00Z' },
+      { ...msg('deploy', 'deploying', 'running'), timestamp: '2026-10-01T00:05:00Z' },
+    ];
+    expect(runLogLines('run-1', saved, streamed).map((l) => l.logs)).toEqual(['downloaded', 'registering', 'deploying']);
   });
 });

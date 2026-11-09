@@ -63,14 +63,14 @@ export default function EffectStrip({
           />
         )}
       </div>
-      <div className="flex justify-between font-mono text-[10px] text-slate-500">
+      <div className="flex justify-between font-display text-[10px] text-slate-500">
         <span>{formatValue(segments[0].from)}</span>
         <span>{formatValue(segments[segments.length - 1].to)}</span>
       </div>
       <p className="min-h-[1rem] text-[11px] text-slate-400">{focus ? describeSegment(focus) : ' '}</p>
       <details className="text-[11px] text-slate-500">
         <summary className="cursor-pointer select-none hover:text-slate-300">All ranges</summary>
-        <ul className="mt-1 space-y-0.5 font-mono">
+        <ul className="mt-1 space-y-0.5 font-display">
           {segments.map((segment, index) => (
             <li key={`${segment.from}-${index}`} className="flex items-center gap-2">
               <span

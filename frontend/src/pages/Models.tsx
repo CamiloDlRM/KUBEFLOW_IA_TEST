@@ -113,7 +113,7 @@ export default function Models() {
                     <td className="px-4 py-3 text-slate-300">{m.owner_username ?? '--'}</td>
                   )}
                   <td className="px-4 py-3 text-slate-300">v{m.version}</td>
-                  <td className="px-4 py-3 font-mono text-slate-300">
+                  <td className="px-4 py-3 font-display text-slate-300">
                     {(m.accuracy * 100).toFixed(1)}%
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400">{formatDate(m.deployed_at)}</td>

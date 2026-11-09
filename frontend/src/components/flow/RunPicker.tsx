@@ -39,7 +39,7 @@ export default function RunPicker({
           `Code on ${branch || 'branch'}`
         ) : (
           <>
-            <span className="font-mono text-xs">{truncate(selected, 8)}</span>
+            <span className="font-display text-xs">{truncate(selected, 8)}</span>
             {run && <PipelineStatusBadge status={run.status} />}
           </>
         )}

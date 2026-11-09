@@ -20,7 +20,7 @@ function Panel({ title, subtitle, children }: { title: string; subtitle?: string
       className="rounded-2xl border border-slate-700 bg-slate-900/60"
     >
       <header className="border-b border-slate-800 px-5 py-3">
-        <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+        <h3 className="font-display text-sm font-semibold text-slate-100">{title}</h3>
         {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
       </header>
       <div className="space-y-4 px-5 py-4">{children}</div>
@@ -48,7 +48,7 @@ export function PhaseDetail({
     return (
       <Panel title={card.label}>
         <p className="text-sm text-red-300">
-          No cell is tagged <code className="font-mono">mlops:{card.id}</code>. The run will stop
+          No cell is tagged <code className="font-display">mlops:{card.id}</code>. The run will stop
           at validation until one is: in Jupyter, View → Cell Toolbar → Tags.
         </p>
       </Panel>
@@ -75,7 +75,7 @@ export function PhaseDetail({
 
 export function Keys({ input }: { input: MountedInput }) {
   return (
-    <ul className="space-y-0.5 font-mono text-[11px] text-slate-500">
+    <ul className="space-y-0.5 font-display text-[11px] text-slate-500">
       {input.keys.slice(0, 8).map((key) => (
         <li key={key} className="truncate">
           s3://{input.bucket}/{key}
@@ -103,11 +103,6 @@ function stepState(status: string | undefined, runFinished: boolean): StepState 
   return runFinished ? 'skipped' : 'pending';
 }
 
-/** Runs from before the API named it kept the MLflow run only in the register log. */
-function mlflowRunOf(run: Pipeline, registerLog: string | undefined): string | undefined {
-  return run.mlflow_run_id || registerLog?.match(/MLflow run (\w+)/)?.[1];
-}
-
 function endpointOf(deployLog: string | undefined): string | undefined {
   return deployLog?.match(/Endpoint: (\S+)/)?.[1];
 }
@@ -116,7 +111,7 @@ function CopyValue({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg bg-slate-950/70 px-3 py-2 ring-1 ring-slate-800">
-      <code className="min-w-0 flex-1 truncate font-mono text-xs text-slate-200" title={value}>
+      <code className="min-w-0 flex-1 truncate font-display text-xs text-slate-200" title={value}>
         {value}
       </code>
       <button
@@ -153,7 +148,7 @@ function StepCard({
   return (
     <section className="flex min-w-0 flex-col gap-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
       <header className="flex items-center justify-between gap-2">
-        <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+        <h4 className="flex items-center gap-2 font-display text-sm font-semibold text-slate-100">
           {icon}
           {title}
         </h4>
@@ -169,7 +164,7 @@ function StepCard({
 
 const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   <div className="min-w-0 space-y-1">
-    <p className="text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
+    <p className="font-body2 text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
     {children}
   </div>
 );
@@ -180,7 +175,6 @@ export function ModelSummary({ run }: { run: Pipeline }) {
   const finished = run.status === 'success' || run.status === 'failed';
   const register = stepState(phases.register?.status, finished);
   const deploy = stepState(phases.deploy?.status, finished);
-  const mlflowRun = mlflowRunOf(run, phases.register?.logs);
   const endpoint = endpointOf(phases.deploy?.logs);
   const reason = typeof run.metrics.deploy_reason === 'string' ? run.metrics.deploy_reason : undefined;
   const accuracy = typeof run.metrics.accuracy === 'number' ? run.metrics.accuracy : undefined;
@@ -194,7 +188,7 @@ export function ModelSummary({ run }: { run: Pipeline }) {
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="font-display text-lg font-semibold text-slate-100">{run.model_name}</span>
           {run.model_version && (
-            <span className="rounded-md bg-brand-600/20 px-1.5 py-0.5 font-mono text-xs text-brand-300">
+            <span className="rounded-md bg-brand-600/20 px-1.5 py-0.5 font-display text-xs text-brand-300">
               v{run.model_version}
             </span>
           )}
@@ -210,14 +204,9 @@ export function ModelSummary({ run }: { run: Pipeline }) {
               </p>
             </Field>
           )}
-          {mlflowRun ? (
-            <Field label="MLflow run">
-              <CopyValue value={mlflowRun} label="MLflow run id" />
-            </Field>
-          ) : (
-            <p className="text-xs text-slate-400">
-              {register === 'failed' ? phases.register?.logs : 'The model is logged to MLflow after the notebook runs.'}
-            </p>
+          {register === 'failed' && <p className="text-xs text-red-300">{phases.register?.logs}</p>}
+          {(register === 'pending' || register === 'running') && (
+            <p className="text-xs text-slate-400">The model is logged to MLflow after the notebook runs.</p>
           )}
         </StepCard>
 
@@ -246,7 +235,7 @@ export function ModelSummary({ run }: { run: Pipeline }) {
           {metrics.map(([name, value]) => (
             <div key={name} className="rounded-lg bg-slate-950/60 px-3 py-2 ring-1 ring-slate-800">
               <dt className="truncate text-[11px] text-slate-500">{name}</dt>
-              <dd className="font-mono text-sm tabular-nums text-slate-100">{value.toFixed(4)}</dd>
+              <dd className="font-display text-sm tabular-nums text-slate-100">{value.toFixed(4)}</dd>
             </div>
           ))}
         </dl>

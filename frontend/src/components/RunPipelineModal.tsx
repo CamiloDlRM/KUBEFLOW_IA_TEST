@@ -161,7 +161,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
         <div className="space-y-4 p-5">
           {existing ? (
             <p className="text-sm text-slate-300">
-              Model: <span className="font-mono text-slate-100">{existing}</span>. This run deploys a
+              Model: <span className="font-display text-slate-100">{existing}</span>. This run deploys a
               new version of it.
             </p>
           ) : (
@@ -174,7 +174,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
                 value={modelName}
                 onChange={(event) => setModelName(event.target.value)}
                 autoFocus
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-display text-sm text-slate-100 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
               <p className={`mt-1 text-xs ${nameValid ? 'text-slate-500' : 'text-red-400'}`}>
                 Letters, digits, <code>_</code> <code>.</code> <code>-</code>. Later runs of this
@@ -189,7 +189,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
             </SummaryRow>
             <SummaryRow label="Branch">{repository?.branch || '--'}</SummaryRow>
             <SummaryRow label="Notebook">
-              <span className="font-mono">{repository?.notebook_path || '--'}</span>
+              <span className="font-display">{repository?.notebook_path || '--'}</span>
             </SummaryRow>
             <SummaryRow label="Data">
               {chosen ?? (dataset ? `${dataset.name} (${formatBytes(dataset.size_bytes)})` : '--')}
@@ -207,7 +207,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
                   onChange={(event) =>
                     setRows(parameterRows.map((r, i) => (i === index ? { ...r, name: event.target.value } : r)))
                   }
-                  className="w-40 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 font-mono text-xs text-slate-100 focus:border-brand-500 focus:outline-none"
+                  className="w-40 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 font-display text-xs text-slate-100 focus:border-brand-500 focus:outline-none"
                 />
                 <span className="text-slate-500">=</span>
                 <input
@@ -217,7 +217,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
                   onChange={(event) =>
                     setRows(parameterRows.map((r, i) => (i === index ? { ...r, value: event.target.value } : r)))
                   }
-                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 font-mono text-xs text-slate-100 focus:border-brand-500 focus:outline-none"
+                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 font-display text-xs text-slate-100 focus:border-brand-500 focus:outline-none"
                 />
                 <button
                   type="button"
@@ -251,7 +251,7 @@ export default function RunPipelineModal({ project, onClose, onStarted }: RunPip
 
           <p className="text-xs text-slate-500">
             The version is assigned automatically. If the notebook does not declare{' '}
-            <code className="rounded bg-slate-900 px-1 py-0.5 font-mono text-slate-300">DATASET_PATH</code>{' '}
+            <code className="rounded bg-slate-900 px-1 py-0.5 font-display text-slate-300">DATASET_PATH</code>{' '}
             in its parameters cell, it trains with its own data and nothing is downloaded.
           </p>
 
