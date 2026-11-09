@@ -366,10 +366,12 @@ function Answer({ result, classes }: { result: PredictionResult; classes: (strin
  */
 function ApiReference({ model, card, row }: { model: ModelDeployment; card: ModelCard; row: number[] }) {
   const inputs = card.inputs ?? [];
-  const url = `${API_BASE}/models/${model.model_name}/predict`;
+  // Shared, the model answers its public link without a token; otherwise only
+  // the signed-in endpoint, with one.
+  const url = model.share_url ?? `${API_BASE}/models/${model.model_name}/predict`;
   const example = JSON.stringify({ data: [row.map((n) => (Number.isFinite(n) ? n : 0))] });
-  const curl = `curl -X POST ${url} \\
-  -H "Authorization: Bearer <your token>" \\
+  const auth = model.share_url ? '' : `\n  -H "Authorization: Bearer <your token>" \\`;
+  const curl = `curl -X POST ${url} \\${auth}
   -H "Content-Type: application/json" \\
   -d '${example}'`;
   const classes = (card.classes ?? []).map(String);

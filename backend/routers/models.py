@@ -15,6 +15,9 @@ from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
 from core.metrics import record_model_prediction, record_model_reload, record_model_rollback
+from core.model_server import model_server_headers
+from core.predict_input import InvalidPredictInput, check_predict_input, expected_features
+from core.share_links import link_for, public_url, rotate, set_enabled
 from core.ownership import (
     assert_model_access,
     pipeline_owners,
@@ -28,10 +31,13 @@ from models.schemas import (
     ModelDeployment,
     Pipeline,
     ModelDeploymentResponse,
+    ModelShareLink,
     ModelVersionResponse,
     PredictRequest,
     PredictResponse,
     RollbackRequest,
+    ShareLinkResponse,
+    ShareLinkUpdate,
     User,
 )
 
@@ -121,6 +127,7 @@ async def _load_into_model_server(
         resp = await client.post(
             url,
             json={"mlflow_run_id": mlflow_run_id, "version": version},
+            headers=model_server_headers(settings),
         )
         resp.raise_for_status()
 
@@ -133,6 +140,7 @@ async def _load_into_model_server(
 async def list_models(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> list[ModelDeploymentResponse]:
     """Return the active deployments the caller may see.
 
@@ -160,15 +168,98 @@ async def list_models(
         for run in session.exec(select(Pipeline).where(Pipeline.id.in_(run_ids))).all()  # type: ignore[attr-defined]
     } if run_ids else {}
 
+    names = {d.model_name for d in deployments}
+    shared = {
+        link.model_name: public_url(settings, link)
+        for link in session.exec(
+            select(ModelShareLink).where(
+                ModelShareLink.model_name.in_(names),  # type: ignore[attr-defined]
+                ModelShareLink.enabled == True,  # noqa: E712
+            )
+        ).all()
+    } if names else {}
+
     def _from_run(d: ModelDeployment) -> dict:
         run = runs.get(d.pipeline_id or "")
         return {
             "owner_username": owners.get(d.pipeline_id or ""),
             "model_card": (run.model_card or {}) if run else {},
             "project_id": run.project_id if run else None,
+            "share_url": shared.get(d.model_name),
         }
 
     return [ModelDeploymentResponse.model_validate(d).model_copy(update=_from_run(d)) for d in deployments]
+
+
+def _owned_model_or_404(session: Session, model_name: str, user: User) -> None:
+    """Only whoever can see a model's deployments may share it. Unlike prediction,
+    a name with no deployment at all is refused: nothing vouches for its owner."""
+    owned = session.exec(
+        restrict_by_pipeline(
+            select(ModelDeployment).where(ModelDeployment.model_name == model_name),
+            ModelDeployment.pipeline_id,
+            session,
+            user,
+        )
+    ).first()
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model '{model_name}' not found.")
+
+
+def _share_response(settings: AppSettings, model_name: str, link: ModelShareLink | None) -> ShareLinkResponse:
+    return ShareLinkResponse(
+        model_name=model_name,
+        enabled=bool(link and link.enabled),
+        url=public_url(settings, link) if link and link.enabled else None,
+        per_ip_per_minute=settings.public_predict_per_ip_per_minute,
+        per_link_per_minute=settings.public_predict_per_link_per_minute,
+        max_rows=settings.predict_max_rows,
+    )
+
+
+@router.get("/{model_name}/share", response_model=ShareLinkResponse, summary="A model's public link")
+def get_share_link(
+    model_name: str,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> ShareLinkResponse:
+    _owned_model_or_404(session, model_name, current_user)
+    return _share_response(settings, model_name, link_for(session, model_name))
+
+
+@router.put("/{model_name}/share", response_model=ShareLinkResponse, summary="Switch a model's public link on or off")
+def update_share_link(
+    model_name: str,
+    body: ShareLinkUpdate,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> ShareLinkResponse:
+    """On makes the model answer anyone holding the link; off stops it at once.
+    Switching back on restores the same URL."""
+    _owned_model_or_404(session, model_name, current_user)
+    link = set_enabled(session, model_name, body.enabled, current_user)
+    logger.info("model.share_link_set", model_name=model_name, enabled=body.enabled, user=current_user.username)
+    return _share_response(settings, model_name, link)
+
+
+@router.post(
+    "/{model_name}/share/rotate",
+    response_model=ShareLinkResponse,
+    summary="Replace a model's public link with a new one",
+)
+def rotate_share_link(
+    model_name: str,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> ShareLinkResponse:
+    """For a link that went further than meant: the old URL stops working."""
+    _owned_model_or_404(session, model_name, current_user)
+    link = rotate(session, model_name, current_user)
+    logger.info("model.share_link_rotated", model_name=model_name, user=current_user.username)
+    return _share_response(settings, model_name, link)
 
 
 @router.post(
@@ -189,6 +280,7 @@ async def predict(
     name with no row (unknown, or loaded out of band) is proxied unrecorded and
     an arbitrary URL can never create a new series.
     """
+    _assert_model_visible(session, model_name, current_user)
     deployment = session.exec(
         restrict_by_pipeline(
             select(ModelDeployment).where(
@@ -200,9 +292,29 @@ async def predict(
             current_user,
         )
     ).first()
+    return await run_prediction(model_name, body, deployment, settings, session)
+
+
+async def run_prediction(
+    model_name: str,
+    body: PredictRequest,
+    deployment: ModelDeployment | None,
+    settings: AppSettings,
+    session: Session,
+) -> PredictResponse:
+    """Check the input against the model, forward it, and record the outcome.
+
+    Shared by the signed-in endpoint and public links; each decides beforehand
+    which ``deployment`` the caller may reach.
+    """
+    try:
+        check_predict_input(body.data, settings, expected_features(session, deployment))
+    except InvalidPredictInput as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     started = time.perf_counter()
     try:
-        result = await _proxy_predict(model_name, body, settings, session, current_user)
+        result = await _proxy_predict(model_name, body, deployment, settings, session)
     except Exception:  # HTTPException and uncaught httpx errors (timeouts) alike
         if deployment:
             record_model_prediction(
@@ -223,30 +335,28 @@ async def predict(
 async def _proxy_predict(
     model_name: str,
     body: PredictRequest,
+    deployment: ModelDeployment | None,
     settings: AppSettings,
     session: Session,
-    current_user: User,
 ) -> PredictResponse:
     """Proxy a prediction request to the model-server.
 
     The model-server keeps models in memory, so a container restart loses
-    them. If it answers 404 but the database has an active deployment, the
-    model is reloaded from MLflow automatically and the prediction retried.
+    them. If it answers 404 but ``deployment`` (the active one the caller may
+    reach) exists, the model is reloaded from MLflow and the prediction retried.
 
-    Ownership: the caller must be able to see at least one deployment row for
-    ``model_name`` (see :func:`_assert_model_visible`).
+    Errors say what went wrong without passing on the model-server's own text:
+    that is internal detail, and on a public link it would be anyone's to read.
 
     Args:
         model_name: Name of the deployed model.
         body: Input features as a 2-D array.
     """
-    _assert_model_visible(session, model_name, current_user)
-
     url = f"{settings.model_server_url}/predict/{model_name}"
 
     async def _predict_once() -> PredictResponse:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=body.model_dump())
+            resp = await client.post(url, json=body.model_dump(), headers=model_server_headers(settings))
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
             return PredictResponse(**data)
@@ -254,16 +364,36 @@ async def _proxy_predict(
     try:
         return await _predict_once()
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != status.HTTP_404_NOT_FOUND:
+        code = exc.response.status_code
+        if code != status.HTTP_404_NOT_FOUND:
             logger.error(
                 "model.predict_failed",
                 model_name=model_name,
-                status_code=exc.response.status_code,
+                status_code=code,
+                detail=exc.response.text[:500],
             )
+            # A 4xx says the input was wrong, in words the model-server chose
+            # for the caller ("each row must have 4 values"): passed on. A 401
+            # means the internal token is misconfigured and a 5xx is internal:
+            # neither is the caller's to read.
+            if 400 <= code < 500 and code != status.HTTP_401_UNAUTHORIZED:
+                try:
+                    detail = exc.response.json().get("detail")
+                except ValueError:
+                    detail = None
+                raise HTTPException(
+                    status_code=code,
+                    detail=detail if isinstance(detail, (str, list)) else "The model refused this input.",
+                )
             raise HTTPException(
-                status_code=exc.response.status_code,
-                detail=f"Model server error: {exc.response.text}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The model could not answer this request.",
             )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="The model took too long to answer.",
+        )
     except httpx.ConnectError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -271,18 +401,7 @@ async def _proxy_predict(
         )
 
     # 404: the model-server lost the model (e.g. restart). Try to reload it,
-    # using only a deployment the caller is allowed to see.
-    deployment = session.exec(
-        restrict_by_pipeline(
-            select(ModelDeployment).where(
-                ModelDeployment.model_name == model_name,
-                ModelDeployment.is_active == True,  # noqa: E712
-            ),
-            ModelDeployment.pipeline_id,
-            session,
-            current_user,
-        )
-    ).first()
+    # using only the deployment the caller may reach.
     if not deployment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -315,10 +434,11 @@ async def _proxy_predict(
             "model.reload_and_predict_failed",
             model_name=model_name,
             status_code=exc.response.status_code,
+            detail=exc.response.text[:500],
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to reload model '{model_name}': {exc.response.text}",
+            detail=f"Model '{model_name}' could not be reloaded to answer this request.",
         )
     except httpx.ConnectError:
         raise HTTPException(
@@ -580,7 +700,7 @@ async def delete_model(
     url = f"{settings.model_server_url}/models/{model_name}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.delete(url)
+            resp = await client.delete(url, headers=model_server_headers(settings))
             resp.raise_for_status()
     except Exception as exc:
         logger.warning("model.unload_failed", model_name=model_name, error=str(exc))

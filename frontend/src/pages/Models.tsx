@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner';
 import ModelDashboard, { ModelStatusBadge } from '../components/ModelDashboard';
 import TestModelModal from '../components/models/TestModelModal';
 import VersionsDialog from '../components/models/VersionsDialog';
+import ShareLinkCell from '../components/models/ShareLinkCell';
 import { formatDate } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 import MaiaEmptyState from '../components/MaiaEmptyState';
@@ -22,7 +23,6 @@ export default function Models() {
 
   const [testModal, setTestModal] = useState<ModelDeployment | null>(null);
   const [selected, setSelected] = useState<ModelDeployment | null>(null);
-  const [copiedName, setCopiedName] = useState<string | null>(null);
 
   const [versionsOf, setVersionsOf] = useState<string | null>(null);
 
@@ -35,13 +35,6 @@ export default function Models() {
     if (window.confirm(`Delete model "${modelName}"? This will unload it from the model server.`)) {
       deleteMut.mutate(modelName);
     }
-  }
-
-  function handleCopyUrl(url: string, modelName: string) {
-    navigator.clipboard.writeText(url).then(() => {
-      setCopiedName(modelName);
-      setTimeout(() => setCopiedName(null), 2000);
-    });
   }
 
   if (isLoading) {
@@ -63,7 +56,10 @@ export default function Models() {
   }
 
   if (selected) {
-    return <ModelDashboard model={selected} onBack={() => setSelected(null)} />;
+    // From the latest list, not the copy taken on click: sharing it on the
+    // dashboard refetches the list, and the dashboard should show that at once.
+    const current = models?.find((m) => m.model_name === selected.model_name) ?? selected;
+    return <ModelDashboard model={current} onBack={() => setSelected(null)} />;
   }
 
   return (
@@ -93,7 +89,7 @@ export default function Models() {
                 <th className="px-4 py-3">Accuracy</th>
                 <th className="px-4 py-3">Deployed</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Endpoint</th>
+                <th className="px-4 py-3">Public link</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -121,26 +117,7 @@ export default function Models() {
                     <ModelStatusBadge active={m.is_active} />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <code className="max-w-[200px] truncate text-xs text-slate-400">
-                        {m.endpoint_url}
-                      </code>
-                      <button
-                        onClick={() => handleCopyUrl(m.endpoint_url, m.model_name)}
-                        className="shrink-0 rounded p-1 text-slate-500 hover:text-slate-300"
-                        title="Copy URL"
-                      >
-                        {copiedName === m.model_name ? (
-                          <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        ) : (
-                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                        )}
-                      </button>
-                    </div>
+                    <ShareLinkCell model={m} />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import type { ModelDeployment } from '../types';
 import { BACK_BUTTON_CLASS } from './BackLink';
+import ShareLinkCell from './models/ShareLinkCell';
 import { formatDate } from '../utils/format';
 import { runLink } from '../utils/links';
 import { GrafanaFrame, OpenInGrafanaLink, buildGrafanaEmbedUrl } from './MetricsPanels';
@@ -59,10 +60,10 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
             <span className="text-slate-500">--</span>
           )}
         </InfoCard>
-        <InfoCard label="Endpoint">
-          <code className="block truncate text-xs text-slate-400" title={model.endpoint_url}>
-            {model.endpoint_url}
-          </code>
+        {/* The public link, not the model-server's address: that one is internal
+            to the platform's network and answers nobody outside it. */}
+        <InfoCard label="Public link">
+          <ShareLinkCell model={model} />
         </InfoCard>
       </div>
 

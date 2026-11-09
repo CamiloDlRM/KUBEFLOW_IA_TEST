@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+  ShareLink,
   GithubTokenStatus,
   Repository,
   CreateRepoPayload,
@@ -476,6 +477,18 @@ export async function serveModelVersion(
 
 export async function deleteModel(modelName: string): Promise<void> {
   await apiClient.delete(`/models/${modelName}`);
+}
+
+/** Switch a model's public link on or off. On the first time, it is created. */
+export async function setModelShare(modelName: string, enabled: boolean): Promise<ShareLink> {
+  const { data } = await apiClient.put<ShareLink>(`/models/${modelName}/share`, { enabled });
+  return data;
+}
+
+/** Replace a model's public link: the old URL stops working at once. */
+export async function rotateModelShare(modelName: string): Promise<ShareLink> {
+  const { data } = await apiClient.post<ShareLink>(`/models/${modelName}/share/rotate`);
+  return data;
 }
 
 /* ------------------------------------------------------------------ */

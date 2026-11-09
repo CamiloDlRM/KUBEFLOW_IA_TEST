@@ -47,6 +47,40 @@ class AppSettings(BaseSettings):
         default="http://model-server:8001",
         description="Internal URL of the model-server service.",
     )
+    model_server_internal_token: str = Field(
+        default="",
+        description=(
+            "Shared secret the model-server requires on every call except health "
+            "checks (sent as X-Internal-Token). Empty disables the check, for local "
+            "runs; set it wherever the model-server is reachable by anyone else."
+        ),
+    )
+
+    # --- Public prediction links ---
+    public_predict_per_ip_per_minute: int = Field(
+        default=30,
+        description="Predictions one client IP may ask of one public link per minute.",
+    )
+    public_predict_per_link_per_minute: int = Field(
+        default=600,
+        description="Predictions one public link answers per minute, from everyone together.",
+    )
+    predict_max_rows: int = Field(
+        default=1000,
+        description="Rows one prediction request may carry.",
+    )
+    predict_max_body_bytes: int = Field(
+        default=1_000_000,
+        description="Largest prediction request body accepted, in bytes.",
+    )
+    trust_forwarded_for: bool = Field(
+        default=False,
+        description=(
+            "Read the client IP from X-Forwarded-For. Only when the backend sits "
+            "behind a proxy that sets it: otherwise anyone could claim any IP and "
+            "slip past the rate limit."
+        ),
+    )
     database_url: str = Field(
         default="postgresql://mlops:mlops@postgres:5432/mlops",
         description="SQLAlchemy database URL (PostgreSQL).",

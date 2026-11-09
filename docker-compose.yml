@@ -185,7 +185,9 @@ services:
     image: redis:7-alpine
     container_name: mlops-redis
     ports:
-      - "6379:6379"
+      # Only from this machine: Redis has no password, and the backend reaches it
+      # over the Docker network. Published at all only for local debugging.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     networks:
@@ -208,7 +210,10 @@ services:
     build: ./mlflow
     container_name: mlops-mlflow
     ports:
-      - "5000:5000"
+      # Only from this machine: MLflow has no login, and an artifact uploaded to
+      # it is unpickled by the model-server, so open to the network it would let
+      # anyone run code there. Open http://localhost:5000 from this machine.
+      - "127.0.0.1:5000:5000"
     environment:
       - MLFLOW_S3_ENDPOINT_URL=${MINIO_ENDPOINT:-http://minio:9000}
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
@@ -239,7 +244,10 @@ services:
     build: ./model-server
     container_name: mlops-model-server
     ports:
-      - "8001:8001"
+      # Only from this machine, and every call but /health needs the internal
+      # token anyway (MODEL_SERVER_INTERNAL_TOKEN). The public reaches models
+      # through the backend's /public/predict links, with their limits.
+      - "127.0.0.1:8001:8001"
     env_file: .env
     environment:
       # Artifacts are downloaded from MinIO instead of a shared volume.
