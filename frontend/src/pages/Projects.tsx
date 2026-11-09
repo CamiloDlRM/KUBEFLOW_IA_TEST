@@ -5,6 +5,7 @@ import { createProject, getProjects } from '../api/client';
 import type { Project } from '../types';
 import Spinner from '../components/Spinner';
 import { formatDate, repoNameFromUrl } from '../utils/format';
+import MaiaEmptyState from '../components/MaiaEmptyState';
 
 /**
  * The projects a user has, and the way to start another.
@@ -83,9 +84,9 @@ export default function Projects() {
       )}
 
       {projects && projects.length === 0 && (
-        <p className="rounded-lg border border-dashed border-slate-700 py-16 text-center text-slate-400">
-          No projects yet. Name one above — you can connect data to it straight away.
-        </p>
+        <MaiaEmptyState>
+          No projects yet. Name one above and we can connect data to it straight away.
+        </MaiaEmptyState>
       )}
 
       {projects && projects.length > 0 && (

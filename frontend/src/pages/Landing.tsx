@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'motion/react';
 import githubLogo from '../assets/github_icon.webp'
 import signInIcon from '../assets/opendoor_icon.svg'
@@ -63,6 +63,37 @@ const HEADER_SCROLL_UP_THRESHOLD = 280;
 export default function Landing() {
   const [isScrolled, setIsScrolled] = useState(false);
   const isMobile = useMediaQuery({ maxWidth: 768 })
+
+  // Maia walks the visitor down the page: one stop per section, said in her voice.
+  const heroRef = useRef<HTMLElement>(null);
+  const timelineRef = useRef<HTMLElement>(null);
+  const advisorRef = useRef<HTMLElement>(null);
+  const maiaStops = useMemo<LandingStop[]>(
+    () => [
+      {
+        ref: heroRef,
+        side: 'right',
+        height: 0.45,
+        mood: 'calm',
+        says: "Hi, I'm Maia! I take your notebook from GitHub all the way to a deployed model.",
+      },
+      {
+        ref: timelineRef,
+        side: 'left',
+        height: 0.5,
+        mood: 'calm',
+        says: 'This is the road every model travels with me. Keep scrolling and we walk it together.',
+      },
+      {
+        ref: advisorRef,
+        side: 'right',
+        height: 0.35,
+        mood: 'happy',
+        says: 'That advisor is me: after every run I read your code and tell you what to try next.',
+      },
+    ],
+    [],
+  );
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled((currentlyScrolled) =>
@@ -114,11 +145,8 @@ export default function Landing() {
 
       {/* Nav */}
       <header className={`sticky top-2 z-20 mx-auto w-[calc(100%-1rem)] rounded-2xl flex items-center justify-between transition-all duration-300 ease-out ${isScrolled ? 'max-w-4xl  bg-slate-900/90 px-4 py-3 shadow-lg backdrop-blur-sm' : 'max-w-6xl px-6 py-6'}`}>
-        <div className={`gap-2 inline-flex rounded-lg items-center py-2 text-sm font-medium text-slate-200 transition-[padding] duration-300 hover:border-indigo-500 hover:text-white ${isScrolled ? 'px-2' : 'px-4'}`}>
-          <div className={`flex items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30 transition-all duration-300 ${isScrolled ? 'h-8 w-8' : 'h-9 w-8'}`}>
-            <BoltIcon />
-          </div>
-          <span className={`text-2xl font-bold font-display inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out max-[640px]:text-xl ${!isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>Maia</span>
+        <div className={`gap-2 inline-flex rounded-lg items-center py-2 text-sm font-medium transition-[padding] duration-300 hover:border-indigo-500 hover:text-white ${isScrolled ? 'px-2' : 'px-4'}`}>
+          <span className={`text-2xl font-bold font-display bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out max-[640px]:text-xl ${!isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>Maia</span>
         </div>
 
         <div className='flex items-center gap-2 sm:gap-3'>
@@ -143,11 +171,13 @@ export default function Landing() {
 
       </header>
 
+      <LandingMaia stops={maiaStops} />
+
 
       {/* Hero */}
       <main className="font-body relative z-10 mx-auto max-w-6xl px-6">
 
-        <section className="flex min-h-[100svh] -translate-y-20 flex-col items-center justify-center px-6 text-center">
+        <section ref={heroRef} className="flex min-h-[100svh] -translate-y-20 flex-col items-center justify-center px-6 text-center">
           <h1 className="max-w-2xl mt-0 text-7xl font-extrabold leading-tight tracking-tight max-[640px]:text-5xl">
             Welcome to {' '}
             <span className="font-display bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
@@ -182,6 +212,7 @@ export default function Landing() {
 
 
         <motion.section
+          ref={timelineRef}
           className="mb-36 flex flex-col items-center justify-center gap-11"
           initial={{ opacity: 0, y: 32 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -198,6 +229,7 @@ export default function Landing() {
 
         {/* AI advisor spotlight */}
         <motion.section
+          ref={advisorRef}
           className="pb-24"
           initial={{ opacity: 0, y: 32 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -271,14 +303,6 @@ export default function Landing() {
 }
 
 /* ---- Icons ---- */
-
-function BoltIcon() {
-  return (
-    <svg className="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 24 24">
-      <path d="M13 2L4.09 12.11a.6.6 0 00.45 1h5.05l-1.54 7.94a.3.3 0 00.53.25L19.91 11.9a.6.6 0 00-.45-1h-5.05l1.54-7.94a.3.3 0 00-.53-.25z" />
-    </svg>
-  );
-}
 
 function CheckIcon({ className = 'h-4 w-4' }: { className?: string }) {
   return (

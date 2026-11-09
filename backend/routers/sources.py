@@ -21,7 +21,13 @@ from sqlmodel import Session, select
 
 from core.config import get_settings
 from core.github_credentials import encrypt_token
-from core.ingestion import IngestionError, preview, validate_sql
+from core.ingestion import (
+    IngestionError,
+    is_source_password_env,
+    preview,
+    source_password_envs,
+    validate_sql,
+)
 from core.ownership import get_visible_project_or_404, restrict_by_project
 from core.security import get_current_user
 from db import get_session
@@ -39,6 +45,18 @@ from models.schemas import (
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/sources", tags=["sources"])
+
+
+def _check_password_env(name: str) -> None:
+    """Refuse a password variable a source may not use (see core.ingestion)."""
+    if name and not is_source_password_env(name):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{name} cannot be used as a source password. Use a variable named "
+                "<NAME>_DB_PASSWORD, set in the platform's .env."
+            ),
+        )
 
 
 def _get_source_or_404(session: Session, source_id: int, user: User) -> DataSource:
@@ -106,6 +124,7 @@ async def create_source(
     registration than to discover it from a training set that has grown.
     """
     get_visible_project_or_404(session, body.project_id, current_user)
+    _check_password_env(body.password_env)
 
     try:
         validate_sql(body.extraction_sql)
@@ -163,6 +182,7 @@ async def preview_source(
     registering a source and running it did not already grant.
     """
     get_visible_project_or_404(session, body.project_id, current_user)
+    _check_password_env(body.password_env)
 
     candidate = DataSource(
         project_id=body.project_id,
@@ -202,6 +222,23 @@ async def preview_source(
         profile=result.profile,
         truncated=result.truncated,
     )
+
+
+@router.get(
+    "/password-envs",
+    summary="The environment variables a source can take its password from",
+)
+async def list_password_envs(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, list[str]]:
+    """Names only, never values: the ones set on the platform that a source may
+    use (``<NAME>_DB_PASSWORD``, not the platform's own). Fills the form's
+    dropdown, so nobody has to know them by heart.
+
+    Read from the API's environment, which shares the worker's ``.env``.
+    Declared before ``/{source_id}`` so the path is not read as a source id.
+    """
+    return {"names": source_password_envs()}
 
 
 @router.get(

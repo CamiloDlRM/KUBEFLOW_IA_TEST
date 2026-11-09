@@ -10,6 +10,7 @@ import PipelineStatus from '../components/PipelineStatus';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
 import { runLink } from '../utils/links';
+import MaiaEmptyState from '../components/MaiaEmptyState';
 
 type Sort = 'newest' | 'oldest';
 type Group = 'none' | 'project' | 'notebook';
@@ -131,9 +132,15 @@ export default function Pipelines() {
         </p>
       )}
 
-      {page && pipelines.length === 0 && (
+      {page && page.items.length === 0 && (
+        <MaiaEmptyState action={{ to: '/projects', label: 'Go to projects' }}>
+          No pipelines have run yet. Open a project, link its notebook and press Run pipeline: I will follow
+          every step here.
+        </MaiaEmptyState>
+      )}
+      {page && page.items.length > 0 && pipelines.length === 0 && (
         <p className="rounded-lg border border-dashed border-slate-700 py-16 text-center text-slate-400">
-          {page.items.length === 0 ? 'No pipelines yet.' : 'No pipelines match this search.'}
+          No pipelines match this search.
         </p>
       )}
 

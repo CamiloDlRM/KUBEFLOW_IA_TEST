@@ -74,6 +74,26 @@ class IngestionError(Exception):
 # ---------------------------------------------------------------------------
 
 
+#: Which environment variables a source may name as its password. The worker
+#: sends that value to whatever host the source points at, so without a rule a
+#: source aimed at its owner's own server could name ``JWT_SECRET_KEY`` or
+#: ``FIRST_ADMIN_PASSWORD`` and receive it as a login attempt. Only variables
+#: provisioned *for* sources qualify: named ``<SOMETHING>_DB_PASSWORD``, and not
+#: one of the platform's own database credentials.
+_SOURCE_PASSWORD_ENV: Final = re.compile(r"^[A-Z][A-Z0-9_]*_DB_PASSWORD$")
+PLATFORM_PASSWORD_ENVS: Final[frozenset[str]] = frozenset({"GRAFANA_DB_PASSWORD"})
+
+
+def is_source_password_env(name: str) -> bool:
+    """Whether ``name`` is a variable a source may take its password from."""
+    return bool(_SOURCE_PASSWORD_ENV.match(name)) and name not in PLATFORM_PASSWORD_ENVS
+
+
+def source_password_envs() -> list[str]:
+    """The source password variables set in this process, by name only, sorted."""
+    return sorted(name for name, value in os.environ.items() if value and is_source_password_env(name))
+
+
 def resolve_password(source: DataSource) -> str:
     """Read the source's password from the environment.
 
@@ -91,6 +111,13 @@ def resolve_password(source: DataSource) -> str:
         return decrypt_token(source.password_encrypted, get_settings())
     if not source.password_env:
         return ""
+    # Checked here too, not only when the source is registered: a source saved
+    # before the rule existed must not keep reading an arbitrary secret.
+    if not is_source_password_env(source.password_env):
+        raise IngestionError(
+            f"{source.password_env!r} cannot be used as a source password: only variables named "
+            "<NAME>_DB_PASSWORD that are not the platform's own credentials can"
+        )
     password = os.getenv(source.password_env, "")
     if not password:
         raise IngestionError(

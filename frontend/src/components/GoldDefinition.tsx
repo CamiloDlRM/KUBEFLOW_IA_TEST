@@ -7,7 +7,7 @@ import {
   suggestGold,
 } from '../api/client';
 import type { GoldPreview, GoldRelations, LayerSummary } from '../types';
-import Spinner from './Spinner';
+import MaiaSays from './MaiaSays';
 
 /**
  * Writing the query that defines gold, with the model's help.
@@ -149,15 +149,26 @@ export default function GoldDefinition({
         </button>
       </div>
 
-      {explanation && <p className="mt-2 text-xs text-yellow-200/80">{explanation}</p>}
+      {/* Maia writes the query, so she is the one who talks about it: while she
+          writes, what she wrote, or that she could not. */}
+      {suggest.isPending && (
+        <div className="mt-3">
+          <MaiaSays>I am writing the query from your description…</MaiaSays>
+        </div>
+      )}
+      {explanation && !suggest.isPending && (
+        <div className="mt-3">
+          <MaiaSays mood="happy">{explanation}</MaiaSays>
+        </div>
+      )}
 
       {/* A failed call has to say so. Without this the button simply went back
           to its resting label and nothing appeared — which is indistinguishable
           from a feature that does nothing. */}
       {suggest.isError && (
-        <p className="mt-2 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
-          {errorMessage(suggest.error, 'The query could not be written.')}
-        </p>
+        <div className="mt-3">
+          <MaiaSays mood="sad">{errorMessage(suggest.error, 'The query could not be written.')}</MaiaSays>
+        </div>
       )}
 
       {/* 3. The query itself — a draft, not an answer */}
@@ -281,11 +292,6 @@ export default function GoldDefinition({
         </div>
       )}
 
-      {suggest.isPending && (
-        <div className="mt-3">
-          <Spinner />
-        </div>
-      )}
     </div>
   );
 }

@@ -12,7 +12,6 @@ import {
   Pencil,
   Search,
   SendHorizontal,
-  Sparkles,
   TriangleAlert,
   User,
   Wrench,
@@ -23,6 +22,8 @@ import Spinner from './Spinner';
 import EmbeddedDashboard from './EmbeddedDashboard';
 import Markdown from './Markdown';
 import { describeStep, summarizeSteps, type StepKind } from './kpi/steps';
+import MaiaSays from './MaiaSays';
+import { MaiaAvatar, type MaiaMood } from './flow/Maia';
 
 /**
  * Ask for a dashboard over gold, then keep asking until it is right.
@@ -107,15 +108,13 @@ export default function KpiMaker({ projectId }: { projectId: number }) {
       <section className="flex flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-900/40">
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
           <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-yellow-500/15 text-yellow-300">
-              <Sparkles size={16} aria-hidden="true" />
-            </span>
+            <MaiaAvatar size={44} />
             <div>
               <h3 className="text-base font-semibold text-slate-100">KPI maker</h3>
               <p className="mt-0.5 max-w-3xl text-sm text-slate-400">
-                Describe what you want to see and the agent builds it in Superset, over this project's{' '}
-                <span className="text-yellow-300">gold</span> table. Keep asking to change it — it edits the
-                dashboard it already made rather than starting a new one.
+                Describe what you want to see and Maia builds it in Superset, over this project's{' '}
+                <span className="text-yellow-300">gold</span> table. Keep asking to change it — she edits the
+                dashboard she already made rather than starting a new one.
               </p>
             </div>
           </div>
@@ -178,12 +177,7 @@ export default function KpiMaker({ projectId }: { projectId: number }) {
             </>
           )}
 
-          {ask.isError && (
-            <p className="flex items-start gap-2 rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
-              <CircleX size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-              {(ask.error as Error).message}
-            </p>
-          )}
+          {ask.isError && <MaiaSays mood="sad">{(ask.error as Error).message}</MaiaSays>}
         </div>
 
         <form
@@ -250,15 +244,22 @@ function UserBubble({ text, time: at }: { text: string; time: string | null }) {
   );
 }
 
-function AgentBubble({ time: at, children }: { time: string | null; children: ReactNode }) {
+/** Maia's side of the conversation: she is the agent that builds the dashboard. */
+function AgentBubble({
+  time: at,
+  mood = 'calm',
+  children,
+}: {
+  time: string | null;
+  mood?: MaiaMood;
+  children: ReactNode;
+}) {
   return (
     <div className="flex gap-3">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-yellow-500/15 text-yellow-300">
-        <Sparkles size={14} aria-hidden="true" />
-      </span>
+      <MaiaAvatar size={36} mood={mood} />
       <div className="min-w-0 max-w-3xl flex-1">
         <div className="rounded-2xl rounded-tl-md border border-slate-800 bg-slate-900 px-4 py-3">{children}</div>
-        {at && <p className="mt-1 text-[10px] text-slate-500">Agent · {at}</p>}
+        {at && <p className="mt-1 text-[10px] text-slate-500">Maia · {at}</p>}
       </div>
     </div>
   );
@@ -283,7 +284,8 @@ function Exchange({ turn }: { turn: DashboardTurn }) {
   return (
     <article className="space-y-3">
       <UserBubble text={turn.prompt} time={at} />
-      <AgentBubble time={at}>
+      {/* Out of turns, the dashboard is half-built: she says so looking alert, not pleased. */}
+      <AgentBubble time={at} mood={turn.exhausted ? 'alert' : 'calm'}>
         <Markdown content={turn.summary} />
 
         {turn.exhausted && (
@@ -291,7 +293,7 @@ function Exchange({ turn }: { turn: DashboardTurn }) {
           // between a user who re-reads it and one who trusts it.
           <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
             <TriangleAlert size={14} className="mt-px shrink-0" aria-hidden="true" />
-            The agent ran out of turns before it finished, so the dashboard may be incomplete. Ask it to carry on.
+            I ran out of turns before I finished, so the dashboard may be incomplete. Ask me to carry on.
           </p>
         )}
 

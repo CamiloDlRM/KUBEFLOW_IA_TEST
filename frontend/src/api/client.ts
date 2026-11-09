@@ -563,6 +563,12 @@ export async function getIngestionRuns(sourceId: number): Promise<IngestionRun[]
  * the point is to check the query while writing it, not after committing to
  * it. Nothing is stored and no watermark moves.
  */
+/** The environment variables a source may take its password from: names only, never values. */
+export async function getSourcePasswordEnvs(): Promise<string[]> {
+  const { data } = await apiClient.get<{ names: string[] }>('/sources/password-envs');
+  return data.names;
+}
+
 export async function previewSource(
   body: Omit<CreateSourceRequest, 'name' | 'watermark_column'> & { limit?: number; source_id?: number },
 ): Promise<SourcePreview> {
