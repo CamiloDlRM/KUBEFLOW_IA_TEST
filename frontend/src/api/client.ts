@@ -744,7 +744,16 @@ export async function askForDashboard(
 
 /** The embedded dashboard's coordinates and a fresh guest token. Also called
  *  by the embedding SDK each time the token is about to expire. */
-export async function getDashboardEmbed(projectId: number): Promise<DashboardEmbed> {
-  const { data } = await apiClient.get<DashboardEmbed>(`/projects/${projectId}/dashboard/embed`);
-  return data;
+/**
+ * Where to frame the KPI maker's dashboard, with a guest token for it; `null`
+ * when the KPI maker has not built one yet (the endpoint's 404).
+ */
+export async function getDashboardEmbed(projectId: number): Promise<DashboardEmbed | null> {
+  const response = await apiClient.get<DashboardEmbed>(`/projects/${projectId}/dashboard/embed`, {
+    // The first call logs in to Superset and may create the dashboard's
+    // embedded configuration; an idle Superset can take longer than 15 s.
+    timeout: 60_000,
+    validateStatus: (status) => (status >= 200 && status < 300) || status === 404,
+  });
+  return response.status === 404 ? null : response.data;
 }
