@@ -1,0 +1,6 @@
+# Scripts that run inside Linux containers must keep Unix line endings. With
+# core.autocrlf=true on Windows, a checkout rewrote them with CRLF, the shebang
+# became "#!/bin/sh\r", and the container failed with
+# "exec /app/entrypoint.sh: no such file or directory".
+*.sh text eol=lf
+Dockerfile text eol=lf

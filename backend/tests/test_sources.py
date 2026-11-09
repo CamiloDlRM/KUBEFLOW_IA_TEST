@@ -98,6 +98,30 @@ class TestCreateSource:
         resp = create_source(test_app, own_project.id, password_env="hunter2!")
         assert resp.status_code == 422
 
+    @pytest.mark.parametrize("secret", ["JWT_SECRET_KEY", "FIRST_ADMIN_PASSWORD", "GRAFANA_DB_PASSWORD"])
+    def test_password_env_cannot_name_a_platform_secret(self, test_app, own_project, secret):
+        """The worker would send that value to the source's host, which its owner chooses."""
+        resp = create_source(test_app, own_project.id, password_env=secret)
+        assert resp.status_code == 422
+        assert "cannot be used as a source password" in resp.json()["detail"]
+
+    def test_preview_cannot_name_a_platform_secret_either(self, test_app, own_project):
+        payload = {**source_payload(own_project.id), "password_env": "JWT_SECRET_KEY", "limit": 10}
+        resp = test_app.post("/sources/preview", json=payload)
+        assert resp.status_code == 422
+
+    def test_lists_the_source_password_variables_by_name_only(self, test_app, monkeypatch):
+        monkeypatch.setenv("SUPABASE_DB_PASSWORD", "s3cret")
+        monkeypatch.setenv("GRAFANA_DB_PASSWORD", "platform")
+        monkeypatch.setenv("UNSET_DB_PASSWORD", "")
+
+        names = test_app.get("/sources/password-envs").json()["names"]
+
+        assert "SUPABASE_DB_PASSWORD" in names
+        assert "GRAFANA_DB_PASSWORD" not in names
+        assert "UNSET_DB_PASSWORD" not in names
+        assert "s3cret" not in str(names)
+
     def test_unsupported_kind_is_rejected(self, test_app, own_project):
         assert create_source(test_app, own_project.id, kind="oracle").status_code == 422
 
