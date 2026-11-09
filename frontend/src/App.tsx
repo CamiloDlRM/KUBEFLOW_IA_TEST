@@ -19,6 +19,7 @@ import Account from './pages/Account';
 import ConfirmChange from './pages/ConfirmChange';
 import GithubCallback from './pages/GithubCallback';
 import SetPassword from './pages/SetPassword';
+import NotFound from './pages/NotFound';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -76,6 +77,8 @@ export default function App() {
         <Route path="/account" element={<Account />} />
         {/* The page was called Settings; kept as a redirect for bookmarks. */}
         <Route path="/settings" element={<Navigate to="/account" replace />} />
+        {/* Last: any address the app does not know. */}
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );

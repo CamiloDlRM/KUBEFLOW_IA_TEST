@@ -8,6 +8,7 @@ import TestModelModal from '../components/models/TestModelModal';
 import VersionsDialog from '../components/models/VersionsDialog';
 import { formatDate } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
+import MaiaEmptyState from '../components/MaiaEmptyState';
 
 export default function Models() {
   const queryClient = useQueryClient();
@@ -75,11 +76,10 @@ export default function Models() {
       </div>
 
       {models && models.length === 0 && (
-        <div className="rounded-lg border border-dashed border-slate-700 py-16 text-center">
-          <p className="text-slate-400">
-            No models deployed yet. Successfully completed pipelines will deploy models here automatically.
-          </p>
-        </div>
+        <MaiaEmptyState action={{ to: '/pipelines', label: 'See the pipelines' }}>
+          No models deployed yet. When a pipeline finishes and its model clears the project's deployment rules,
+          it shows up here, ready to use.
+        </MaiaEmptyState>
       )}
 
       {models && models.length > 0 && (

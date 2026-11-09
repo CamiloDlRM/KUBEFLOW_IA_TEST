@@ -6,6 +6,7 @@ import MetricsPanels from '../components/MetricsPanels';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
 import { runLink } from '../utils/links';
+import MaiaEmptyState from '../components/MaiaEmptyState';
 
 /**
  * One dashboard: is it up, what has run, and how is it doing.
@@ -89,13 +90,9 @@ export default function Dashboard() {
         )}
 
         {pipelines.length === 0 && !pipelinesLoading && !pipelinesError && (
-          <p className="py-8 text-center text-sm text-slate-500">
-            No pipeline runs yet. Give a{' '}
-            <Link to="/projects" className="text-brand-400 hover:text-brand-300">
-              project
-            </Link>{' '}
-            a repository and push to it, and the runs will appear here.
-          </p>
+          <MaiaEmptyState action={{ to: '/projects', label: 'Go to projects' }}>
+            No pipeline runs yet. Give a project a repository and push to it, and the runs will appear here.
+          </MaiaEmptyState>
         )}
 
         {pipelines.length > 0 && (
