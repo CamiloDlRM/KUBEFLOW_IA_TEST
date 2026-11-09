@@ -60,7 +60,7 @@ export type ManualSection = {
 /** A label that exists verbatim in the interface. */
 function Ui({ children }: { children: ReactNode }) {
   return (
-    <code className="rounded border border-[var(--rule)] bg-[var(--paper-soft)] px-1 py-px font-mono text-[0.86em] text-[var(--ink)]">
+    <code className="rounded border border-[var(--rule)] bg-[var(--paper-soft)] px-1 py-px font-display text-[0.86em] text-[var(--ink)]">
       {children}
     </code>
   );

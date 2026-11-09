@@ -17,7 +17,7 @@ export function Steps({ items }: { items: { title: string; body: ReactNode }[] }
           key={item.title}
           className="flex gap-3 border-b border-[var(--rule)] py-3"
         >
-          <span className="mt-[3px] font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
+          <span className="mt-[3px] font-display text-[11px] tabular-nums text-[var(--ink-3)]">
             {String(index + 1).padStart(2, '0')}
           </span>
           <div className="min-w-0">
@@ -72,7 +72,7 @@ export function Anatomy({
           <dt className="flex items-start gap-2.5">
             <span
               aria-hidden="true"
-              className="mt-[1px] flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-[var(--accent)] font-mono text-[9.5px] font-semibold leading-none text-[var(--accent)]"
+              className="mt-[1px] flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-[var(--accent)] font-display text-[9.5px] font-semibold leading-none text-[var(--accent)]"
             >
               {item.n}
             </span>
@@ -96,7 +96,7 @@ export function FieldList({ items }: { items: { term: string; text: ReactNode }[
     <dl className="mt-4 grid gap-x-8 border-t border-[var(--rule)] sm:grid-cols-2">
       {items.map((item) => (
         <div key={item.term} className="border-b border-[var(--rule)] py-2.5">
-          <dt className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--ink-3)]">
+          <dt className="font-display text-[10.5px] uppercase tracking-[0.12em] text-[var(--ink-3)]">
             {item.term}
           </dt>
           <dd className="manual-body-text mt-1 text-[13px]">{item.text}</dd>
@@ -114,16 +114,16 @@ export function QaList({ items }: { items: { q: string; a: ReactNode }[] }) {
       {items.map((item) => (
         <details key={item.q} className="group border-b border-[var(--rule)] py-3">
           <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
-            <span className="mt-[1px] font-mono text-[10px] font-semibold text-[var(--accent)]">
+            <span className="mt-[1px] font-display text-[10px] font-semibold text-[var(--accent)]">
               Q
             </span>
             <span className="flex-1 text-sm font-medium leading-snug text-[var(--ink)]">
               {item.q}
             </span>
-            <span className="font-mono text-[13px] leading-none text-[var(--ink-3)] group-open:hidden">
+            <span className="font-display text-[13px] leading-none text-[var(--ink-3)] group-open:hidden">
               +
             </span>
-            <span className="hidden font-mono text-[13px] leading-none text-[var(--ink-3)] group-open:inline">
+            <span className="hidden font-display text-[13px] leading-none text-[var(--ink-3)] group-open:inline">
               −
             </span>
           </summary>
@@ -297,12 +297,12 @@ export function NotebookBlock() {
           <tbody>
             {TAGS.map((tag) => (
               <tr key={tag.tag}>
-                <td className="border-b border-[var(--rule)] py-2 pr-3 align-top font-mono text-[11.5px] text-[var(--ink)]">
+                <td className="border-b border-[var(--rule)] py-2 pr-3 align-top font-display text-[11.5px] text-[var(--ink)]">
                   {tag.tag}
                 </td>
                 <td className="border-b border-[var(--rule)] py-2 pr-3 align-top">
                   <span
-                    className={`font-mono text-[10px] uppercase tracking-[0.1em] ${
+                    className={`font-display text-[10px] uppercase tracking-[0.1em] ${
                       tag.required ? 'text-[var(--accent)]' : 'text-[var(--ink-3)]'
                     }`}
                   >
@@ -335,7 +335,7 @@ joblib.dump(model, MODEL_OUTPUT_PATH)`}
           <tbody>
             {INJECTED.map((item) => (
               <tr key={item.name}>
-                <td className="w-[180px] border-b border-[var(--rule)] py-2 pr-3 align-top font-mono text-[11.5px] text-[var(--ink)]">
+                <td className="w-[180px] border-b border-[var(--rule)] py-2 pr-3 align-top font-display text-[11.5px] text-[var(--ink)]">
                   {item.name}
                 </td>
                 <td className="manual-body-text border-b border-[var(--rule)] py-2 align-top text-[12.5px]">

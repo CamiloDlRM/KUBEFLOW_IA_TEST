@@ -153,7 +153,7 @@ function Contents({
 function LegendMark({ kind }: { kind: 'pin' | 'solid' | 'dashed' | 'accent' }) {
   if (kind === 'pin') {
     return (
-      <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[var(--accent)] font-mono text-[9px] font-semibold leading-none text-white shadow-[0_0_0_2px_var(--paper-soft)]">
+      <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[var(--accent)] font-display text-[9px] font-semibold leading-none text-white shadow-[0_0_0_2px_var(--paper-soft)]">
         3
       </span>
     );
@@ -319,7 +319,7 @@ export default function Docs() {
           >
             <Printer size={13} aria-hidden="true" />
             Print
-            <span className="hidden font-mono text-[10px] font-normal text-[var(--ink-3)] sm:inline">
+            <span className="hidden font-display text-[10px] font-normal text-[var(--ink-3)] sm:inline">
               / PDF
             </span>
           </button>
@@ -354,7 +354,7 @@ export default function Docs() {
                 be read in any order after that.
               </p>
 
-              <dl className="mt-8 flex flex-wrap items-center gap-x-7 gap-y-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--ink-3)]">
+              <dl className="mt-8 flex flex-wrap items-center gap-x-7 gap-y-2 font-display text-[10.5px] uppercase tracking-[0.12em] text-[var(--ink-3)]">
                 <div className="flex items-baseline gap-2">
                   <dt className="sr-only">Sections</dt>
                   <dd className="text-[13px] font-semibold tabular-nums text-[var(--ink)]">
@@ -424,10 +424,10 @@ export default function Docs() {
                       }}
                       className="group flex flex-col items-start"
                     >
-                      <span className="flex h-[27px] w-[27px] items-center justify-center rounded-full border border-[var(--rule-strong)] bg-[var(--paper)] font-mono text-[10px] font-semibold text-[var(--ink-2)] transition-colors group-hover:border-[var(--accent)] group-hover:bg-[var(--accent)] group-hover:text-white">
+                      <span className="flex h-[27px] w-[27px] items-center justify-center rounded-full border border-[var(--rule-strong)] bg-[var(--paper)] font-display text-[10px] font-semibold text-[var(--ink-2)] transition-colors group-hover:border-[var(--accent)] group-hover:bg-[var(--accent)] group-hover:text-white">
                         {chapter.number}
                       </span>
-                      <span className="mt-2 font-mono text-[9.5px] uppercase leading-tight tracking-[0.11em] text-[var(--ink-2)] transition-colors group-hover:text-[var(--accent)]">
+                      <span className="mt-2 font-display text-[9.5px] uppercase leading-tight tracking-[0.11em] text-[var(--ink-2)] transition-colors group-hover:text-[var(--accent)]">
                         {chapter.title}
                       </span>
                     </a>
@@ -476,7 +476,7 @@ export default function Docs() {
                     ? `${filtered.length} of ${ALL_SECTIONS.length} sections`
                     : 'Contents'}
                 </span>
-                <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">
+                <span className="flex items-center gap-1 font-display text-[10px] uppercase tracking-[0.1em] text-[var(--ink-3)]">
                   Open
                   <span className="text-[13px] leading-none transition-transform group-open:rotate-90">
                     ›
@@ -523,7 +523,7 @@ export default function Docs() {
                 <div key={chapter.id} className="manual-chapter">
                   <header className="pb-6">
                     <div className="flex items-start gap-4">
-                      <span className="mt-[7px] shrink-0 font-mono text-[11px] font-semibold tabular-nums text-[var(--accent)]">
+                      <span className="mt-[7px] shrink-0 font-display text-[11px] font-semibold tabular-nums text-[var(--accent)]">
                         {chapter.number}
                       </span>
                       <div className="min-w-0">

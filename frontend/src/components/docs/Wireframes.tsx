@@ -109,14 +109,14 @@ export function ShellScreen() {
               </thead>
               <tbody>
                 <tr>
-                  <td className="font-mono">4f2a9c1b</td>
+                  <td className="font-display">4f2a9c1b</td>
                   <td>hospital-ml</td>
                   <td>
                     <WfStatus tone="ok">success</WfStatus>
                   </td>
                 </tr>
                 <tr>
-                  <td className="font-mono">8b71d2e0</td>
+                  <td className="font-display">8b71d2e0</td>
                   <td>hospital-ml</td>
                   <td>
                     <WfStatus tone="bad">failed</WfStatus>
@@ -172,9 +172,9 @@ export function DashboardScreen() {
             </thead>
             <tbody>
               <tr>
-                <td className="font-mono">4f2a9c1b</td>
+                <td className="font-display">4f2a9c1b</td>
                 <td>hospital-ml</td>
-                <td className="font-mono">9c1a</td>
+                <td className="font-display">9c1a</td>
                 <td>
                   <WfStatus tone="ok">success</WfStatus>
                 </td>
@@ -182,9 +182,9 @@ export function DashboardScreen() {
                 <td>4m 12s</td>
               </tr>
               <tr>
-                <td className="font-mono">8b71d2e0</td>
+                <td className="font-display">8b71d2e0</td>
                 <td>claims-model</td>
-                <td className="font-mono">2f80</td>
+                <td className="font-display">2f80</td>
                 <td>
                   <WfStatus tone="bad">failed</WfStatus>
                 </td>
@@ -192,9 +192,9 @@ export function DashboardScreen() {
                 <td>1m 03s</td>
               </tr>
               <tr>
-                <td className="font-mono">1d3c7a44</td>
+                <td className="font-display">1d3c7a44</td>
                 <td>hospital-ml</td>
-                <td className="font-mono">77be</td>
+                <td className="font-display">77be</td>
                 <td>
                   <WfStatus tone="idle">running</WfStatus>
                 </td>
@@ -245,9 +245,9 @@ export function RecentRunsScreen() {
           </thead>
           <tbody>
             <tr>
-              <td className="font-mono">4f2a9c1b</td>
+              <td className="font-display">4f2a9c1b</td>
               <td>hospital-ml</td>
-              <td className="font-mono">9c1a</td>
+              <td className="font-display">9c1a</td>
               <td>
                 <WfStatus tone="ok">success</WfStatus>
               </td>
@@ -255,9 +255,9 @@ export function RecentRunsScreen() {
               <td>4m 12s</td>
             </tr>
             <tr>
-              <td className="font-mono">8b71d2e0</td>
+              <td className="font-display">8b71d2e0</td>
               <td>claims-model</td>
-              <td className="font-mono">2f80</td>
+              <td className="font-display">2f80</td>
               <td>
                 <WfStatus tone="bad">failed</WfStatus>
               </td>
@@ -265,9 +265,9 @@ export function RecentRunsScreen() {
               <td>1m 03s</td>
             </tr>
             <tr>
-              <td className="font-mono">1d3c7a44</td>
+              <td className="font-display">1d3c7a44</td>
               <td>hospital-ml</td>
-              <td className="font-mono">77be</td>
+              <td className="font-display">77be</td>
               <td>
                 <WfStatus tone="idle">queued</WfStatus>
               </td>
@@ -443,7 +443,7 @@ export function LinkRepoScreen() {
           <div className="flex items-center justify-between gap-2">
             <span>
               <span className="wf-strong block">hospital-ml</span>
-              <span className="wf-text font-mono">main</span>
+              <span className="wf-text font-display">main</span>
             </span>
             <span className="wf-text">Selected</span>
           </div>
@@ -454,7 +454,7 @@ export function LinkRepoScreen() {
           <div className="relative">
             <WfLabel>Branch</WfLabel>
             <div className="wf-box mt-1 flex items-center justify-between">
-              <span className="wf-text font-mono">main</span>
+              <span className="wf-text font-display">main</span>
               <span className="wf-text">▾</span>
             </div>
             <Pin n={2} />
@@ -462,7 +462,7 @@ export function LinkRepoScreen() {
           <div className="relative">
             <WfLabel>Notebook</WfLabel>
             <div className="wf-box mt-1 flex items-center justify-between">
-              <span className="wf-text font-mono">notebooks/train.ipynb</span>
+              <span className="wf-text font-display">notebooks/train.ipynb</span>
               <span className="wf-text">▾</span>
             </div>
             <Pin n={3} />
@@ -478,7 +478,7 @@ export function LinkRepoScreen() {
           <div className="flex items-center justify-between gap-2">
             <span>
               <span className="wf-strong block">claims-model</span>
-              <span className="wf-text font-mono">main</span>
+              <span className="wf-text font-display">main</span>
             </span>
             <span className="wf-text">Explore</span>
           </div>
@@ -556,7 +556,7 @@ export function ConnectScreen() {
           <div className="relative mt-1.5">
             <WfLabel>Password environment variable</WfLabel>
             <div className="wf-box mt-0.5">
-              <span className="wf-text font-mono">HOSPITAL_DB_PASSWORD</span>
+              <span className="wf-text font-display">HOSPITAL_DB_PASSWORD</span>
             </div>
             <Pin n={2} />
           </div>
@@ -564,7 +564,7 @@ export function ConnectScreen() {
           <div className="relative mt-1.5">
             <WfLabel>Extraction query</WfLabel>
             <div className="wf-box mt-0.5 h-[34px]">
-              <span className="wf-text font-mono">SELECT … WHERE recorded_at &gt; :watermark</span>
+              <span className="wf-text font-display">SELECT … WHERE recorded_at &gt; :watermark</span>
             </div>
             <Pin n={3} />
           </div>
@@ -655,7 +655,7 @@ export function CanvasScreen() {
         <div className="relative flex flex-wrap items-center justify-between gap-2 wf-box wf-box--deep">
           <div className="min-w-0">
             <p className="wf-strong">hospital-ml</p>
-            <p className="wf-text truncate font-mono">main · notebooks/train.ipynb</p>
+            <p className="wf-text truncate font-display">main · notebooks/train.ipynb</p>
           </div>
           <span className="wf-btn">▶ Run pipeline</span>
           <Pin n={1} className="-left-2 -top-2" />
@@ -720,7 +720,7 @@ export function RunScreen() {
         <div className="relative flex flex-wrap items-start justify-between gap-2 wf-box wf-box--deep">
           <div>
             <p className="wf-strong">
-              Pipeline <span className="font-mono">4f2a9c1b</span>
+              Pipeline <span className="font-display">4f2a9c1b</span>
             </p>
             <p className="wf-text">Repo: hospital-ml · Branch: main · Commit: 9c1a</p>
           </div>
@@ -751,7 +751,7 @@ export function RunScreen() {
 
         <div className="relative wf-box wf-box--deep">
           <WfLabel>Logs</WfLabel>
-          <pre className="mt-1 overflow-hidden font-mono text-[8.5px] leading-relaxed text-[var(--ink-2)]">
+          <pre className="mt-1 overflow-hidden font-display text-[8.5px] leading-relaxed text-[var(--ink-2)]">
 {`[execute] training model readmission-risk v1.0.0
 [execute] accuracy=0.871 f1=0.842
 [register] registered version 3`}
@@ -774,7 +774,7 @@ export function RunScreen() {
 
         <div className="relative wf-box border-[var(--ok)]">
           <WfLabel>Deployed model</WfLabel>
-          <p className="wf-text font-mono">POST /models/readmission-risk/predict</p>
+          <p className="wf-text font-display">POST /models/readmission-risk/predict</p>
           <Pin n={6} />
         </div>
       </div>
@@ -808,14 +808,14 @@ export function ModelsScreen() {
               <tr>
                 <td className="font-semibold text-[var(--ink)]">readmission-risk</td>
                 <td>v3</td>
-                <td className="font-mono">87.1%</td>
+                <td className="font-display">87.1%</td>
                 <td>Oct 31, 2026</td>
                 <td className="relative">
                   <WfStatus tone="ok">active</WfStatus>
                   <Pin n={2} />
                 </td>
                 <td className="relative">
-                  <span className="font-mono">/models/readmission-risk/predict</span>
+                  <span className="font-display">/models/readmission-risk/predict</span>
                   <Pin n={3} />
                 </td>
                 <td className="relative">
@@ -830,12 +830,12 @@ export function ModelsScreen() {
               <tr>
                 <td className="font-semibold text-[var(--ink)]">claims-triage</td>
                 <td>v1</td>
-                <td className="font-mono">91.4%</td>
+                <td className="font-display">91.4%</td>
                 <td>Oct 29, 2026</td>
                 <td>
                   <WfStatus tone="ok">active</WfStatus>
                 </td>
-                <td className="font-mono">/models/claims-triage/predict</td>
+                <td className="font-display">/models/claims-triage/predict</td>
                 <td>
                   <span className="flex justify-end gap-1">
                     <span className="wf-pill">Test</span>
