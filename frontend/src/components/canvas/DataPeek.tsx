@@ -63,7 +63,7 @@ export default function DataPeek({
       <header className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-slate-100">{label}</h3>
-          <p className="truncate font-mono text-[11px] text-slate-500">
+          <p className="truncate font-display text-[11px] text-slate-500">
             {data
               ? `${data.object_rows.toLocaleString()} rows × ${data.columns.length} columns · ${data.key}`
               : ' '}
@@ -92,7 +92,7 @@ export default function DataPeek({
         )}
         {error != null && <p className="px-4 py-6 text-sm text-red-300">{(error as Error).message}</p>}
         {data && (
-          <table className="min-w-full border-separate border-spacing-0 font-mono text-[11px]">
+          <table className="min-w-full border-separate border-spacing-0 font-display text-[11px]">
             <thead className="sticky top-0 bg-slate-900">
               <tr>
                 {data.columns.map((column) => (

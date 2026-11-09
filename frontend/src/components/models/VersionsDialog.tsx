@@ -153,7 +153,7 @@ function VersionRow({
   return (
     <tr className={`border-t border-slate-800 ${version.is_active ? 'bg-emerald-950/20' : ''}`}>
       <td className="px-4 py-2.5">
-        <span className="font-mono text-sm text-slate-100">v{version.version}</span>
+        <span className="font-display text-sm text-slate-100">v{version.version}</span>
         {version.is_active ? (
           <span className="ml-2 rounded-full bg-emerald-900/60 px-2 py-0.5 text-[10px] font-medium text-emerald-300">serving</span>
         ) : version.deployed_at ? (
@@ -168,7 +168,7 @@ function VersionRow({
         return (
           <td
             key={name}
-            className={`px-4 py-2.5 text-right font-mono tabular-nums ${
+            className={`px-4 py-2.5 text-right font-display tabular-nums ${
               index === 0 && value !== undefined && value === best ? 'text-slate-100' : 'text-slate-400'
             }`}
           >
@@ -177,12 +177,12 @@ function VersionRow({
         );
       })}
       <td className="px-4 py-2.5 text-slate-400">{version.input_label || '—'}</td>
-      <td className="max-w-[14rem] truncate px-4 py-2.5 font-mono text-[11px] text-slate-400">
+      <td className="max-w-[14rem] truncate px-4 py-2.5 font-display text-[11px] text-slate-400">
         {Object.entries(version.parameters ?? {})
           .map(([name, value]) => `${name}=${value}`)
           .join(' ') || '—'}
       </td>
-      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[11px] text-slate-500">
+      <td className="whitespace-nowrap px-4 py-2.5 font-display text-[11px] text-slate-500">
         {version.branch || '—'}
         {version.commit_sha && ` @ ${truncate(version.commit_sha, 7)}`}
       </td>

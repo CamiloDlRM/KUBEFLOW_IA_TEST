@@ -152,6 +152,50 @@ function extractTicket(embedUrl?: string): string | null {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Fitting the frame to the dashboard                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The iframe is on another origin, so its content cannot be measured. Its
+ * height can be worked out from the dashboard's layout instead: Grafana places
+ * panels on a grid of 30px rows with 8px between them (GRID_CELL_HEIGHT and
+ * GRID_CELL_VMARGIN, unchanged through Grafana 11), and kiosk mode pads the page.
+ */
+const GRID_ROW_PX = 30;
+const GRID_GAP_PX = 8;
+/** Kiosk mode's padding above and below the grid, plus a little room to spare. */
+const KIOSK_PADDING_PX = 48;
+/** Below this width Grafana stacks every panel in one column, and the grid no longer says how tall it is. */
+const GRAFANA_STACKS_BELOW_PX = 769;
+
+interface GridPanel {
+  gridPos?: { y?: number; h?: number };
+}
+
+/** The pixel height of a dashboard whose top-level panels are `panels`. */
+export function dashboardHeight(panels: GridPanel[]): number | null {
+  const rows = Math.max(0, ...panels.map((panel) => (panel.gridPos?.y ?? 0) + (panel.gridPos?.h ?? 0)));
+  if (rows === 0) return null;
+  return rows * GRID_ROW_PX + (rows - 1) * GRID_GAP_PX + KIOSK_PADDING_PX;
+}
+
+/** Asks Grafana, through the proxy, for a dashboard's layout. Null when it cannot. */
+async function fetchDashboardHeight(uid: string): Promise<number | null> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  try {
+    const res = await fetch(`${GRAFANA_BASE}/api/dashboards/uid/${encodeURIComponent(uid)}`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { dashboard?: { panels?: GridPanel[] } };
+    return dashboardHeight(body.dashboard?.panels ?? []);
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  The section                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -275,6 +319,21 @@ export function GrafanaFrame({ uid, title, vars, from }: GrafanaFrameProps) {
     void openSession();
   }, [openSession]);
 
+  // As tall as the dashboard, so the page scrolls instead of the frame. Unknown
+  // (or on a narrow screen, where Grafana stacks the panels) it keeps a share of
+  // the viewport and scrolls inside.
+  const [height, setHeight] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (window.innerWidth < GRAFANA_STACKS_BELOW_PX) return;
+    void fetchDashboardHeight(uid).then((px) => {
+      if (!cancelled) setHeight(px);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
   // Watchdog: an unreachable Grafana can leave the iframe hanging forever
   // without ever firing `onError`, so fall back to a timeout.
   useEffect(() => {
@@ -305,10 +364,12 @@ export function GrafanaFrame({ uid, title, vars, from }: GrafanaFrameProps) {
               src={frameSrc}
               onLoad={() => setStatus('ready')}
               onError={() => setStatus('error')}
-              // A share of the viewport rather than "the rest of the page":
-              // this no longer starts near the top, so subtracting a fixed
-              // header height would leave it hanging off the bottom.
-              className="h-[70vh] min-h-[420px] w-full border-0"
+              // The dashboard's own height when known (no inner scroll); otherwise
+              // a share of the viewport rather than "the rest of the page", which
+              // would leave it hanging off the bottom.
+              style={height ? { height } : undefined}
+              scrolling={height ? 'no' : undefined}
+              className={`w-full border-0 ${height ? '' : 'h-[70vh] min-h-[420px]'}`}
             />
           )}
           {status === 'loading' && (
@@ -323,7 +384,10 @@ export function GrafanaFrame({ uid, title, vars, from }: GrafanaFrameProps) {
   );
 }
 
+/** Leaves the app for Grafana itself, which only admins are meant to work in. */
 export function OpenInGrafanaLink({ url }: { url: string }) {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return null;
   return (
     <a
       href={url}
@@ -340,6 +404,7 @@ export function OpenInGrafanaLink({ url }: { url: string }) {
 /* ---- Sub-components ---- */
 
 function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void }) {
+  const { isAdmin } = useAuth();
   return (
     <div className="flex h-[70vh] min-h-[420px] flex-col items-center justify-center gap-4 px-6 text-center">
       <div className="rounded-full bg-red-900/30 p-3 text-red-400">
@@ -352,13 +417,13 @@ function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void
         <p className="text-sm text-slate-400">
           The metrics service did not respond. It is probably not running yet -
           start the monitoring stack (Grafana and Prometheus) with{' '}
-          <code className="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-slate-300">
+          <code className="rounded bg-slate-800 px-1 py-0.5 font-display text-xs text-slate-300">
             docker compose up -d grafana prometheus
           </code>{' '}
           and try again. If it is running, check that the dashboard exists and
           that your session has access to it.
         </p>
-        <p className="break-all font-mono text-xs text-slate-600">{url}</p>
+        <p className="break-all font-display text-xs text-slate-600">{url}</p>
       </div>
       <div className="flex flex-wrap justify-center gap-3">
         <button
@@ -367,14 +432,16 @@ function GrafanaUnavailable({ url, onRetry }: { url: string; onRetry: () => void
         >
           Retry
         </button>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
-        >
-          Open in Grafana
-        </a>
+        {isAdmin && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
+          >
+            Open in Grafana
+          </a>
+        )}
       </div>
     </div>
   );

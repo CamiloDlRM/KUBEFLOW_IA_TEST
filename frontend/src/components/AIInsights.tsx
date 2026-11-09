@@ -8,6 +8,8 @@ import type { PipelineStatus } from '../types';
 interface Props {
   pipelineId: string;
   pipelineStatus: PipelineStatus;
+  /** Inside Maia's panel, whose header already says who is talking. */
+  hideTitle?: boolean;
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * request a new analysis, and can push the suggested code changes to the
  * `testing-ia-agent` branch of the repository.
  */
-export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
+export default function AIInsights({ pipelineId, pipelineStatus, hideTitle = false }: Props) {
   const queryClient = useQueryClient();
 
   const { data: insights, isLoading } = useQuery({
@@ -54,10 +56,14 @@ export default function AIInsights({ pipelineId, pipelineStatus }: Props) {
   return (
     <section>
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400">
-          <SparklesIcon />
-          AI Training Advisor
-        </h3>
+        {hideTitle ? (
+          <span />
+        ) : (
+          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400">
+            <SparklesIcon />
+            AI Training Advisor
+          </h3>
+        )}
         {pipelineFinished && (
           <button
             onClick={() => generateMutation.mutate()}

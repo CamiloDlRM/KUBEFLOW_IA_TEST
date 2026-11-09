@@ -68,6 +68,9 @@ export interface Pipeline {
   owner_username: string | null;
   /** What was mounted as DATASET_PATH. Empty for runs older than the record. */
   mounted_input?: MountedInput | Record<string, never>;
+  /** The model this run trained and its version: empty until validation. */
+  model_name?: string;
+  model_version?: string;
   /** The code this run executed. Only on the detail, never on the list. */
   cells?: NotebookCell[];
 }
@@ -178,6 +181,8 @@ export interface ModelDeployment {
   deployed_at: string;
   is_active: boolean;
   pipeline_id: string;
+  /** Project of the run that trained it; null for models older than projects. */
+  project_id?: number | null;
   /** Owner of the pipeline that trained it; shown to admins. */
   owner_username: string | null;
   /** What to send the model and what it answers across that. `{}` when the

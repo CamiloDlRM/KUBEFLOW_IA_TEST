@@ -445,6 +445,26 @@ def me(
     return user_response(session, current_user)
 
 
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Trade a still-valid token for a fresh one",
+)
+def refresh(
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> TokenResponse:
+    """Extend the session while the user is active.
+
+    The SPA calls this while someone is using it, so the session only ends
+    after ``access_token_expire_minutes`` without activity. An expired token
+    is rejected by ``get_current_user``: it cannot be revived.
+    """
+    if not current_user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is disabled.")
+    return TokenResponse(access_token=create_access_token(subject=current_user.username, settings=settings))
+
+
 @router.patch(
     "/me",
     response_model=UserResponse,

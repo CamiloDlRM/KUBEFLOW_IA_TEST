@@ -155,6 +155,9 @@ class TestModelsCarryTheirCard:
         listed = test_app.get("/models").json()
 
         assert listed[0]["model_card"]["inputs"][0]["name"] == "duration_minutes"
+        # The project too, so the UI can open the run that trained it on its canvas.
+        assert run.project_id is not None
+        assert listed[0]["project_id"] == run.project_id
 
     def test_a_model_from_before_cards_has_an_empty_one(self, test_app, db_session):
         from models.schemas import ModelDeployment

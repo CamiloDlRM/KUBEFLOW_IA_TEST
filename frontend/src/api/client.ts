@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+  GithubTokenStatus,
   Repository,
   CreateRepoPayload,
   RepoCreatedResponse,
@@ -124,6 +125,18 @@ export async function setPassword(password: string): Promise<UserResponse> {
 
 export async function updateGithubToken(github_token: string): Promise<UserResponse> {
   const { data } = await apiClient.put<UserResponse>('/auth/github-token', { github_token });
+  return data;
+}
+
+/** Pings GitHub with the stored token: whether it still works, and if it expires soon. */
+export async function getGithubTokenStatus(): Promise<GithubTokenStatus> {
+  const { data } = await apiClient.get<{ status: GithubTokenStatus }>('/auth/github-token/status');
+  return data.status;
+}
+
+/** A fresh token for a still-valid one; keeps the session open while it is used. */
+export async function refreshToken(): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/refresh');
   return data;
 }
 

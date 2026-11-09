@@ -8,8 +8,9 @@ vi.mock('../../src/api/client', () => ({
   TOKEN_KEY: 'mlops_token',
 }));
 
+const auth = { isAdmin: false };
 vi.mock('../../src/context/AuthContext', () => ({
-  useAuth: () => ({ isAdmin: false }),
+  useAuth: () => auth,
 }));
 
 const useRepos = vi.fn();
@@ -68,12 +69,21 @@ describe('Dashboard', () => {
   it('is one page: health, what ran, and the metrics', async () => {
     // The whole point of the change: the Grafana panels were a second page
     // called "Dashboards", one nav item below this one.
+    auth.isAdmin = true;
     await renderDashboard();
+    auth.isAdmin = false;
 
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByText('Service Health')).toBeInTheDocument();
     expect(screen.getByText('Recent Pipelines')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Model metrics' })).toBeInTheDocument();
+  });
+
+  it('shows the service health to admins only', async () => {
+    await renderDashboard();
+
+    expect(screen.queryByText('Service Health')).not.toBeInTheDocument();
+    expect(screen.getByText('Recent Pipelines')).toBeInTheDocument();
   });
 
   it('does not list repositories', async () => {

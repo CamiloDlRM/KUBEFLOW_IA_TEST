@@ -144,7 +144,7 @@ describe('AddRepository', () => {
     renderWithProviders();
 
     const dot = await screen.findByRole('link', { name: /active pipeline of notebooks\/train/i });
-    expect(dot).toHaveAttribute('href', '/pipelines/pipe-1');
+    expect(dot).toHaveAttribute('href', '/pipelines/canvas/7?run=pipe-1');
     expect(screen.getAllByRole('link', { name: /active pipeline/i })).toHaveLength(1);
     // The name still opens the notebook on GitHub.
     expect(screen.getByRole('link', { name: 'notebooks/train.ipynb' })).toHaveAttribute(
@@ -174,7 +174,7 @@ describe('AddRepository', () => {
     renderWithProviders();
 
     const dot = await screen.findByRole('link', { name: /active pipeline/i });
-    expect(dot).toHaveAttribute('href', '/pipelines/pipe-eda');
+    expect(dot).toHaveAttribute('href', '/pipelines/canvas/7?run=pipe-eda');
     expect(screen.getAllByRole('link', { name: /active pipeline/i })).toHaveLength(1);
   });
 

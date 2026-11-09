@@ -73,6 +73,17 @@ class TestGetPipeline:
         assert len(data["phases"]) == 2
         assert data["metrics"]["accuracy"] == 0.95
 
+    def test_get_pipeline_names_the_model_it_registered(self, test_app, db_session):
+        repo = seed_repo(db_session)
+        pipeline = seed_pipeline(
+            db_session, repo.id, status="success",
+            model_name="ejemplo2", model_version="3", mlflow_run_id="acd8d8c2",
+        )
+
+        data = test_app.get(f"/pipelines/{pipeline.id}").json()
+
+        assert (data["model_name"], data["model_version"], data["mlflow_run_id"]) == ("ejemplo2", "3", "acd8d8c2")
+
     def test_get_pipeline_when_not_found_should_return_404(
         self,
         test_app,

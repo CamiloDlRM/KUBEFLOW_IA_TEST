@@ -103,7 +103,7 @@ export default function PipelineDetail() {
       {/* The same run on its project's canvas: the code and data of each phase */}
       {pipeline.project_id != null && (
         <Link
-          to={`/projects/${pipeline.project_id}/pipeline?run=${pipeline.id}`}
+          to={`/pipelines/canvas/${pipeline.project_id}?run=${pipeline.id}`}
           className="text-sm text-brand-400 hover:underline"
         >
           &larr; Code and data of this run
@@ -115,7 +115,7 @@ export default function PipelineDetail() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-100">
-              Pipeline <span className="font-mono text-base text-slate-400">{truncate(pipeline.id, 12)}</span>
+              Pipeline <span className="font-display text-base text-slate-400">{truncate(pipeline.id, 12)}</span>
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-slate-400">
               <span>Repo: <span className="text-slate-200">{repoName}</span></span>

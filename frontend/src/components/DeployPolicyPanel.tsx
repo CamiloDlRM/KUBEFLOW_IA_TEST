@@ -99,7 +99,7 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
               list={`metrics-${projectId}`}
               value={draft.metric}
               onChange={(event) => setDraft({ ...draft, metric: event.target.value })}
-              className={`${field} w-44 font-mono`}
+              className={`${field} w-44 font-display`}
             />
             <datalist id={`metrics-${projectId}`}>
               {metrics.map((name) => (
@@ -125,7 +125,7 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
               step="any"
               value={draft.threshold}
               onChange={(event) => setDraft({ ...draft, threshold: Number(event.target.value) })}
-              className={`${field} w-28 font-mono`}
+              className={`${field} w-28 font-display`}
             />
           </label>
           <label className="flex items-center gap-2 pb-1.5 text-sm text-slate-300">
@@ -141,8 +141,8 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
 
         {data && data.metrics_available.length > 0 && (
           <p className="text-xs text-slate-500">
-            This project’s runs have logged: <span className="font-mono">{data.metrics_available.join(', ')}</span>.
-            Any metric the notebook logs with <code className="font-mono">mlflow.log_metric</code> can decide.
+            This project’s runs have logged: <span className="font-display">{data.metrics_available.join(', ')}</span>.
+            Any metric the notebook logs with <code className="font-display">mlflow.log_metric</code> can decide.
           </p>
         )}
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import BackLink from '../components/BackLink';
 import { useQuery } from '@tanstack/react-query';
 import { getMedallion, getProject, getSources } from '../api/client';
 import type { Medallion } from '../types';
@@ -85,13 +86,8 @@ export default function DataFactory() {
   return (
     <div className="space-y-6">
       <div>
-        <Link
-          to={`/projects/${id}`}
-          className="inline-flex items-center gap-1 text-xs font-medium text-brand-400 hover:text-brand-300"
-        >
-          ← {project?.name ?? 'Project'}
-        </Link>
-        <h2 className="mt-2 text-2xl font-bold text-slate-100">Data Factory</h2>
+        <BackLink to={`/projects/${id}`}>{project?.name ?? 'Project'}</BackLink>
+        <h2 className="mt-4 text-2xl font-bold text-slate-100">Data Factory</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           Where the data comes in, gets cleaned, becomes the table this project trains on,
           and finally answers something. Pick any stage you have reached.

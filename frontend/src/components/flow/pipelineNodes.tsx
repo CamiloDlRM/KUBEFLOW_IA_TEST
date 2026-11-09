@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
 import type { MountedInput } from '../../types';
 import { NOTEBOOK_PHASES, type CardStatus } from '../canvas/phases';
+import { isLayer, layerStyle } from './layerTheme';
 import type { PipelineView } from './usePipelineView';
 
 /** The row, left to right: the data, the notebook's phases, the model. */
@@ -10,8 +11,6 @@ export const steps = [
   ...NOTEBOOK_PHASES.map((phase) => ({ id: phase.id, label: phase.label, caption: phase.caption })),
   { id: 'model', label: 'Model', caption: 'Logged to MLflow, then deployed if it clears the bar.' },
 ];
-
-export const isPhase = (id: string) => NOTEBOOK_PHASES.some((phase) => phase.id === id);
 
 const GAP = 180;
 
@@ -31,13 +30,6 @@ const STATUS: Record<NodeStatus, { label: string; dot: string; border?: string; 
   skipped: { label: 'never ran', dot: 'bg-slate-600', dim: true },
   missing: { label: 'no cells', dot: 'bg-red-500', border: '#b91c1c', dashed: true }, // red-700
   absent: { label: 'not in notebook', dot: 'bg-slate-700', dashed: true, dim: true },
-};
-
-/** The Input node takes the colour of the layer it trains on, like the palette's chips. */
-const LAYER_COLORS: Record<string, CSSProperties> = {
-  gold: { background: '#422006', borderColor: '#a16207', color: '#fef9c3' }, // yellow-950 / 700 / 100
-  silver: { background: '#334155', borderColor: '#94a3b8', color: '#f1f5f9' }, // slate-700 / 400 / 100
-  bronze: { background: '#451a03', borderColor: '#92400e', color: '#fef3c7' }, // amber-950 / 800 / 100
 };
 
 function statusStyle(status: NodeStatus): CSSProperties {
@@ -89,8 +81,9 @@ export function buildNodes(resolved: MountedInput | null | undefined, view: Node
     if (step.id === 'input') {
       status = view.inputStatus;
       detail = inputDetail(resolved);
-      // Layer colour first; a run's status, when there is one, then marks the border.
-      style = { ...(resolved ? LAYER_COLORS[resolved.layer] : undefined), ...statusStyle(status) };
+      // The Input node takes the metal of the layer it trains on, like the dataset cards in its
+      // panel. A run's status, when there is one, then marks the border.
+      style = { ...(resolved && isLayer(resolved.layer) ? layerStyle(resolved.layer) : undefined), ...statusStyle(status) };
     } else if (step.id === 'model') {
       status = view.modelStatus;
       if (view.accuracy !== undefined) {

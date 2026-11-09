@@ -9,6 +9,7 @@ import type { Pipeline } from '../types';
 import PipelineStatus from '../components/PipelineStatus';
 import Spinner from '../components/Spinner';
 import { formatDate, formatDuration, repoNameFromUrl, truncate } from '../utils/format';
+import { runLink } from '../utils/links';
 
 type Sort = 'newest' | 'oldest';
 type Group = 'none' | 'project' | 'notebook';
@@ -204,11 +205,11 @@ function PipelineCard({
   return (
     <li>
       <Link
-        to={`/pipelines/${p.id}`}
+        to={runLink(p.id, p.project_id)}
         className="block h-full rounded-lg border border-slate-700 bg-slate-900 p-4 transition hover:border-brand-500/60 hover:bg-slate-800/60"
       >
         <div className="flex items-start justify-between gap-2">
-          <p className="truncate font-mono text-sm font-semibold text-slate-100">
+          <p className="truncate font-display text-sm font-semibold text-slate-100">
             {p.notebook_path || truncate(p.id, 8)}
           </p>
           <PipelineStatus status={p.status} />
@@ -235,7 +236,7 @@ function Fact({ label, value, mono }: { label: string; value: string; mono?: boo
   return (
     <div>
       <dt className="text-slate-500">{label}</dt>
-      <dd className={`mt-0.5 text-slate-200 ${mono ? 'font-mono' : ''}`}>{value}</dd>
+      <dd className={`mt-0.5 text-slate-200 ${mono ? 'font-display' : ''}`}>{value}</dd>
     </div>
   );
 }

@@ -129,7 +129,7 @@ export default function LayerStage({
                     {data.columns.map((column) => (
                       <th key={column.name} className="px-2 py-1.5 font-medium">
                         <span className={metal.accent}>{column.name}</span>
-                        <span className="ml-1.5 font-mono text-[10px] font-normal text-slate-500">
+                        <span className="ml-1.5 font-display text-[10px] font-normal text-slate-500">
                           {column.type}
                         </span>
                       </th>

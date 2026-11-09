@@ -191,3 +191,31 @@ def test_github_callback_in_the_same_browser_creates_the_g_user(anon_app, oauth_
     assert "/auth/github?token=" in resp.headers["location"]
     user = db_session.exec(select(User).where(User.username == "wil@g")).first()
     assert user is not None and user.needs_password is True
+
+
+def test_refresh_trades_a_valid_token_for_a_new_one(anon_app):
+    _register(anon_app)
+    with patch("routers.auth.check_github_token", new=AsyncMock(return_value="ok")):
+        token = anon_app.post("/auth/login", data={"username": "wil", "password": "password123"}).json()["access_token"]
+
+    resp = anon_app.post("/auth/refresh", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200, resp.text
+    fresh = resp.json()["access_token"]
+    assert anon_app.get("/auth/me", headers={"Authorization": f"Bearer {fresh}"}).json()["username"] == "wil@t"
+
+
+def test_refresh_does_not_revive_an_expired_token(anon_app):
+    from datetime import datetime, timedelta, timezone
+
+    from jose import jwt
+
+    from core.config import get_settings
+
+    _register(anon_app)
+    settings = get_settings()
+    expired = jwt.encode(
+        {"sub": "wil@t", "exp": datetime.now(timezone.utc) - timedelta(minutes=1)},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    assert anon_app.post("/auth/refresh", headers={"Authorization": f"Bearer {expired}"}).status_code == 401

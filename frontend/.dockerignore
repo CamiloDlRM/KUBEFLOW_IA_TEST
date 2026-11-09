@@ -1,0 +1,19 @@
+# What the image does not need. The Dockerfile installs dependencies itself and
+# then copies the source over them, so a local node_modules would both bloat the
+# build context and overwrite the Linux install with Windows binaries (esbuild,
+# rollup), which do not run in the container.
+node_modules/
+dist/
+
+# Tests and their output: the build only compiles src (tsconfig "include").
+tests/
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# Caches and stray files.
+.vite/
+*.log
+*.tsbuildinfo
+about-gpu-*.txt

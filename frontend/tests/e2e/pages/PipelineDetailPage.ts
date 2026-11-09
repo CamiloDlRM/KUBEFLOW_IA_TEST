@@ -9,7 +9,7 @@ export class PipelineDetailPage {
   constructor(page: Page) {
     this.page = page;
     this.statusBadge = page.locator('[class*="rounded-full"][class*="px-2.5"]').first();
-    this.logViewer = page.locator('[class*="font-mono"]').first();
+    this.logViewer = page.getByTestId('log-viewer');
     this.phaseTimeline = page.locator('text=download, text=validate, text=execute');
   }
 

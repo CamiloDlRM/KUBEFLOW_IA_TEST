@@ -357,7 +357,7 @@ function StepRow({ call }: { call: DashboardToolCall }) {
         <Icon size={14} aria-hidden="true" className="shrink-0 text-slate-400" />
         <span className="text-slate-200">{step.label}</span>
         {step.subject && <span className="truncate text-slate-400">“{step.subject}”</span>}
-        <code className="ml-auto shrink-0 font-mono text-[10px] text-slate-500">{call.name}</code>
+        <code className="ml-auto shrink-0 font-display text-[10px] text-slate-500">{call.name}</code>
         {step.failed ? (
           <CircleX size={14} aria-label="failed" className="shrink-0 text-red-400" />
         ) : (
@@ -365,7 +365,7 @@ function StepRow({ call }: { call: DashboardToolCall }) {
         )}
       </button>
       {open && (
-        <div className="space-y-1.5 px-8 pb-2 font-mono text-[11px]">
+        <div className="space-y-1.5 px-8 pb-2 font-display text-[11px]">
           <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-950 px-2 py-1.5 text-slate-400">
             {JSON.stringify(call.arguments, null, 2)}
           </pre>

@@ -47,7 +47,7 @@ export default function RunList({
             className={item(selected === run.id)}
           >
             <span className="flex items-center justify-between gap-2">
-              <span className="font-mono text-xs text-slate-300">{truncate(run.id, 8)}</span>
+              <span className="font-display text-xs text-slate-300">{truncate(run.id, 8)}</span>
               <PipelineStatusBadge status={run.status} />
             </span>
             <span className="mt-0.5 block truncate text-[10px] text-slate-500">

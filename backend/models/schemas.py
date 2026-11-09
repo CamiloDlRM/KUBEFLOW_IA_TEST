@@ -731,6 +731,11 @@ class PipelineResponse(BaseModel):
     #: Whose run this is: the owner of its project (and repository).
     owner_username: str | None = None
     mounted_input: dict[str, Any] = Field(default_factory=dict)
+    #: The model this run trained, its version and the MLflow run holding it.
+    #: Empty until validation (name, version) and registration (MLflow run).
+    model_name: str = ""
+    model_version: str = ""
+    mlflow_run_id: str = ""
 
 
 class PipelineDetailResponse(PipelineResponse):
@@ -834,6 +839,8 @@ class ModelDeploymentResponse(BaseModel):
     pipeline_id: str | None
     #: Whose model this is: the owner of the pipeline that trained it.
     owner_username: str | None = None
+    #: Project of the run that trained it, so the UI can open that run on its canvas.
+    project_id: int | None = None
     #: The card of the run that produced it — what to send it, in what range,
     #: and what it answers across that. Empty for models trained before cards.
     model_card: dict[str, Any] = Field(default_factory=dict)

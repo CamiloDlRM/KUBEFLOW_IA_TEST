@@ -6,6 +6,7 @@ import type { Pipeline, PipelinePhase, Project } from '../../types';
 import { BRANCH_CODE } from '../canvas/RunList';
 import { cardStatusOfPhase } from '../canvas/Nodes';
 import { latestPhases, mountedOf, phaseCards, type CardStatus } from '../canvas/phases';
+import { errorNodeOf } from './nodeLogs';
 
 /** Run statuses that mean a run is still in flight. */
 export const ACTIVE = new Set(['queued', 'running']);
@@ -129,6 +130,8 @@ export function usePipelineView(project: Project | undefined, selection: string 
     deployed: Boolean(shownRun?.metrics.deployed),
     busy: runs.some((item) => ACTIVE.has(item.status)),
     failure,
+    /** The node whose panel shows the run's final error. */
+    errorNode: errorNodeOf({ cards, modelStatus, stage }),
     noCodeReason,
     notebookPath: head.data?.notebook_path || repo?.notebook_path || '',
     branch: (fromRun && shownRun?.branch) || repo?.branch || '',

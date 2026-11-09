@@ -163,7 +163,7 @@ function Step({ step, number, last }: { step: CleaningStep; number: number; last
         aria-expanded={open}
         className="flex w-full flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 text-left"
       >
-        <span className="font-mono text-xs text-slate-600">{number}</span>
+        <span className="font-display text-xs text-slate-600">{number}</span>
         {step.tier && (
           <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
             {TIER_LABEL[step.tier] ?? step.tier}
@@ -268,7 +268,7 @@ function ColumnHeader({ column }: { column: CleaningColumn }) {
     return (
       <th className="px-2 py-1.5 font-medium">
         <span className="text-slate-500 line-through">{column.before}</span>
-        <span className="ml-1.5 block font-mono text-[10px] font-normal text-rose-400/70">
+        <span className="ml-1.5 block font-display text-[10px] font-normal text-rose-400/70">
           dropped
         </span>
       </th>
@@ -305,7 +305,7 @@ function Rows({
   if (row.removed) {
     return (
       <tr className="border-b border-slate-800/60 bg-rose-950/30">
-        <td className="px-2 py-1 font-mono text-[10px] text-rose-400">−{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-rose-400">−{row.row}</td>
         {columns.map((_, index) => (
           <td key={index} className="px-2 py-1 text-rose-200/60 line-through">
             <Cell value={row.before[index]} />
@@ -322,7 +322,7 @@ function Rows({
   if (!touched) {
     return (
       <tr className="border-b border-slate-800/60">
-        <td className="px-2 py-1 font-mono text-[10px] text-slate-700">{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-slate-700">{row.row}</td>
         {columns.map((column, index) => (
           <td key={index} className="px-2 py-1 text-slate-400">
             {column.change === 'dropped' ? (
@@ -339,7 +339,7 @@ function Rows({
   return (
     <>
       <tr className="bg-amber-950/20">
-        <td className="px-2 py-1 font-mono text-[10px] text-amber-500/80">−{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-amber-500/80">−{row.row}</td>
         {columns.map((_, index) => (
           <td
             key={index}
@@ -354,7 +354,7 @@ function Rows({
         ))}
       </tr>
       <tr className="border-b border-slate-800/60 bg-slate-700/15">
-        <td className="px-2 py-1 font-mono text-[10px] text-slate-400">+{row.row}</td>
+        <td className="px-2 py-1 font-display text-[10px] text-slate-400">+{row.row}</td>
         {columns.map((column, index) => (
           <td
             key={index}
@@ -392,10 +392,10 @@ function Cell({ value }: { value: unknown }) {
     return <span className="italic text-slate-600">null</span>;
   }
   if (typeof value !== 'string') {
-    return <span className="font-mono">{String(value)}</span>;
+    return <span className="font-display">{String(value)}</span>;
   }
   return (
-    <span className="whitespace-pre font-mono">
+    <span className="whitespace-pre font-display">
       <span className="text-slate-600">"</span>
       <span>{value}</span>
       <span className="text-slate-600">"</span>

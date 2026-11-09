@@ -43,7 +43,7 @@ function Code({ source }: { source: string }) {
   return (
     <Highlight code={code} language="python" theme={THEME}>
       {({ tokens, getLineProps, getTokenProps }) => (
-        <pre className="overflow-x-auto py-2 font-mono text-[12.5px] leading-[1.6]" style={{ color: THEME.plain.color }}>
+        <pre className="overflow-x-auto py-2 font-display text-[12.5px] leading-[1.6]" style={{ color: THEME.plain.color }}>
           {/* inline-block grows to the longest line, so every row — and its
               hover — is as wide as the widest, and the gutter keeps one width
               however long the code beside it runs. */}
@@ -70,13 +70,13 @@ function Code({ source }: { source: string }) {
   );
 }
 
-function Cell({ cell, fromRun }: { cell: NotebookCell; fromRun: boolean }) {
+function Cell({ cell, fromRun, hideOutput }: { cell: NotebookCell; fromRun: boolean; hideOutput?: boolean }) {
   const state = CELL_STATE[cell.status];
   const tags = cell.tags.filter((tag) => !tag.startsWith('mlops:'));
   return (
     <article aria-label={`cell ${cell.index + 1}`} className="relative flex">
       <span aria-hidden="true" className={`w-[3px] shrink-0 rounded-full ${fromRun ? state.bar : 'bg-transparent'}`} />
-      <div className="w-14 shrink-0 pt-2.5 text-center font-mono text-[11px] text-[#858585]">
+      <div className="w-14 shrink-0 pt-2.5 text-center font-display text-[11px] text-[#858585]">
         {fromRun ? (
           <span className="inline-flex items-center gap-1" title={state.label}>
             {state.icon}
@@ -89,7 +89,7 @@ function Cell({ cell, fromRun }: { cell: NotebookCell; fromRun: boolean }) {
           {tags.length > 0 && (
             <div className="flex gap-1 border-b border-[#2b2b2b] px-3 py-1">
               {tags.map((tag) => (
-                <span key={tag} className="rounded bg-[#2d2d2d] px-1.5 py-px font-mono text-[10px] text-[#9cdcfe]">
+                <span key={tag} className="rounded bg-[#2d2d2d] px-1.5 py-px font-display text-[10px] text-[#9cdcfe]">
                   {tag}
                 </span>
               ))}
@@ -97,13 +97,13 @@ function Cell({ cell, fromRun }: { cell: NotebookCell; fromRun: boolean }) {
           )}
           <Code source={cell.source} />
         </div>
-        {cell.output && (
-          <pre className="mt-1 max-h-56 overflow-auto px-3 py-1.5 font-mono text-[12px] leading-relaxed text-[#cccccc]">
+        {cell.output && !hideOutput && (
+          <pre className="mt-1 max-h-56 overflow-auto px-3 py-1.5 font-display text-[12px] leading-relaxed text-[#cccccc]">
             {cell.output}
           </pre>
         )}
-        {cell.error && (
-          <pre className="mt-1 overflow-x-auto rounded-md border-l-2 border-[#f14c4c] bg-[#5a1d1d]/40 px-3 py-1.5 font-mono text-[12px] text-[#f48771]">
+        {cell.error && !hideOutput && (
+          <pre className="mt-1 overflow-x-auto rounded-md border-l-2 border-[#f14c4c] bg-[#5a1d1d]/40 px-3 py-1.5 font-display text-[12px] text-[#f48771]">
             {cell.error}
           </pre>
         )}
@@ -119,6 +119,8 @@ export default function CodeEditor({
   cells,
   fromRun,
   status,
+  fill = false,
+  hideOutput = false,
 }: {
   title: string;
   notebookPath: string;
@@ -127,6 +129,10 @@ export default function CodeEditor({
   fromRun: boolean;
   /** One line for the status bar: how the phase ended, or where the code came from. */
   status: string;
+  /** Take the full height of the parent, scrolling inside, instead of capping the code at 32rem. */
+  fill?: boolean;
+  /** Leave what the cells printed to a log window shown beside the code. */
+  hideOutput?: boolean;
 }) {
   const file = notebookPath.split('/').pop() || 'notebook.ipynb';
   const folders = notebookPath.split('/').slice(0, -1);
@@ -135,7 +141,7 @@ export default function CodeEditor({
   return (
     <section
       aria-label={`${title} detail`}
-      className="overflow-hidden rounded-xl border border-[#2b2b2b] bg-[#1e1e1e] shadow-xl shadow-black/40"
+      className={`flex flex-col overflow-hidden rounded-xl border border-[#2b2b2b] bg-[#1e1e1e] shadow-xl shadow-black/40 ${fill ? 'h-full' : ''}`}
     >
       <div className="flex items-end bg-[#252526]">
         <span className="flex items-center gap-1.5 border-t-2 border-[#0078d4] bg-[#1e1e1e] px-3 py-1.5 text-[12px] text-white">
@@ -155,9 +161,9 @@ export default function CodeEditor({
         ))}
       </nav>
 
-      <div className="max-h-[32rem] overflow-y-auto py-2">
+      <div className={`overflow-y-auto py-2 ${fill ? 'min-h-0 flex-1' : 'max-h-[32rem]'}`}>
         {cells.map((cell) => (
-          <Cell key={cell.index} cell={cell} fromRun={fromRun} />
+          <Cell key={cell.index} cell={cell} fromRun={fromRun} hideOutput={hideOutput} />
         ))}
       </div>
 

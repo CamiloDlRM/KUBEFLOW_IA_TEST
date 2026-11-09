@@ -183,7 +183,7 @@ function SourceRow({
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <button onClick={onToggle} className="min-w-0 flex-1 text-left">
           <p className="truncate font-medium text-slate-100">{source.name}</p>
-          <p className="truncate font-mono text-xs text-slate-500">
+          <p className="truncate font-display text-xs text-slate-500">
             {source.host}:{source.port}/{source.database}
           </p>
         </button>
@@ -191,7 +191,7 @@ function SourceRow({
         <div className="flex shrink-0 items-center gap-3">
           <div className="text-right">
             <p className="text-xs text-slate-500">Watermark</p>
-            <p className="font-mono text-xs text-slate-300">
+            <p className="font-display text-xs text-slate-300">
               {source.watermark_value
                 ? source.watermark_value.slice(0, 19).replace('T', ' ')
                 : 'never run'}
@@ -227,9 +227,9 @@ function SourceRow({
       {normalises && (
         <p className="border-t border-slate-800 px-4 py-2 text-xs text-slate-500">
           Codes missing from{' '}
-          <span className="font-mono text-slate-400">{source.normalize_code_column}</span> are
+          <span className="font-display text-slate-400">{source.normalize_code_column}</span> are
           filled in from{' '}
-          <span className="font-mono text-slate-400">{source.normalize_text_column}</span>,
+          <span className="font-display text-slate-400">{source.normalize_text_column}</span>,
           using a vocabulary learned from the rows that already carry one.
         </p>
       )}
@@ -309,13 +309,13 @@ function RunRow({ run }: { run: IngestionRun }) {
             <span className="text-xs text-slate-500">nothing new</span>
           )}
         </span>
-        <span className="font-mono text-xs text-slate-500">
+        <span className="font-display text-xs text-slate-500">
           {run.started_at ? run.started_at.slice(0, 19).replace('T', ' ') : '—'}
         </span>
       </div>
 
       {run.watermark_after && run.watermark_after !== run.watermark_before && (
-        <p className="mt-1 font-mono text-xs text-slate-500">
+        <p className="mt-1 font-display text-xs text-slate-500">
           {run.watermark_before.slice(0, 10)} → {run.watermark_after.slice(0, 10)}
         </p>
       )}
@@ -482,7 +482,7 @@ function CleaningReport({ report }: { report: QualityReport }) {
             {rule.examples.length > 0 && (
               <ul className="mt-0.5 space-y-0.5">
                 {rule.examples.map((example, index) => (
-                  <li key={index} className="font-mono text-[11px] text-slate-500">
+                  <li key={index} className="font-display text-[11px] text-slate-500">
                     <ExampleValue value={example.before} />
                     <span className="mx-1.5 text-slate-600">→</span>
                     <ExampleValue value={example.after} />
@@ -632,7 +632,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
           onChange={(e) => set('password_env')(e.target.value.toUpperCase())}
           placeholder="HOSPITAL_DB_PASSWORD"
           pattern="[A-Z0-9_]*"
-          className={`mt-1 font-mono ${field}`}
+          className={`mt-1 font-display ${field}`}
         />
         <span className="mt-1 block text-xs text-slate-500">
           Optional: the name of a variable set on the worker, for operator-provisioned
@@ -647,7 +647,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
           rows={5}
           value={form.extraction_sql}
           onChange={(e) => set('extraction_sql')(e.target.value)}
-          className={`mt-1 font-mono text-xs ${field}`}
+          className={`mt-1 font-display text-xs ${field}`}
         />
         <span className="mt-1 block text-xs text-slate-500">
           Must reference <code className="text-slate-400">:watermark</code>, and must
@@ -663,7 +663,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
             required
             value={form.watermark_column}
             onChange={(e) => set('watermark_column')(e.target.value)}
-            className={`mt-1 font-mono ${field}`}
+            className={`mt-1 font-display ${field}`}
           />
           <span className="mt-1 block text-xs text-slate-500">
             When the row was <em>recorded</em>, not when the event happened.
@@ -675,7 +675,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
             value={form.normalize_text_column}
             onChange={(e) => set('normalize_text_column')(e.target.value)}
             placeholder="procedure_text"
-            className={`mt-1 font-mono ${field}`}
+            className={`mt-1 font-display ${field}`}
           />
         </label>
         <label className="text-sm">
@@ -684,7 +684,7 @@ function SourceForm({ projectId, onDone }: { projectId: number; onDone: () => vo
             value={form.normalize_code_column}
             onChange={(e) => set('normalize_code_column')(e.target.value)}
             placeholder="procedure_code"
-            className={`mt-1 font-mono ${field}`}
+            className={`mt-1 font-display ${field}`}
           />
           <span className="mt-1 block text-xs text-slate-500">
             Set both to fill in missing codes.
@@ -769,7 +769,7 @@ function PreviewTable({ preview }: { preview: SourcePreview }) {
                 {row.map((cell, cellIndex) => (
                   <td
                     key={cellIndex}
-                    className="max-w-[16rem] truncate px-3 py-1.5 font-mono text-slate-300"
+                    className="max-w-[16rem] truncate px-3 py-1.5 font-display text-slate-300"
                     title={cell === null || cell === '' ? '' : String(cell)}
                   >
                     {cell === null || cell === '' ? (
