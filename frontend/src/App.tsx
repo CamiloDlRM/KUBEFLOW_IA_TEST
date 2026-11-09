@@ -19,6 +19,7 @@ import Account from './pages/Account';
 import ConfirmChange from './pages/ConfirmChange';
 import GithubCallback from './pages/GithubCallback';
 import SetPassword from './pages/SetPassword';
+import Docs from './pages/Docs';
 import NotFound from './pages/NotFound';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -46,6 +47,7 @@ export default function App() {
       <Route path="/confirm-change" element={<ConfirmChange />} />
       <Route path="/auth/github" element={<GithubCallback />} />
       <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
+      <Route path="/docs" element={<Docs />} />
 
       {/* Protected routes */}
       <Route
