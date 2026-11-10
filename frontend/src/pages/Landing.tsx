@@ -155,10 +155,6 @@ export default function Landing() {
             <BookOpen className='h-5 w-5' />
             <span aria-hidden='true' className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out  ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[7rem] translate-x-0 opacity-100'}`}>Docs</span>
           </Link>
-          <a href='#about' aria-label='About Us' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 hover:border-indigo-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2' : 'gap-2 px-3'} `}>
-            <BookOpen className='h-5 w-5' />
-            <span aria-hidden='true' className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out  ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[6rem] translate-x-0 opacity-100'}`}>About Us</span>
-          </a>
           <a href='https://github.com/CamiloDlRM/KUBEFLOW_IA_TEST' target='_blank' rel='noreferrer' aria-label='Ver repositorio en GitHub' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 hover:border-slate-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2' : 'gap-2 px-3'} `}>
             <img src={githubLogo} className='object-contain h-5 w-5' />
             <span aria-hidden='true' className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out  ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[5rem] translate-x-0 opacity-100'}`}>GitHub</span>

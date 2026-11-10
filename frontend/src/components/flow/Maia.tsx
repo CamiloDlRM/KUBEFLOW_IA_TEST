@@ -12,7 +12,7 @@ export const MAIA_PANEL = 'maia';
  * - `sad`: red, brows up in the middle, drooping slowly — a step failed.
  * - `alert`: amber, brows raised and her right tentacle up, waving — the run worked but
  *   its model was not deployed, and she has something to say about it.
- * - `happy`: green, eyes closed in a smile, doing little spins — the run worked and its
+ * - `happy`: green, eyes closed in a smile, swaying from side to side — the run worked and its
  *   model is deployed.
  */
 export type MaiaMood = 'calm' | 'sad' | 'alert' | 'happy';
@@ -171,7 +171,7 @@ export function MaiaAvatar({
       </defs>
 
       <g className="maia-body">
-        {/* Its own group, so spinning when happy does not fight the float on maia-body. */}
+        {/* Its own group, so swaying when happy does not fight the float on maia-body. */}
         <g className="maia-spin">
         {/* aura */}
         <circle
@@ -239,7 +239,7 @@ export function MaiaAvatar({
 }
 
 /** What Maia has to say about the run on screen: the AI training advisor. */
-export function MaiaPanelContent({ view }: { view: PipelineView }) {
+export function MaiaPanelContent({ view, autoAnalyze = false }: { view: PipelineView; autoAnalyze?: boolean }) {
   const run = view.shownRun;
   if (!run) {
     return (
@@ -250,5 +250,5 @@ export function MaiaPanelContent({ view }: { view: PipelineView }) {
       </p>
     );
   }
-  return <AIInsights pipelineId={run.id} pipelineStatus={run.status} hideTitle />;
+  return <AIInsights pipelineId={run.id} pipelineStatus={run.status} hideTitle autoAnalyze={autoAnalyze} />;
 }

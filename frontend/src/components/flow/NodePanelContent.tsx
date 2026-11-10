@@ -25,8 +25,42 @@ export interface NodePanelContext {
     projectId: number | undefined;
     chooseInput: ChooseInput;
     view: PipelineView;
-    /** Opens Maia, the AI advisor, on the run on screen. */
-    openMaia?: () => void;
+    /** Opens Maia, the AI advisor, on the run on screen; `analyze` has her start reviewing it right away. */
+    openMaia?: (analyze?: boolean) => void;
+}
+
+/** A card that opens Maia's panel, with her face on it. */
+function AskMaiaButton({ title, text, onClick, failed = false }: { title: string; text: string; onClick: () => void; failed?: boolean }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`flex w-full shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                failed
+                    ? 'border-red-500/40 bg-red-500/10 hover:bg-red-500/20'
+                    : 'border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/20'
+            }`}
+        >
+            <MaiaAvatar size={32} mood={failed ? 'sad' : 'calm'} />
+            <span>
+                <span className={`block font-display text-sm font-semibold ${failed ? 'text-red-200' : 'text-violet-200'}`}>{title}</span>
+                <span className="block font-body2 text-xs text-slate-400">{text}</span>
+            </span>
+        </button>
+    );
+}
+
+/** On the node where the shown run broke: a shortcut to Maia, who reviews the failure and proposes a fix. */
+function FailureAskMaia({ nodeId, view, openMaia }: { nodeId: string; view: PipelineView; openMaia?: NodePanelContext['openMaia'] }) {
+    if (!openMaia || view.shownRun?.status !== 'failed' || view.errorNode !== nodeId) return null;
+    return (
+        <AskMaiaButton
+            failed
+            title="Ask Maia what went wrong"
+            text="She reviews the error and this run's code, explains the likely cause and can push a fix."
+            onClick={() => openMaia(true)}
+        />
+    );
 }
 
 /** The preview sits inside the panel instead of floating beside the palette. */
@@ -78,7 +112,7 @@ function InputNote({ note }: { note: string | null }) {
 }
 
 /** Data sources for the pipeline: what it uses now, and the layers it can switch to. */
-export function InputPanel({ projectId, chooseInput, view }: NodePanelContext) {
+export function InputPanel({ projectId, chooseInput, view, openMaia }: NodePanelContext) {
     const [peek, setPeek] = useState<{ choice: PipelineInputChoice; label: string } | null>(null);
 
     // Keyed by project, like the pipeline view, so both share the same cache.
@@ -102,6 +136,7 @@ export function InputPanel({ projectId, chooseInput, view }: NodePanelContext) {
 
     return (
         <div className="space-y-4">
+            <FailureAskMaia nodeId="input" view={view} openMaia={openMaia} />
             <section className="rounded-xl border border-slate-700 bg-slate-950/40 px-4 py-3">
                 <h4 className="font-display text-[11px] font-semibold uppercase tracking-wider text-slate-500">In use · next run</h4>
                 <p className="mt-1 truncate text-sm text-slate-100">
@@ -169,7 +204,7 @@ export function InputPanel({ projectId, chooseInput, view }: NodePanelContext) {
 }
 
 /** One component for every notebook phase: the code it ran and what it printed. */
-export function PhasePanel({ phaseId, projectId, view }: { phaseId: string } & NodePanelContext) {
+export function PhasePanel({ phaseId, projectId, view, openMaia }: { phaseId: string } & NodePanelContext) {
     const phase = NOTEBOOK_PHASES.find((p) => p.id === phaseId);
 
     if (!view.repo) {
@@ -218,6 +253,7 @@ export function PhasePanel({ phaseId, projectId, view }: { phaseId: string } & N
     // Each scrolls on its own, so a long notebook never pushes the error out of sight.
     return (
         <div className="flex h-full min-h-0 flex-col gap-3">
+            <FailureAskMaia nodeId={phaseId} view={view} openMaia={openMaia} />
             <div className="min-h-0 flex-[3]">
                 <PhaseDetail {...detail} fill hideOutput />
             </div>
@@ -268,21 +304,16 @@ export function ModelPanel({ view, openMaia }: NodePanelContext) {
 
             <NodeLogs nodeId="model" view={view} />
 
-            {openMaia && (
-                <button
-                    type="button"
-                    onClick={openMaia}
-                    className="flex w-full items-center gap-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3 text-left transition hover:bg-violet-500/20"
-                >
-                    <MaiaAvatar size={32} />
-                    <span>
-                        <span className="block font-display text-sm font-semibold text-violet-200">Ask Maia about this run</span>
-                        <span className="block font-body2 text-xs text-slate-400">
-                            What went well, what to try next, and a fix she can push for you.
-                        </span>
-                    </span>
-                </button>
-            )}
+            {openMaia &&
+                (run.status === 'failed' && view.errorNode === 'model' ? (
+                    <FailureAskMaia nodeId="model" view={view} openMaia={openMaia} />
+                ) : (
+                    <AskMaiaButton
+                        title="Ask Maia about this run"
+                        text="What went well, what to try next, and a fix she can push for you."
+                        onClick={() => openMaia()}
+                    />
+                ))}
         </div>
     );
 }
