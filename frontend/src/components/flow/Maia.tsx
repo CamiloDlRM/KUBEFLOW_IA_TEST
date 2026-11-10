@@ -239,7 +239,7 @@ export function MaiaAvatar({
 }
 
 /** What Maia has to say about the run on screen: the AI training advisor. */
-export function MaiaPanelContent({ view }: { view: PipelineView }) {
+export function MaiaPanelContent({ view, autoAnalyze = false }: { view: PipelineView; autoAnalyze?: boolean }) {
   const run = view.shownRun;
   if (!run) {
     return (
@@ -250,5 +250,5 @@ export function MaiaPanelContent({ view }: { view: PipelineView }) {
       </p>
     );
   }
-  return <AIInsights pipelineId={run.id} pipelineStatus={run.status} hideTitle />;
+  return <AIInsights pipelineId={run.id} pipelineStatus={run.status} hideTitle autoAnalyze={autoAnalyze} />;
 }

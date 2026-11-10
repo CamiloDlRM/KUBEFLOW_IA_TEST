@@ -148,6 +148,38 @@ export interface BranchInfo {
   commit_sha: string;
 }
 
+/** A notebook cell in the in-app editor: its text, never its outputs. */
+export interface EditorCell {
+  index: number;
+  cell_type: 'code' | 'markdown' | 'raw';
+  source: string;
+  tags: string[];
+}
+
+export interface EditorNotebook {
+  branch: string;
+  notebook_path: string;
+  /** The file's version on GitHub; a save is refused if it has moved on. */
+  sha: string;
+  cells: EditorCell[];
+  /** Projects a push to this notebook starts a pipeline run in. */
+  linked_projects: string[];
+}
+
+export interface NotebookSavePayload {
+  branch: string;
+  notebook_path: string;
+  sha: string;
+  message: string;
+  cells: { index: number; source: string }[];
+}
+
+export interface NotebookSaved {
+  commit_sha: string;
+  sha: string;
+  changed_cells: number;
+}
+
 export interface TriggerAccepted {
   status: string;
   pipeline_id: string;

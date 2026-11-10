@@ -21,6 +21,7 @@ import GithubCallback from './pages/GithubCallback';
 import SetPassword from './pages/SetPassword';
 import Docs from './pages/Docs';
 import NotFound from './pages/NotFound';
+import NotebookEditor from './pages/NotebookEditor';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -48,6 +49,8 @@ export default function App() {
       <Route path="/auth/github" element={<GithubCallback />} />
       <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
       <Route path="/docs" element={<Docs />} />
+      {/* Opens in its own tab, full screen: outside the app's Layout. */}
+      <Route path="/repos/:repoId/notebook" element={<RequireAuth><NotebookEditor /></RequireAuth>} />
 
       {/* Protected routes */}
       <Route

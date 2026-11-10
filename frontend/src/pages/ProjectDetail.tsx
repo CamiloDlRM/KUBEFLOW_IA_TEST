@@ -17,6 +17,7 @@ import DeployPolicyPanel from '../components/DeployPolicyPanel';
 import { repoNameFromUrl } from '../utils/format';
 import { ChevronDown } from 'lucide-react';
 import BackLink from '../components/BackLink';
+import NotebookTemplateLink from '../components/NotebookTemplateLink';
 
 /**
  * One project: its data factory, and the code it trains with.
@@ -216,12 +217,15 @@ function RepositorySection({ project }: { project: Project }) {
             </Link>
           </div>
         ) : picking ? (
-          <RepoPicker
-            repos={repos}
-            onPick={(repoId, branch, notebookPath) => link.mutate({ repoId, branch, notebookPath })}
-            busy={link.isPending}
-            error={link.isError ? (link.error as Error).message : null}
-          />
+          <div className="space-y-3">
+            <NotebookTemplateLink />
+            <RepoPicker
+              repos={repos}
+              onPick={(repoId, branch, notebookPath) => link.mutate({ repoId, branch, notebookPath })}
+              busy={link.isPending}
+              error={link.isError ? (link.error as Error).message : null}
+            />
+          </div>
         ) : (
           <p className="py-2 text-sm text-slate-500">
             No repository linked. The data factory works without one — link code when there

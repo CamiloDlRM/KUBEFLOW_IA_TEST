@@ -1,8 +1,15 @@
 import type { ReactNode } from 'react';
 import { X } from 'lucide-react';
 
-/** One width for every node, so the panel does not jump as you move between them. */
-export const PANEL_WIDTH = 860;
+/** One width for every node, so the panel does not jump as you move between them.
+ *  Half the canvas, within these bounds, so it stays proportional on smaller screens. */
+const PANEL_MAX_WIDTH = 860;
+const PANEL_MIN_WIDTH = 360;
+const PANEL_SHARE = 0.5;
+export function panelWidthFor(canvasWidth: number) {
+    if (!canvasWidth) return PANEL_MAX_WIDTH;
+    return Math.round(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, canvasWidth * PANEL_SHARE)));
+}
 /** Gap between the panel and the right edge of the canvas. */
 export const PANEL_MARGIN = 40;
 /** Starts below the Run button and the project picker, so it never covers them. */
@@ -16,10 +23,11 @@ interface NodePanelProps {
     children: ReactNode;
     /** Replaces the title's colour, e.g. Maia's name in the app's gradient. */
     titleClassName?: string;
+    /** From panelWidthFor, so the canvas can keep Maia and the focused node clear of it. */
+    width: number;
 }
 
-export default function NodePanel({ title, caption, onClose, children, titleClassName = 'text-slate-100' }: NodePanelProps) {
-    const width = PANEL_WIDTH;
+export default function NodePanel({ title, caption, onClose, children, titleClassName = 'text-slate-100', width }: NodePanelProps) {
     return (
         <aside className="absolute z-10 flex flex-col overflow-hidden rounded-2xl font-body border border-slate-700 bg-slate-900/95 shadow-2xl backdrop-blur"
             style={{ top: PANEL_TOP, right: PANEL_MARGIN, bottom: PANEL_BOTTOM, width, maxWidth: `calc(100% - ${PANEL_MARGIN * 2}px)` }}>

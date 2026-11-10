@@ -23,6 +23,9 @@ import type {
   ChangeRequestedResponse,
   Insight,
   BranchInfo,
+  EditorNotebook,
+  NotebookSavePayload,
+  NotebookSaved,
   TriggerAccepted,
   Dataset,
   DatasetPreview,
@@ -191,6 +194,20 @@ export async function deleteRepo(repoId: number): Promise<void> {
 
 export async function getRepoBranches(repoId: number): Promise<BranchInfo[]> {
   const { data } = await apiClient.get<BranchInfo[]>(`/repos/${repoId}/branches`);
+  return data;
+}
+
+/** A notebook's cells (text only) as the branch has them now, to edit. */
+export async function getRepoNotebook(repoId: number, branch: string, path: string): Promise<EditorNotebook> {
+  const { data } = await apiClient.get<EditorNotebook>(`/repos/${repoId}/notebook`, {
+    params: { branch, path },
+  });
+  return data;
+}
+
+/** Commits the edited cells to the notebook's branch. */
+export async function saveRepoNotebook(repoId: number, payload: NotebookSavePayload): Promise<NotebookSaved> {
+  const { data } = await apiClient.put<NotebookSaved>(`/repos/${repoId}/notebook`, payload);
   return data;
 }
 

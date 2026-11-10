@@ -1565,6 +1565,50 @@ class BranchInfo(BaseModel):
     commit_sha: str
 
 
+class NotebookEditorCell(BaseModel):
+    """A notebook cell as the in-app editor shows it: its text, never its outputs."""
+
+    index: int
+    cell_type: str
+    source: str
+    tags: list[str] = []
+
+
+class NotebookEditorResponse(BaseModel):
+    """A notebook opened for editing."""
+
+    branch: str
+    notebook_path: str
+    #: The file's blob SHA: sent back on save so a newer commit is not overwritten.
+    sha: str
+    cells: list[NotebookEditorCell]
+    #: Active projects that train with this notebook on this branch: a push to
+    #: it starts a pipeline run in each of them.
+    linked_projects: list[str] = []
+
+
+class NotebookCellEdit(BaseModel):
+    index: int
+    source: str
+
+
+class NotebookSaveRequest(BaseModel):
+    """The cells whose text changed, to commit over the version ``sha``."""
+
+    branch: str = Field(min_length=1)
+    notebook_path: str = Field(min_length=1)
+    sha: str = Field(min_length=1)
+    message: str = Field(default="", max_length=200)
+    cells: list[NotebookCellEdit]
+
+
+class NotebookSaveResponse(BaseModel):
+    commit_sha: str
+    #: The file's new blob SHA, for the next save.
+    sha: str
+    changed_cells: int
+
+
 # ---------------------------------------------------------------------------
 # Datasets (MinIO)
 # ---------------------------------------------------------------------------

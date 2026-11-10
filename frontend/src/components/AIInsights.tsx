@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { applyInsight, generateInsight, getInsights } from '../api/client';
 import Markdown from './Markdown';
@@ -10,6 +11,8 @@ interface Props {
   pipelineStatus: PipelineStatus;
   /** Inside Maia's panel, whose header already says who is talking. */
   hideTitle?: boolean;
+  /** Start an analysis on open when the run has none yet (e.g. opened from a failure). */
+  autoAnalyze?: boolean;
 }
 
 /**
@@ -18,7 +21,7 @@ interface Props {
  * request a new analysis, and can push the suggested code changes to the
  * `testing-ia-agent` branch of the repository.
  */
-export default function AIInsights({ pipelineId, pipelineStatus, hideTitle = false }: Props) {
+export default function AIInsights({ pipelineId, pipelineStatus, hideTitle = false, autoAnalyze = false }: Props) {
   const queryClient = useQueryClient();
 
   const { data: insights, isLoading } = useQuery({
@@ -52,6 +55,15 @@ export default function AIInsights({ pipelineId, pipelineStatus, hideTitle = fal
   const busy = latest?.status === 'pending' || latest?.status === 'generating';
   const applying = latest?.apply_status === 'queued' || latest?.apply_status === 'applying';
   const pipelineFinished = pipelineStatus === 'success' || pipelineStatus === 'failed';
+
+  // Once per run: an existing analysis is shown as is rather than paid for again.
+  const autoStarted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoAnalyze || !pipelineFinished || !insights || insights.length > 0) return;
+    if (autoStarted.current === pipelineId) return;
+    autoStarted.current = pipelineId;
+    generateMutation.mutate();
+  }, [autoAnalyze, pipelineFinished, insights, pipelineId, generateMutation]);
 
   return (
     <section>
