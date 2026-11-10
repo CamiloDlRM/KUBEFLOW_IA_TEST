@@ -364,10 +364,8 @@ function RepositoryExplorer({
                 </a>
                 <Link
                   to={`/repos/${repoId}/notebook?${new URLSearchParams({ branch, path })}`}
-                  target="_blank"
-                  rel="noreferrer"
                   aria-label={`Edit ${path} on ${branch}`}
-                  title="Edit this notebook (opens in a new tab)"
+                  title="Edit this notebook"
                   className="ml-auto shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-slate-800 hover:text-brand-300"
                 >
                   <Pencil size={14} aria-hidden="true" />

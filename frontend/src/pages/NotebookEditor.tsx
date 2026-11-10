@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ExternalLink, GitBranch, NotebookText, Pencil, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
+import { BACK_BUTTON_CLASS } from '../components/BackLink';
+import { ArrowLeft, ExternalLink, GitBranch, NotebookText, Pencil, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
 import { getRepoNotebook, getRepos, saveRepoNotebook } from '../api/client';
 import type { EditorCell, NotebookSaved } from '../types';
 import CodeInput from '../components/notebook/CodeInput';
@@ -125,8 +126,13 @@ export default function NotebookEditor() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+  // The tab is named after the notebook only while the editor is open.
   useEffect(() => {
+    const previous = document.title;
     document.title = `${dirty ? '● ' : ''}${file} · Maia`;
+    return () => {
+      document.title = previous;
+    };
   }, [dirty, file]);
 
   const linkedProjects = notebook.data?.linked_projects ?? [];
@@ -136,15 +142,27 @@ export default function NotebookEditor() {
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/95 backdrop-blur">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
+            <Link
+              to="/repos/new"
+              // An in-app move does not fire beforeunload, so unsaved cells are asked about here.
+              onClick={(event) => {
+                if (dirty && !window.confirm('Leave the editor? Your unsaved changes will be lost.')) {
+                  event.preventDefault();
+                }
+              }}
+              className={`${BACK_BUTTON_CLASS} shrink-0 !px-3 !py-1.5`}
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              My repos
+            </Link>
             <NotebookText size={22} className="shrink-0 text-brand-400" aria-hidden="true" />
             <div className="min-w-0">
-              <h1 className="truncate font-display text-base font-semibold text-slate-100">{file}</h1>
+              <h1 title={path} className="truncate font-display text-base font-semibold text-slate-100">{file}</h1>
               <p className="flex min-w-0 items-center gap-2 font-display text-xs text-slate-500">
                 <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand-500/30 bg-brand-600/15 px-2 py-0.5 text-brand-400">
                   <GitBranch size={11} aria-hidden="true" />
                   {branch || 'no branch'}
                 </span>
-                <span className="truncate">{path}</span>
               </p>
             </div>
           </div>

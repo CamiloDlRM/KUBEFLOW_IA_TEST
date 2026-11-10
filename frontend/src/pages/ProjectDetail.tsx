@@ -102,10 +102,6 @@ export default function ProjectDetail() {
       <RepositorySection project={project} />
 
       {project.repository && <DeployPolicyPanel projectId={project.id} />}
-
-      <div className="flex justify-end">
-        <RunPipelineButton project={project} onClick={() => setRunOpen(true)} />
-      </div>
     </div>
   );
 }

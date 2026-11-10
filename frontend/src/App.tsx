@@ -49,7 +49,7 @@ export default function App() {
       <Route path="/auth/github" element={<GithubCallback />} />
       <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
       <Route path="/docs" element={<Docs />} />
-      {/* Opens in its own tab, full screen: outside the app's Layout. */}
+      {/* Full screen, with its own header and back button: outside the app's Layout. */}
       <Route path="/repos/:repoId/notebook" element={<RequireAuth><NotebookEditor /></RequireAuth>} />
 
       {/* Protected routes */}
