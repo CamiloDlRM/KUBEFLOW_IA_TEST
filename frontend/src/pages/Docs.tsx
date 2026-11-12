@@ -153,7 +153,7 @@ function Contents({
 function LegendMark({ kind }: { kind: 'pin' | 'solid' | 'dashed' | 'accent' }) {
   if (kind === 'pin') {
     return (
-      <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[var(--accent)] font-display text-[9px] font-semibold leading-none text-white shadow-[0_0_0_2px_var(--paper-soft)]">
+      <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[var(--accent)] font-display text-[9px] font-semibold leading-none text-slate-950 shadow-[0_0_0_2px_var(--paper-soft)]">
         3
       </span>
     );
@@ -177,7 +177,7 @@ function LegendMark({ kind }: { kind: 'pin' | 'solid' | 'dashed' | 'accent' }) {
     );
   }
   return (
-    <span className={`${shape} border-[var(--rule-strong)] bg-white`} aria-hidden="true" />
+    <span className={`${shape} border-[var(--rule-strong)] bg-[var(--paper-soft)]`} aria-hidden="true" />
   );
 }
 
@@ -424,7 +424,7 @@ export default function Docs() {
                       }}
                       className="group flex flex-col items-start"
                     >
-                      <span className="flex h-[27px] w-[27px] items-center justify-center rounded-full border border-[var(--rule-strong)] bg-[var(--paper)] font-display text-[10px] font-semibold text-[var(--ink-2)] transition-colors group-hover:border-[var(--accent)] group-hover:bg-[var(--accent)] group-hover:text-white">
+                      <span className="flex h-[27px] w-[27px] items-center justify-center rounded-full border border-[var(--rule-strong)] bg-[var(--paper)] font-display text-[10px] font-semibold text-[var(--ink-2)] transition-colors group-hover:border-[var(--accent)] group-hover:bg-[var(--accent)] group-hover:text-slate-950">
                         {chapter.number}
                       </span>
                       <span className="mt-2 font-display text-[9.5px] uppercase leading-tight tracking-[0.11em] text-[var(--ink-2)] transition-colors group-hover:text-[var(--accent)]">

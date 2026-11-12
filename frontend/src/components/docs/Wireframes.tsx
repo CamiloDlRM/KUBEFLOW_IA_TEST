@@ -13,7 +13,7 @@ export function LoginScreen() {
           <p className="wf-text">From code to deployment</p>
         </div>
 
-        <div className="space-y-2 rounded border border-[var(--rule)] bg-white p-3">
+        <div className="space-y-2 rounded border border-[var(--rule)] bg-[var(--paper-soft)] p-3">
           <div className="relative">
             <WfLabel>Username</WfLabel>
             <div className="wf-box mt-1">
@@ -305,7 +305,7 @@ export function MetricsScreen() {
           <Pin n={1} className="-left-1.5 -top-2" />
         </div>
 
-        <div className="relative border border-[var(--rule)] bg-white">
+        <div className="relative border border-[var(--rule)] bg-[var(--paper-soft)]">
           <div className="flex items-center justify-between px-2 py-1">
             <WfLabel>Accuracy over time</WfLabel>
             <span className="wf-text">last 30 days · 30s refresh</span>
@@ -348,7 +348,7 @@ export function ProjectsScreen() {
         <div className="relative flex flex-wrap items-end gap-2 wf-box wf-box--deep">
           <div className="min-w-[130px] flex-1">
             <WfLabel>Name your project</WfLabel>
-            <div className="wf-box mt-1 bg-white">
+            <div className="wf-box mt-1 bg-[var(--paper-soft)]">
               <span className="wf-text">Hospital readmissions</span>
             </div>
           </div>
@@ -508,7 +508,7 @@ export function StagesScreen() {
               key={stage.label}
               className={`relative flex-1 rounded border p-1.5 ${
                 stage.on
-                  ? 'border-[var(--rule-strong)] bg-white'
+                  ? 'border-[var(--rule-strong)] bg-[var(--paper-soft)]'
                   : 'border-dashed border-[var(--rule)] bg-transparent'
               }`}
             >
@@ -608,7 +608,7 @@ export function KpiScreen() {
           </div>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
             {[0, 1, 2].map((index) => (
-              <div key={index} className="border border-[var(--rule)] bg-white p-1">
+              <div key={index} className="border border-[var(--rule)] bg-[var(--paper-soft)] p-1">
                 <div className="h-[26px] w-full bg-[var(--paper-deep)]" />
                 <WfLabel>chart {index + 1}</WfLabel>
               </div>
@@ -737,7 +737,7 @@ export function RunScreen() {
             {phases.map((phase, index) => (
               <div key={phase} className="flex flex-1 items-center">
                 <div className="flex flex-col items-center">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ok)] text-[8px] text-white">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ok)] text-[8px] text-slate-950">
                     ✓
                   </span>
                   <span className="wf-text">{phase}</span>
