@@ -33,8 +33,11 @@ from models.schemas import (
     Dataset,
     DatasetPreviewResponse,
     DatasetResponse,
+    DataSource,
+    IngestionRun,
     MessageResponse,
     Project,
+    UploadStatusResponse,
     User,
 )
 
@@ -350,6 +353,82 @@ async def upload_dataset(
         size_bytes=size_bytes,
     )
     return DatasetResponse.model_validate(dataset)
+
+
+def _layering_run(session: Session, upload: Dataset) -> IngestionRun | None:
+    """The run that carried ``upload`` through the layers, if one has started.
+
+    Uploads layered from now on name their run. Older ones do not, so for them
+    it is found the way the worker chose it: the upload's pseudo-source (one per
+    file name) and its first run after the file arrived.
+    """
+    if upload.ingestion_run_id:
+        return session.get(IngestionRun, upload.ingestion_run_id)
+    stem = os.path.splitext(upload.name)[0] or "upload"
+    source = session.exec(
+        select(DataSource).where(
+            DataSource.project_id == upload.project_id,
+            DataSource.kind == "upload",
+            DataSource.name == stem,
+        )
+    ).first()
+    if source is None:
+        return None
+    return session.exec(
+        select(IngestionRun)
+        .where(
+            IngestionRun.source_id == source.id,
+            IngestionRun.started_at >= upload.created_at,  # type: ignore[operator]
+        )
+        .order_by(IngestionRun.started_at)  # type: ignore[arg-type]
+    ).first()
+
+
+@router.get(
+    "/projects/{project_id}/uploads",
+    response_model=list[UploadStatusResponse],
+    summary="Uploaded files, and how far each has got through the layers",
+)
+def list_uploads(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[UploadStatusResponse]:
+    """The project's latest uploads, newest first, each with its layering status.
+
+    ``def`` and not ``async def``: a few small queries per upload, and nothing
+    here is worth holding the event loop for.
+    """
+    _get_project_or_404(session, project_id, current_user)
+
+    uploads = session.exec(
+        select(Dataset)
+        .where(Dataset.project_id == project_id, Dataset.origin == "upload")
+        .order_by(Dataset.created_at.desc(), Dataset.id.desc())  # type: ignore[union-attr]
+        .limit(20)
+    ).all()
+
+    statuses: list[UploadStatusResponse] = []
+    for upload in uploads:
+        run = _layering_run(session, upload)
+        source = session.get(DataSource, run.source_id) if run else None
+        report = (run.quality_report or {}) if run else {}
+        kept = report.get("rows_out")
+        statuses.append(
+            UploadStatusResponse(
+                dataset_id=upload.id,  # type: ignore[arg-type]
+                name=upload.name,
+                size_bytes=upload.size_bytes,
+                created_at=upload.created_at,
+                status=run.status if run else "queued",
+                error=(run.error or "") if run else "",
+                rows_in=run.rows_extracted if run and run.status == "success" else None,
+                rows_kept=kept if isinstance(kept, int) else None,
+                source_id=run.source_id if run else None,
+                source_name=source.name if source else "",
+            )
+        )
+    return statuses
 
 
 @router.get(

@@ -540,6 +540,20 @@ export interface ProjectRepository {
   notebook_path: string;
 }
 
+/** An uploaded file, and how far it has got through the layers. */
+export interface UploadStatus {
+  dataset_id: number;
+  name: string;
+  size_bytes: number;
+  created_at: string;
+  status: 'queued' | 'running' | 'success' | 'failed';
+  error: string;
+  rows_in: number | null;
+  rows_kept: number | null;
+  source_id: number | null;
+  source_name: string;
+}
+
 export interface Project {
   id: number;
   name: string;

@@ -104,7 +104,7 @@ export default function DataFactory() {
         {current === 'connect' && (
           <>
             <SourcesPanel projectId={id} mode="connect" />
-            <UploadPanel projectId={id} />
+            <UploadPanel projectId={id} onOpenStage={(stage) => setSelected(stage)} />
           </>
         )}
 
