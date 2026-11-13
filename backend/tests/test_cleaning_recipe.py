@@ -349,3 +349,38 @@ class TestReplay:
         trim = next(step for step in steps if step["rule"] == "trim_whitespace")
         assert trim["skipped"] is True
         assert trim["changed"] is False
+
+
+class TestPreview:
+    def test_a_draft_is_tried_on_real_rows_without_being_saved(
+        self, test_app, db_session, own_project, diffed
+    ):
+        source = db_session.get(DataSource, diffed.source_id)
+
+        body = test_app.post(
+            f"/projects/{own_project.id}/medallion/steps/preview",
+            json={"source_id": source.id, "recipe": {"disabled": ["trim_whitespace"], "dedupe_on": ["patient_id"]}},
+        ).json()
+
+        assert body["preview"] is True
+        trim = next(step for step in body["steps"] if step["rule"] == "trim_whitespace")
+        assert trim["skipped"] is True
+        assert body["lossy"] and "Duplicates by key" in body["lossy"][0]
+        db_session.refresh(source)
+        assert source.cleaning_recipe == {}, "trying a draft stores nothing"
+
+    def test_a_draft_that_does_not_read_is_refused(self, test_app, db_session, own_project, diffed):
+        response = test_app.post(
+            f"/projects/{own_project.id}/medallion/steps/preview",
+            json={"source_id": diffed.source_id, "recipe": {"disabled": ["nope"]}},
+        )
+
+        assert response.status_code == 422
+
+    def test_another_projects_source_cannot_be_previewed(self, test_app, db_session, other_project, diffed):
+        response = test_app.post(
+            f"/projects/{other_project.id}/medallion/steps/preview",
+            json={"source_id": diffed.source_id, "recipe": {}},
+        )
+
+        assert response.status_code == 404

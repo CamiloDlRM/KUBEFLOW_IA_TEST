@@ -688,6 +688,8 @@ export interface CleaningStep {
   note: string;
   columns: string[];
   changed: boolean;
+  /** Turned off in the source's recipe, so it did not run. */
+  skipped?: boolean;
   /** The first rows before and after this one rule, on aligned columns. Rows
    *  are matched by their place in the data as it arrived, so an earlier
    *  removal does not make everything below it look rewritten. */
@@ -722,6 +724,52 @@ export interface CleaningSteps {
   rows_out: number;
   sample: number;
   steps: CleaningStep[];
+  /** The lossy options of the recipe replayed, in words. */
+  lossy?: string[];
+  /** A draft recipe tried out, not what the run did. */
+  preview?: boolean;
+}
+
+/** A plausible range for a measurement, by exact column or by name pattern. */
+export interface MeasureRange {
+  unit: string;
+  low: number;
+  high: number;
+  column?: string;
+  pattern?: string;
+}
+
+/** How one source wants the cleaning standard applied. Mirrors core.cleaning.CleaningRecipe. */
+export interface CleaningRecipe {
+  disabled: string[];
+  null_tokens: string[];
+  keep_as_text: string[];
+  /** Lossy: values that do not fit the forced type become null. */
+  force_types: Record<string, string>;
+  /** Lossy when not empty: rows matching on these columns count as duplicates. */
+  dedupe_on: string[];
+  categorical_max_distinct: number;
+  fold_skip: string[];
+  /** null recognises sex columns by their name. */
+  sex_columns: string[] | null;
+  ranges: MeasureRange[];
+}
+
+export interface CleaningRule {
+  name: string;
+  tier: 'structural' | 'categorical' | 'domain';
+  title: string;
+  summary: string;
+}
+
+export interface CleaningRecipeState {
+  source_id: number;
+  mode: 'standard' | 'custom';
+  recipe: CleaningRecipe;
+  standard: CleaningRecipe;
+  rules: CleaningRule[];
+  forceable_types: string[];
+  lossy: string[];
 }
 
 export interface GoldRelations {

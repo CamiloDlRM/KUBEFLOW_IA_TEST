@@ -11,6 +11,7 @@ import UploadPanel from '../components/UploadPanel';
 import SourcePreviews from '../components/SourcePreviews';
 import LayerStage from '../components/LayerStage';
 import CleaningSteps from '../components/CleaningSteps';
+import CleaningRecipeEditor from '../components/cleaning/CleaningRecipeEditor';
 import KpiMaker from '../components/KpiMaker';
 import GoldDefinition from '../components/GoldDefinition';
 
@@ -123,6 +124,7 @@ export default function DataFactory() {
                 used to sit below this as its own section; it is the same claim
                 at a coarser grain, and it now lives inside each step, where
                 the highlight can say which rule did it. */}
+            <CleaningRecipeEditor projectId={id} streams={medallion.silver.streams} />
             <CleaningSteps projectId={id} streams={medallion.silver.streams} />
           </>
         )}

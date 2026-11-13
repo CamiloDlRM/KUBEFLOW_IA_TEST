@@ -1483,6 +1483,18 @@ class CleaningStepsResponse(BaseModel):
     #: How many rows each preview shows.
     sample: int = 0
     steps: list[CleaningStepResponse] = Field(default_factory=list)
+    #: The lossy options of the recipe replayed, in words.
+    lossy: list[str] = Field(default_factory=list)
+    #: True when this is a draft recipe tried out, not what the run did.
+    preview: bool = False
+
+
+class CleaningPreviewRequest(BaseModel):
+    """A draft recipe to try on a source's latest extraction, without saving it."""
+
+    source_id: int
+    recipe: dict[str, Any] = Field(default_factory=dict)
+    limit: int = Field(default=8, ge=1, le=50)
 
 
 class GoldDefinitionRequest(BaseModel):

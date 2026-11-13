@@ -53,6 +53,8 @@ import type {
   RunSettings,
   TrainingParameter,
   UploadStatus,
+  CleaningRecipe,
+  CleaningRecipeState,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -671,6 +673,35 @@ export async function getLayerDiff(
 }
 
 /** The standard replayed a rule at a time over one extraction. */
+/** How a source is cleaned: its recipe, the standard, and the rules. */
+export async function getCleaningRecipe(sourceId: number): Promise<CleaningRecipeState> {
+  const { data } = await apiClient.get<CleaningRecipeState>(`/sources/${sourceId}/cleaning-recipe`);
+  return data;
+}
+
+/** Save a source's recipe, or `{ reset: true }` to go back to the standard. */
+export async function saveCleaningRecipe(
+  sourceId: number,
+  body: { recipe: CleaningRecipe } | { reset: true },
+): Promise<CleaningRecipeState> {
+  const { data } = await apiClient.put<CleaningRecipeState>(`/sources/${sourceId}/cleaning-recipe`, body);
+  return data;
+}
+
+/** Try a draft recipe on the source's latest extraction. Stores nothing. */
+export async function previewCleaning(
+  projectId: number,
+  sourceId: number,
+  recipe: CleaningRecipe,
+): Promise<CleaningSteps> {
+  const { data } = await apiClient.post<CleaningSteps>(
+    `/projects/${projectId}/medallion/steps/preview`,
+    { source_id: sourceId, recipe },
+    { timeout: LAYER_TIMEOUT },
+  );
+  return data;
+}
+
 export async function getCleaningSteps(
   projectId: number,
   options: { sourceId?: number | null; runId?: string; limit?: number } = {},
