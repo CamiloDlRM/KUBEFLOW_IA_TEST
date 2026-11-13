@@ -611,6 +611,11 @@ export const SECTIONS: ManualSection[] = [
         label: 'Rows in gold',
         text: 'The size of the table training will read. Zero until the first gold build exists.',
       },
+      {
+        n: 6,
+        label: 'Model and Next',
+        text: 'Once the project has deployed a model the card names it. Until then, “Next” says the first thing still missing: a data source, the gold table, a repository, or a run.',
+      },
     ],
     steps: [
       {

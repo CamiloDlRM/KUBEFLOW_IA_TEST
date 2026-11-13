@@ -379,6 +379,10 @@ export function ProjectsScreen() {
                 </span>
               </div>
               <p className="mt-1 wf-text">{index === 0 ? '⌁ hospital-ml' : 'No repository linked yet'}</p>
+              <p className="relative wf-text">
+                Next: {index === 0 ? 'run the pipeline' : 'link a repository'}
+                {index === 0 && <Pin n={6} />}
+              </p>
               {index === 0 && <Pin n={3} />}
             </div>
           ))}
