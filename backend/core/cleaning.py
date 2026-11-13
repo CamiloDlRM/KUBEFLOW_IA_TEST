@@ -1043,6 +1043,85 @@ def _number(raw: Any, what: str) -> float:
     return value
 
 
+#: What normalisation may do with a source's codes. ``off`` leaves them as
+#: they arrived; ``suggest`` writes a completed copy of the code column beside
+#: it and never touches the original; ``fill`` writes the missing codes into
+#: the code column itself, as sources registered with a text/code pair always
+#: have.
+NORMALIZE_MODES: Final[tuple[str, ...]] = ("off", "suggest", "fill")
+
+#: Lowest similarity a fuzzy match may be accepted at. Below this the matcher
+#: is guessing, and a wrong code is worse than an empty one.
+MIN_CONFIDENCE_FLOOR: Final[float] = 0.6
+
+
+@dataclass(frozen=True)
+class NormalizeSettings:
+    """Whether and how free text is coded on the way to silver.
+
+    Not a cleaning rule — it runs after them, on the cleaned table — but part
+    of the recipe, because it is the other half of what a source decides about
+    how its rows are prepared, and it is replayed and compared the same way.
+    """
+
+    mode: str = "off"
+    #: Free-text column the vocabulary is learned from and matched against.
+    text_column: str = ""
+    #: Column holding the code; rows where it is empty are the ones coded.
+    code_column: str = ""
+    #: Lowest similarity a fuzzy match is accepted at. ``1.0`` accepts exact
+    #: matches only (case, accents, punctuation and qualifiers aside).
+    min_confidence: float = 0.82
+
+    @property
+    def active(self) -> bool:
+        return self.mode != "off" and bool(self.text_column and self.code_column)
+
+    @property
+    def target_column(self) -> str:
+        """Where the codes are written: the code column, or a copy beside it."""
+        return f"{self.code_column}_suggested" if self.mode == "suggest" else self.code_column
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "text_column": self.text_column,
+            "code_column": self.code_column,
+            "min_confidence": self.min_confidence,
+        }
+
+    @classmethod
+    def legacy(cls, text_column: str, code_column: str) -> NormalizeSettings:
+        """What a source registered with a text/code pair has always done."""
+        if text_column and code_column:
+            return cls(mode="fill", text_column=text_column, code_column=code_column)
+        return cls()
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> NormalizeSettings:
+        if not isinstance(raw, dict):
+            raise RecipeError("normalize is an object with mode, text_column, code_column and min_confidence")
+        unknown = set(raw) - set(cls().as_dict())
+        if unknown:
+            raise RecipeError(f"unknown normalize option(s): {', '.join(sorted(unknown))}")
+        mode = raw.get("mode", "off")
+        if mode not in NORMALIZE_MODES:
+            raise RecipeError(f"normalize mode is one of {', '.join(NORMALIZE_MODES)}")
+        text_column = str(raw.get("text_column") or "").strip()
+        code_column = str(raw.get("code_column") or "").strip()
+        if len(text_column) > _MAX_TEXT or len(code_column) > _MAX_TEXT:
+            raise RecipeError(f"a normalize column name is longer than {_MAX_TEXT} characters")
+        if mode != "off":
+            if not text_column or not code_column:
+                raise RecipeError("normalizing needs both a text column and a code column")
+            if _snake(text_column) == _snake(code_column):
+                raise RecipeError("the text column and the code column must be different columns")
+        confidence = _number(raw.get("min_confidence", cls.min_confidence), "min_confidence")
+        if not MIN_CONFIDENCE_FLOOR <= confidence <= 1.0:
+            raise RecipeError(f"min_confidence is between {MIN_CONFIDENCE_FLOOR:g} and 1")
+        return cls(mode=mode, text_column=text_column, code_column=code_column, min_confidence=confidence)
+
+
 @dataclass(frozen=True)
 class CleaningRecipe:
     """How one source wants the standard applied.
@@ -1070,6 +1149,10 @@ class CleaningRecipe:
     sex_columns: tuple[str, ...] | None = None
     #: Plausible ranges, checked in order; an exact column beats a pattern.
     ranges: tuple[MeasureRange, ...] = DEFAULT_RANGES
+    #: How codes are completed after cleaning. ``None`` keeps what the source
+    #: was registered with: filled in when it named a text and a code column,
+    #: nothing otherwise.
+    normalize: NormalizeSettings | None = None
 
     def enabled(self, rule: str) -> bool:
         return rule not in self.disabled
@@ -1101,7 +1184,12 @@ class CleaningRecipe:
             "fold_skip": sorted(self.fold_skip),
             "sex_columns": None if self.sex_columns is None else list(self.sex_columns),
             "ranges": [measure.as_dict() for measure in self.ranges],
+            "normalize": None if self.normalize is None else self.normalize.as_dict(),
         }
+
+    def normalization(self, text_column: str = "", code_column: str = "") -> NormalizeSettings:
+        """The normalisation that applies, given the source's registered pair."""
+        return self.normalize or NormalizeSettings.legacy(text_column, code_column)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> CleaningRecipe:
@@ -1194,6 +1282,7 @@ class CleaningRecipe:
             fold_skip=frozenset(_names(raw.get("fold_skip"), "fold_skip")),
             sex_columns=sex_columns,
             ranges=measure_ranges,
+            normalize=None if raw.get("normalize") is None else NormalizeSettings.from_dict(raw["normalize"]),
         )
 
 

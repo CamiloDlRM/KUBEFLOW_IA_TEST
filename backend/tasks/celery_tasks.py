@@ -1449,26 +1449,13 @@ def _through_the_layers(
     Bronze is uploaded before silver is built, because building silver is where
     a bug would lose data that the source may not hand over twice.
     """
-    from sqlmodel import Session
-
     from core import medallion
-    from core.cleaning import STANDARD, CleaningRecipe, RecipeError
-    from models.schemas import DataSource
 
     layer_key = medallion.bronze_key(project_id, source_id, run_id)
     medallion.upload_parquet("bronze", layer_key, bronze_path)
     log.info("layers.bronze_written", key=layer_key)
 
-    # The source's own recipe, or the standard. A stored recipe was checked
-    # when it was saved; one that no longer reads falls back to the standard
-    # rather than leaving the rows stuck in bronze.
-    with Session(engine) as session:
-        source = session.get(DataSource, source_id)
-        try:
-            recipe = CleaningRecipe.from_dict(source.cleaning_recipe if source else {})
-        except RecipeError as exc:
-            log.warning("layers.recipe_unreadable", source_id=source_id, error=str(exc))
-            recipe = STANDARD
+    recipe = _source_recipe(engine, source_id, log)
 
     # The cleaning standard, then code normalisation. Normalisation runs here
     # rather than as a pipeline phase: the data lands once and is trained on
@@ -1477,9 +1464,8 @@ def _through_the_layers(
     build = medallion.promote_to_silver(
         bronze_path,
         workdir / f"silver-{run_id}.parquet",
-        text_column=text_column,
-        code_column=code_column,
         recipe=recipe,
+        normalize=recipe.normalization(text_column, code_column),
     )
     quality_report = build.report.summary()
     medallion.upload_parquet("silver", layer_key, build.path)
@@ -1503,6 +1489,202 @@ def _through_the_layers(
         "silver_rows": build.rows,
         "gold": gold,
     }
+
+
+def _source_recipe(engine: Any, source_id: int, log: Any) -> Any:
+    """The source's own recipe, or the standard.
+
+    A stored recipe was checked when it was saved; one that no longer reads
+    falls back to the standard rather than leaving the rows stuck in bronze.
+    """
+    from sqlmodel import Session
+
+    from core.cleaning import STANDARD, CleaningRecipe, RecipeError
+    from models.schemas import DataSource
+
+    with Session(engine) as session:
+        source = session.get(DataSource, source_id)
+        try:
+            return CleaningRecipe.from_dict(source.cleaning_recipe if source else {})
+        except RecipeError as exc:
+            log.warning("layers.recipe_unreadable", source_id=source_id, error=str(exc))
+            return STANDARD
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.reclean_source",
+    max_retries=0,
+)
+def reclean_source(self: Any, source_id: int) -> dict[str, Any]:
+    """Clean everything a source has landed again, with its current recipe.
+
+    A recipe applies to what lands after it is saved, so changing one leaves
+    silver cleaned two ways: the old extractions the old way, the new ones the
+    new way. This rebuilds every silver object of the source from its bronze
+    object — which is exactly what bronze is kept for — and then gold, once.
+
+    All of silver is built locally before any of it is uploaded. A rule that
+    fails on the third extraction of five therefore changes nothing, instead
+    of leaving silver half old and half new with no record of which is which.
+
+    The run records are updated with their new quality reports, so the step
+    view and the diff describe what silver now holds. The state of the work is
+    kept on the source (``reclean``), where the editor reads it.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from core import medallion
+    from models.schemas import DataSource, IngestionRun
+
+    log = logger.bind(source_id=source_id)
+    engine = create_engine(settings.database_url, echo=False)
+    started = datetime.now(timezone.utc)
+
+    def _record(**fields: Any) -> None:
+        with Session(engine) as session:
+            source = session.get(DataSource, source_id)
+            if source:
+                source.reclean = {**(source.reclean or {}), **fields}
+                session.add(source)
+                session.commit()
+
+    try:
+        _record(status="running", started_at=started.isoformat(), error="")
+        with Session(engine) as session:
+            source = session.get(DataSource, source_id)
+            if not source:
+                raise RuntimeError(f"data source {source_id} no longer exists")
+            project_id = source.project_id
+            text_column, code_column = source.normalize_text_column, source.normalize_code_column
+            runs = [
+                (run.id, run.bronze_key)
+                for run in session.exec(
+                    select(IngestionRun)
+                    .where(IngestionRun.source_id == source_id, IngestionRun.status == "success")
+                    .order_by(IngestionRun.started_at)  # type: ignore[arg-type]
+                ).all()
+                if run.bronze_key
+            ]
+        if not runs:
+            raise RuntimeError("nothing has landed in bronze for this source yet")
+
+        recipe = _source_recipe(engine, source_id, log)
+        normalize = recipe.normalization(text_column, code_column)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            built: list[tuple[str, str, Any]] = []
+            rows_in = rows_out = 0
+            for run_id, key in runs:
+                bronze = medallion.download_parquet("bronze", key, workdir / f"bronze-{run_id}.parquet")
+                build = medallion.promote_to_silver(
+                    bronze,
+                    workdir / f"silver-{run_id}.parquet",
+                    recipe=recipe,
+                    normalize=normalize,
+                )
+                rows_in += build.report.rows_in
+                rows_out += build.rows
+                built.append((run_id, key, build))
+
+            # Only now, with every object built, does anything change.
+            for run_id, key, build in built:
+                medallion.upload_parquet("silver", key, build.path)
+            log.info("reclean.silver_written", runs=len(built), rows=rows_out)
+
+            with Session(engine) as session:
+                for run_id, key, build in built:
+                    run = session.get(IngestionRun, run_id)
+                    if run:
+                        run.silver_key = key
+                        run.quality_report = build.report.summary()
+                        run.normalization = build.normalization
+                        session.add(run)
+                session.commit()
+
+            gold = _rebuild_gold(engine, project_id, workdir, log)
+            with Session(engine) as session:
+                _activate_gold(
+                    session,
+                    project_id,
+                    gold,
+                    started=started,
+                    description=(
+                        f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after "
+                        f"silver of source {source_id} was cleaned again with its current "
+                        f"recipe ({len(built)} extraction(s), {rows_out:,} rows kept)."
+                    ),
+                    run_id=built[-1][0],
+                )
+
+        _record(
+            status="success",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            runs=len(built),
+            rows_in=rows_in,
+            rows_out=rows_out,
+            gold_version=gold["version"],
+        )
+        log.info("reclean.completed", runs=len(built), gold_version=gold["version"])
+        return {"status": "success", "runs": len(built), "gold_version": gold["version"]}
+
+    except Exception as exc:  # noqa: BLE001 — recorded on the source
+        log.error("reclean.failed", error=str(exc))
+        _record(status="failed", finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc)[:2000])
+        return {"status": "failed", "error": str(exc)}
+
+
+def _activate_gold(
+    session: Any,
+    project_id: int,
+    gold: dict[str, Any],
+    *,
+    started: datetime,
+    description: str,
+    run_id: str | None,
+    profile: dict[str, Any] | None = None,
+    profiled_rows: int = 0,
+) -> int:
+    """Register a rebuilt gold table as the project's active dataset.
+
+    One active dataset per project, the same rule for every way gold is
+    rebuilt, so a pipeline with no input chosen trains on the newest gold.
+    Returns the new dataset's id.
+    """
+    from sqlmodel import select
+
+    from core import medallion
+    from models.schemas import Dataset
+
+    stamp = f"{started:%Y%m%dT%H%M%S}"
+    dataset = Dataset(
+        project_id=project_id,
+        name=f"{_slug(gold['name']) or 'gold'}-v{gold['version']}-{stamp}.parquet",
+        description=description,
+        bucket=gold["bucket"],
+        object_key=gold["object_key"],
+        content_type=medallion.PARQUET_CONTENT_TYPE,
+        size_bytes=gold["path"].stat().st_size,
+        checksum=_sha256_of(gold["path"]),
+        is_active=True,
+        origin="ingestion",
+        ingestion_run_id=run_id,
+        profile=profile or {},
+        profiled_rows=profiled_rows,
+    )
+    for other in session.exec(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.is_active == True,  # noqa: E712
+        )
+    ).all():
+        other.is_active = False
+        session.add(other)
+    session.add(dataset)
+    session.commit()
+    session.refresh(dataset)
+    return dataset.id  # type: ignore[return-value]
 
 
 @celery_app.task(

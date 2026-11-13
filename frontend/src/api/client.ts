@@ -688,6 +688,12 @@ export async function saveCleaningRecipe(
   return data;
 }
 
+/** Clean everything the source has landed again, with its saved recipe, then gold. Queued. */
+export async function recleanSource(sourceId: number): Promise<CleaningRecipeState> {
+  const { data } = await apiClient.post<CleaningRecipeState>(`/sources/${sourceId}/reclean`);
+  return data;
+}
+
 /** Try a draft recipe on the source's latest extraction. Stores nothing. */
 export async function previewCleaning(
   projectId: number,

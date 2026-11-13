@@ -1,12 +1,28 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, RotateCcw, TriangleAlert, X } from 'lucide-react';
-import { getCleaningRecipe, previewCleaning, previewLayer, saveCleaningRecipe } from '../../api/client';
-import type { CleaningRecipe, CleaningRule, LayerStream, MeasureRange } from '../../types';
+import { ChevronRight, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import {
+  getCleaningRecipe,
+  previewCleaning,
+  previewLayer,
+  recleanSource,
+  saveCleaningRecipe,
+} from '../../api/client';
+import type {
+  CleaningRecipe,
+  CleaningRecipeState,
+  CleaningRule,
+  LayerStream,
+  MeasureRange,
+  NormalizeMode,
+  NormalizeSettings,
+} from '../../types';
 import Spinner from '../Spinner';
 import { StepsView } from '../CleaningSteps';
 import ChipsInput from './ChipsInput';
-import { lossyWarnings, patternLabel, sameRecipe, sendable } from './recipe';
+import { describeNormalize, lossyWarnings, patternLabel, recipeProblem, sameRecipe, sendable } from './recipe';
+
+const IN_PROGRESS = new Set(['queued', 'running']);
 
 /**
  * How a source is cleaned, chosen by the person who owns it.
@@ -94,6 +110,9 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
   const { data: state, isLoading, error } = useQuery({
     queryKey: ['cleaning-recipe', sourceId],
     queryFn: () => getCleaningRecipe(sourceId),
+    // Followed while silver is being cleaned again, so the editor says when
+    // it is done without anyone reloading.
+    refetchInterval: (query) => (IN_PROGRESS.has(query.state.data?.reclean?.status ?? '') ? 3000 : false),
   });
   // The source's columns, as silver names them, to pick from.
   const { data: silver } = useQuery({
@@ -105,9 +124,27 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
   const columns = (silver?.columns ?? []).map((column) => column.name);
 
   const [draft, setDraft] = useState<CleaningRecipe | null>(null);
+  // Keyed on the saved recipe, not the whole state: the state is re-read
+  // while a re-clean runs, and that must not throw away an unsaved draft.
+  const saved = state?.recipe;
   useEffect(() => {
-    if (state) setDraft(state.recipe);
-  }, [state]);
+    if (saved) setDraft(saved);
+  }, [saved]);
+
+  // When a re-clean finishes, silver, the replay and gold have all changed.
+  const recleanStatus = state?.reclean?.status;
+  const lastStatus = useRef(recleanStatus);
+  useEffect(() => {
+    if (lastStatus.current && IN_PROGRESS.has(lastStatus.current) && recleanStatus && !IN_PROGRESS.has(recleanStatus)) {
+      queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'cleaning-recipe' });
+    }
+    lastStatus.current = recleanStatus;
+  }, [recleanStatus, queryClient]);
+
+  const reclean = useMutation({
+    mutationFn: () => recleanSource(sourceId),
+    onSuccess: (next) => queryClient.setQueryData(['cleaning-recipe', sourceId], next),
+  });
 
   const preview = useMutation({ mutationFn: (recipe: CleaningRecipe) => previewCleaning(projectId, sourceId, recipe) });
   const save = useMutation({
@@ -129,6 +166,7 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
 
   const changed = !sameRecipe(draft, state.recipe);
   const warnings = lossyWarnings(draft);
+  const problem = recipeProblem(draft);
   const update = (patch: Partial<CleaningRecipe>) => {
     setDraft({ ...draft, ...patch });
     preview.reset();
@@ -180,6 +218,14 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
         </div>
       ))}
 
+      <NormalizeOptions
+        value={draft.normalize}
+        fallback={state.normalize_default}
+        modes={state.normalize_modes}
+        columns={columns}
+        onChange={(normalize) => update({ normalize })}
+      />
+
       {warnings.length > 0 && (
         <ul
           aria-label="Lossy options"
@@ -193,6 +239,8 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
           ))}
         </ul>
       )}
+
+      {problem && <p className="text-xs text-amber-300">{problem}</p>}
 
       {(save.isError || preview.isError) && (
         <p className="text-xs text-red-300">{((save.error ?? preview.error) as Error).message}</p>
@@ -214,7 +262,7 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
         <button
           type="button"
           onClick={() => preview.mutate(sendable(draft))}
-          disabled={preview.isPending}
+          disabled={preview.isPending || problem !== null}
           className="flex items-center gap-2 rounded-lg border border-brand-500/60 px-3 py-1.5 text-sm text-brand-200 hover:bg-brand-600/15 disabled:opacity-50"
         >
           {preview.isPending && <Spinner size="sm" />}
@@ -223,7 +271,7 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
         <button
           type="button"
           onClick={() => save.mutate({ recipe: sendable(draft) })}
-          disabled={!changed || save.isPending}
+          disabled={!changed || save.isPending || problem !== null}
           className="flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-500 disabled:opacity-40"
         >
           {save.isPending && <Spinner size="sm" />}
@@ -231,11 +279,13 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
         </button>
       </div>
 
-      {save.isSuccess && !changed && (
-        <p className="text-xs text-emerald-300">
-          Saved. It applies to what lands from now on; what is already in silver keeps the recipe it was cleaned with.
-        </p>
-      )}
+      <Reclean
+        state={state}
+        changed={changed}
+        pending={reclean.isPending}
+        error={reclean.isError ? (reclean.error as Error).message : null}
+        onReclean={() => reclean.mutate()}
+      />
 
       {preview.data && (
         <section aria-label="Preview" className="rounded-lg border border-brand-500/40 bg-slate-950/40 p-4">
@@ -245,6 +295,181 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
           <StepsView data={preview.data} />
         </section>
       )}
+    </div>
+  );
+}
+
+const MODE_TEXT: Record<NormalizeMode, [string, string]> = {
+  off: ['Off', 'codes stay exactly as they arrived.'],
+  suggest: ['Suggest', 'a completed copy is written beside the code column; the original is not touched.'],
+  fill: ['Fill', 'missing codes are written into the code column itself.'],
+};
+
+function NormalizeOptions({
+  value,
+  fallback,
+  modes,
+  columns,
+  onChange,
+}: {
+  value: NormalizeSettings | null;
+  fallback: NormalizeSettings;
+  modes: NormalizeMode[];
+  columns: string[];
+  onChange: (value: NormalizeSettings | null) => void;
+}) {
+  const listId = useId();
+  const current = value ?? fallback;
+  const set = (patch: Partial<NormalizeSettings>) => onChange({ ...current, ...patch });
+  return (
+    <div>
+      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Codes</h4>
+      <div className="space-y-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-3">
+        <p className="text-xs text-slate-400">
+          Complete a code column from a free-text column. The vocabulary is learned from the rows that already
+          have a code; a row that cannot be placed is left empty, never guessed.
+        </p>
+        <fieldset className="space-y-1.5 text-xs text-slate-300">
+          <legend className="sr-only">How codes are completed</legend>
+          <label className="flex items-start gap-2">
+            <input type="radio" className="mt-0.5" checked={value === null} onChange={() => onChange(null)} />
+            <span>
+              As the source was set up <span className="text-slate-500">— {describeNormalize(fallback)}.</span>
+            </span>
+          </label>
+          {modes.map((mode) => (
+            <label key={mode} className="flex items-start gap-2">
+              <input
+                type="radio"
+                className="mt-0.5"
+                checked={value !== null && value.mode === mode}
+                onChange={() => set({ mode })}
+              />
+              <span>
+                {MODE_TEXT[mode][0]} <span className="text-slate-500">— {MODE_TEXT[mode][1]}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {value !== null && value.mode !== 'off' && (
+          <div className="grid gap-3 text-xs text-slate-400 sm:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              Text column
+              <input
+                list={listId}
+                value={value.text_column}
+                onChange={(event) => set({ text_column: event.target.value })}
+                placeholder="procedure_text"
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              Code column
+              <input
+                list={listId}
+                value={value.code_column}
+                onChange={(event) => set({ code_column: event.target.value })}
+                placeholder="procedure_code"
+                className={FIELD}
+              />
+            </label>
+            <datalist id={listId}>
+              {columns.map((column) => (
+                <option key={column} value={column} />
+              ))}
+            </datalist>
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span>
+                Accept fuzzy matches from a similarity of{' '}
+                <span className="font-display text-slate-200">{value.min_confidence.toFixed(2)}</span>
+              </span>
+              <input
+                type="range"
+                min={0.6}
+                max={1}
+                step={0.01}
+                value={value.min_confidence}
+                onChange={(event) => set({ min_confidence: Number(event.target.value) })}
+                aria-label="Lowest similarity accepted"
+                className="accent-brand-500"
+              />
+              <span className="text-slate-500">
+                {value.min_confidence >= 1
+                  ? 'Exact matches only (case, accents and punctuation aside).'
+                  : 'Lower places more rows and risks more wrong codes.'}
+              </span>
+            </label>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Reclean({
+  state,
+  changed,
+  pending,
+  error,
+  onReclean,
+}: {
+  state: CleaningRecipeState;
+  changed: boolean;
+  pending: boolean;
+  error: string | null;
+  onReclean: () => void;
+}) {
+  const reclean = state.reclean ?? {};
+  if (!state.runs) return null;
+
+  if (reclean.status && IN_PROGRESS.has(reclean.status)) {
+    return (
+      <p role="status" className="flex items-center gap-2 text-xs text-brand-200">
+        <Spinner size="sm" /> Cleaning silver again with the saved recipe, then rebuilding gold…
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {reclean.status === 'failed' && (
+        <p className="text-xs text-red-300">
+          The last attempt to clean silver again failed and changed nothing: {reclean.error}
+        </p>
+      )}
+      {reclean.status === 'success' && state.stale_runs === 0 && (
+        <p className="text-xs text-emerald-300">
+          Silver was cleaned again with this recipe: {reclean.runs} extraction(s), and gold rebuilt as v
+          {reclean.gold_version}.
+        </p>
+      )}
+      {state.stale_runs > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5">
+          <p className="max-w-xl text-xs text-slate-300">
+            {state.stale_runs} of {state.runs} extraction(s) in silver were cleaned with a different recipe.
+            What lands from now on uses this one.
+            <span className="mt-0.5 block text-slate-500">
+              Cleaning again rebuilds them from bronze, which is never changed, and then gold.
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={onReclean}
+            disabled={changed || pending}
+            title={changed ? 'Save or discard your changes first' : undefined}
+            className="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+          >
+            {pending ? <Spinner size="sm" /> : <RefreshCw size={13} aria-hidden="true" />}
+            Clean silver again
+          </button>
+        </div>
+      )}
+      {changed && (
+        <p className="text-xs text-slate-500">
+          Saving applies to what lands from now on; what is already in silver can then be cleaned again with it.
+        </p>
+      )}
+      {error && <p className="text-xs text-red-300">{error}</p>}
     </div>
   );
 }

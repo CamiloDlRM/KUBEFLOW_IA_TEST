@@ -4,19 +4,28 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CleaningRecipeEditor from '../../src/components/cleaning/CleaningRecipeEditor';
 import ChipsInput from '../../src/components/cleaning/ChipsInput';
-import { lossyWarnings, patternLabel, sameRecipe, sendable } from '../../src/components/cleaning/recipe';
+import {
+  describeNormalization,
+  lossyWarnings,
+  patternLabel,
+  recipeProblem,
+  sameRecipe,
+  sendable,
+} from '../../src/components/cleaning/recipe';
 import type { CleaningRecipe, CleaningRecipeState, CleaningSteps, LayerStream } from '../../src/types';
 
 const getCleaningRecipe = vi.fn();
 const saveCleaningRecipe = vi.fn();
 const previewCleaning = vi.fn();
 const previewLayer = vi.fn();
+const recleanSource = vi.fn();
 
 vi.mock('../../src/api/client', () => ({
   getCleaningRecipe: (...a: unknown[]) => getCleaningRecipe(...a),
   saveCleaningRecipe: (...a: unknown[]) => saveCleaningRecipe(...a),
   previewCleaning: (...a: unknown[]) => previewCleaning(...a),
   previewLayer: (...a: unknown[]) => previewLayer(...a),
+  recleanSource: (...a: unknown[]) => recleanSource(...a),
 }));
 
 const STANDARD: CleaningRecipe = {
@@ -29,6 +38,7 @@ const STANDARD: CleaningRecipe = {
   fold_skip: [],
   sex_columns: null,
   ranges: [{ unit: 'bpm', low: 20, high: 300, pattern: 'heart_rate' }],
+  normalize: null,
 };
 
 function state(overrides: Partial<CleaningRecipeState> = {}): CleaningRecipeState {
@@ -47,6 +57,11 @@ function state(overrides: Partial<CleaningRecipeState> = {}): CleaningRecipeStat
     ],
     forceable_types: ['string', 'integer', 'decimal', 'boolean', 'date', 'timestamp'],
     lossy: [],
+    normalize_default: { mode: 'off', text_column: '', code_column: '', min_confidence: 0.82 },
+    normalize_modes: ['off', 'suggest', 'fill'],
+    runs: 0,
+    stale_runs: 0,
+    reclean: {},
     ...overrides,
   };
 }
@@ -115,6 +130,26 @@ describe('recipe helpers', () => {
     expect(sameRecipe({ ...STANDARD, null_tokens: ['-'] }, STANDARD)).toBe(false);
   });
 
+  it('refuses coding without two different columns', () => {
+    const coding = (text: string, code: string) => ({
+      ...STANDARD,
+      normalize: { mode: 'fill' as const, text_column: text, code_column: code, min_confidence: 0.82 },
+    });
+    expect(recipeProblem(STANDARD)).toBeNull();
+    expect(recipeProblem(coding('procedure', ''))).toMatch(/Choose/);
+    expect(recipeProblem(coding('Code', 'code'))).toMatch(/different/);
+    expect(recipeProblem(coding('procedure', 'code'))).toBeNull();
+  });
+
+  it('says what coding did, or why it could not', () => {
+    expect(describeNormalization(undefined)).toBeNull();
+    expect(describeNormalization({})).toBeNull();
+    expect(describeNormalization({ error: 'no column called code' })).toMatch(/could not be completed: no column/);
+    expect(describeNormalization({ mode: 'fill', column: 'code', filled: 5, unresolved: 0 })).toMatch(
+      /5 filled in into code/,
+    );
+  });
+
   it('reads a built-in name pattern as the names it matches', () => {
     expect(patternLabel('(^|_)(heart_rate|pulse|hr)(_|$)')).toBe('heart_rate, pulse, hr');
     expect(patternLabel('^custom.*$')).toBe('^custom.*$');
@@ -157,8 +192,9 @@ describe('CleaningRecipeEditor', () => {
   });
 
   it('turns a rule off and saves it', async () => {
+    getCleaningRecipe.mockResolvedValue(state({ runs: 2 }));
     saveCleaningRecipe.mockResolvedValue(
-      state({ mode: 'custom', recipe: { ...STANDARD, disabled: ['trim_whitespace'] } }),
+      state({ mode: 'custom', recipe: { ...STANDARD, disabled: ['trim_whitespace'] }, runs: 2, stale_runs: 2 }),
     );
     renderEditor();
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Run "Whitespace normalised"' }));
@@ -169,7 +205,9 @@ describe('CleaningRecipeEditor', () => {
       expect(saveCleaningRecipe).toHaveBeenCalledWith(3, { recipe: { ...STANDARD, disabled: ['trim_whitespace'] } }),
     );
     expect(await screen.findByText('Custom recipe')).toBeInTheDocument();
-    expect(screen.getByText(/keeps the recipe it was cleaned with/)).toBeInTheDocument();
+    // What is already in silver was made the old way, and the editor says so.
+    expect(screen.getByText(/2 of 2 extraction\(s\) in silver were cleaned with a different recipe/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clean silver again' })).toBeEnabled();
   });
 
   it('warns while a lossy option is being set', async () => {
@@ -231,6 +269,82 @@ describe('CleaningRecipeEditor', () => {
 
     expect(await screen.findByText(/must be below its high/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Run "Whitespace normalised"' })).not.toBeChecked();
+  });
+
+  it('cleans silver again and follows it until it is done', async () => {
+    getCleaningRecipe.mockResolvedValue(state({ mode: 'custom', runs: 3, stale_runs: 1 }));
+    recleanSource.mockResolvedValue(
+      state({ mode: 'custom', runs: 3, stale_runs: 1, reclean: { status: 'queued' } }),
+    );
+    renderEditor();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Clean silver again' }));
+
+    expect(recleanSource).toHaveBeenCalledWith(3);
+    expect(await screen.findByRole('status')).toHaveTextContent('Cleaning silver again');
+  });
+
+  it('does not clean silver again with unsaved changes', async () => {
+    getCleaningRecipe.mockResolvedValue(state({ mode: 'custom', runs: 3, stale_runs: 1 }));
+    renderEditor();
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Run "Whitespace normalised"' }));
+
+    expect(screen.getByRole('button', { name: 'Clean silver again' })).toBeDisabled();
+  });
+
+  it('says when the last attempt failed and changed nothing', async () => {
+    getCleaningRecipe.mockResolvedValue(
+      state({ runs: 1, stale_runs: 1, reclean: { status: 'failed', error: 'a rule broke' } }),
+    );
+    renderEditor();
+
+    expect(await screen.findByText(/failed and changed nothing: a rule broke/)).toBeInTheDocument();
+  });
+
+  it('asks for both columns before coding, then saves the settings', async () => {
+    saveCleaningRecipe.mockResolvedValue(state({ mode: 'custom' }));
+    renderEditor();
+    await userEvent.click(await screen.findByRole('radio', { name: /^Suggest/ }));
+
+    expect(screen.getByText('Choose the text column and the code column to code.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save recipe' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Try it on the latest extraction' })).toBeDisabled();
+
+    await userEvent.type(screen.getByRole('combobox', { name: 'Text column' }), 'procedure');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Code column' }), 'code');
+    await userEvent.click(screen.getByRole('button', { name: 'Save recipe' }));
+
+    await waitFor(() =>
+      expect(saveCleaningRecipe).toHaveBeenCalledWith(3, {
+        recipe: {
+          ...STANDARD,
+          normalize: { mode: 'suggest', text_column: 'procedure', code_column: 'code', min_confidence: 0.82 },
+        },
+      }),
+    );
+  });
+
+  it('starts from the pair the source was registered with', async () => {
+    getCleaningRecipe.mockResolvedValue(
+      state({ normalize_default: { mode: 'fill', text_column: 'procedure', code_column: 'code', min_confidence: 0.82 } }),
+    );
+    renderEditor();
+
+    expect(await screen.findByText(/codes from procedure written to code/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: /^Fill/ }));
+    expect(screen.getByRole('combobox', { name: 'Text column' })).toHaveValue('procedure');
+  });
+
+  it('shows what coding would do in the preview', async () => {
+    previewCleaning.mockResolvedValue({
+      ...PREVIEW,
+      normalization: { mode: 'suggest', column: 'code_suggested', filled: 2, unresolved: 1, already_coded: 3, vocabulary_size: 2 },
+    });
+    renderEditor();
+    await userEvent.click(await screen.findByRole('button', { name: 'Try it on the latest extraction' }));
+
+    const preview = await screen.findByRole('region', { name: 'Preview' });
+    expect(preview).toHaveTextContent('Codes: 2 suggested into code_suggested, 1 left empty, 3 already coded');
   });
 
   it('renders nothing when no stream belongs to a source', () => {

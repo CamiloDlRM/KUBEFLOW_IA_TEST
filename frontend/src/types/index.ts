@@ -728,6 +728,48 @@ export interface CleaningSteps {
   lossy?: string[];
   /** A draft recipe tried out, not what the run did. */
   preview?: boolean;
+  /** What normalisation did after the rules (or would do, for a draft). */
+  normalization?: NormalizationResult;
+}
+
+/** What coding the free text of one extraction did. Empty when it did not run. */
+export interface NormalizationResult {
+  rows?: number;
+  already_coded?: number;
+  filled?: number;
+  unresolved?: number;
+  fill_rate?: number;
+  vocabulary_size?: number;
+  by_method?: Record<string, number>;
+  mode?: NormalizeMode;
+  /** The column the codes were written to. */
+  column?: string;
+  min_confidence?: number;
+  error?: string;
+}
+
+export type NormalizeMode = 'off' | 'suggest' | 'fill';
+
+/** Whether and how free text is coded on the way to silver. Mirrors core.cleaning.NormalizeSettings. */
+export interface NormalizeSettings {
+  mode: NormalizeMode;
+  text_column: string;
+  code_column: string;
+  /** Lowest similarity a fuzzy match is accepted at; 1 is exact matches only. */
+  min_confidence: number;
+}
+
+/** The last time a source's silver was cleaned again with its current recipe. */
+export interface RecleanState {
+  status?: 'queued' | 'running' | 'success' | 'failed';
+  queued_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  runs?: number;
+  rows_in?: number;
+  rows_out?: number;
+  gold_version?: number;
+  error?: string;
 }
 
 /** A plausible range for a measurement, by exact column or by name pattern. */
@@ -753,6 +795,8 @@ export interface CleaningRecipe {
   /** null recognises sex columns by their name. */
   sex_columns: string[] | null;
   ranges: MeasureRange[];
+  /** null keeps what the source was registered with (`normalize_default`). */
+  normalize: NormalizeSettings | null;
 }
 
 export interface CleaningRule {
@@ -770,6 +814,13 @@ export interface CleaningRecipeState {
   rules: CleaningRule[];
   forceable_types: string[];
   lossy: string[];
+  /** The normalisation that applies while the recipe sets none. */
+  normalize_default: NormalizeSettings;
+  normalize_modes: NormalizeMode[];
+  /** Extractions in silver, and how many were cleaned with another recipe. */
+  runs: number;
+  stale_runs: number;
+  reclean: RecleanState;
 }
 
 export interface GoldRelations {

@@ -506,7 +506,9 @@ async def cleaning_steps(
         recipe = CleaningRecipe.from_dict((run.quality_report or {}).get("recipe"))
     except RecipeError:
         recipe = STANDARD
-    return _replay(session, run, recipe, limit)
+    response = _replay(session, run, recipe, limit)
+    response.normalization = run.normalization or {}
+    return response
 
 
 @router.post(
@@ -534,13 +536,25 @@ def preview_cleaning(
         recipe = CleaningRecipe.from_dict(body.recipe)
     except RecipeError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-    response = _replay(session, run, recipe, body.limit)
+    response = _replay(session, run, recipe, body.limit, normalize=True)
     response.preview = True
     return response
 
 
-def _replay(session: Session, run: IngestionRun, recipe: CleaningRecipe, limit: int) -> CleaningStepsResponse:
-    """Run ``recipe`` over ``run``'s bronze object a rule at a time."""
+def _replay(
+    session: Session,
+    run: IngestionRun,
+    recipe: CleaningRecipe,
+    limit: int,
+    *,
+    normalize: bool = False,
+) -> CleaningStepsResponse:
+    """Run ``recipe`` over ``run``'s bronze object a rule at a time.
+
+    ``normalize`` also codes the cleaned table as the recipe asks, for a
+    draft: what a run did is already recorded on it, and coding again only to
+    say the same thing would be a full pass for nothing.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         bronze = medallion.download_parquet(
             "bronze", run.bronze_key, Path(tmpdir) / "bronze.parquet"
@@ -549,20 +563,26 @@ def _replay(session: Session, run: IngestionRun, recipe: CleaningRecipe, limit: 
         rows = list(medallion.iter_rows(bronze))
 
     source = session.get(DataSource, run.source_id)
-    keep_as_text = (
-        [source.normalize_code_column] if source and source.normalize_code_column else []
+    settings = recipe.normalization(
+        source.normalize_text_column if source else "",
+        source.normalize_code_column if source else "",
     )
+    keep_as_text = [settings.code_column] if settings.active else []
 
     # `from_rows` copies the values out, so cleaning the scout table leaves
     # `rows` untouched and the second table starts from the same data.
     scout, _ = clean(Table.from_rows(rows, columns), keep_as_text=keep_as_text, recipe=recipe)
+    table = Table.from_rows(rows, columns)
     report, snapshots = clean(
-        Table.from_rows(rows, columns),
+        table,
         keep_as_text=keep_as_text,
         sample=limit,
         rows=_rows_worth_showing(scout, limit),
         recipe=recipe,
     )
+    normalization: dict[str, Any] = {}
+    if normalize:
+        _, normalization = medallion.apply_normalization(table, report, settings)
 
     return CleaningStepsResponse(
         run_id=run.id,
@@ -572,6 +592,7 @@ def _replay(session: Session, run: IngestionRun, recipe: CleaningRecipe, limit: 
         sample=limit,
         steps=_steps(report, snapshots),
         lossy=report.lossy,
+        normalization=normalization,
     )
 
 

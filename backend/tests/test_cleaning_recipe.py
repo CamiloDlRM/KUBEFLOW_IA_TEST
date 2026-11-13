@@ -7,15 +7,20 @@ And a run is replayed with the recipe it was cleaned with, not today's.
 """
 from __future__ import annotations
 
-from datetime import date
+import io
+from contextlib import ExitStack
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
+import pyarrow.parquet as pq
 import pytest
+from sqlmodel import select
 
 from core.cleaning import (
     RULES,
     STANDARD,
     CleaningRecipe,
+    NormalizeSettings,
     RecipeError,
     Table,
     clean,
@@ -384,3 +389,300 @@ class TestPreview:
         )
 
         assert response.status_code == 404
+
+    def test_a_draft_says_what_normalisation_would_do(self, test_app, db_session, own_project, diffed):
+        # The fixture's extraction has a procedure column and no code column,
+        # so asking to code it is answered with the reason it cannot be done.
+        body = test_app.post(
+            f"/projects/{own_project.id}/medallion/steps/preview",
+            json={"source_id": diffed.source_id, "recipe": {"normalize": {
+                "mode": "suggest", "text_column": "procedure_text", "code_column": "procedure_code"}}},
+        ).json()
+
+        assert body["normalization"]["mode"] == "suggest"
+        assert "procedure_code" in body["normalization"]["error"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: normalisation in the recipe, and cleaning silver again
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeSettings:
+    def test_the_default_confidence_is_the_matchers(self):
+        from core.normalization import DEFAULT_FUZZY_THRESHOLD
+
+        assert NormalizeSettings().min_confidence == DEFAULT_FUZZY_THRESHOLD
+
+    def test_without_settings_a_source_keeps_what_it_was_registered_with(self):
+        assert STANDARD.normalize is None
+        assert STANDARD.normalization("procedure", "code") == NormalizeSettings(
+            mode="fill", text_column="procedure", code_column="code"
+        )
+        assert STANDARD.normalization("", "").active is False
+
+    def test_settings_in_the_recipe_win_even_to_turn_it_off(self):
+        off = recipe(normalize={"mode": "off"})
+
+        assert off.normalization("procedure", "code").active is False
+
+    def test_settings_survive_the_round_trip(self):
+        custom = recipe(normalize={"mode": "suggest", "text_column": "procedure", "code_column": "code",
+                                   "min_confidence": 0.9})
+
+        assert CleaningRecipe.from_dict(custom.as_dict()) == custom
+        assert custom.normalize.target_column == "code_suggested"
+
+    @pytest.mark.parametrize(
+        "settings, message",
+        [
+            ({"mode": "guess"}, "mode is one of"),
+            ({"mode": "fill", "text_column": "procedure"}, "both a text column and a code column"),
+            ({"mode": "fill", "text_column": "Code", "code_column": "code"}, "must be different"),
+            ({"mode": "fill", "text_column": "a", "code_column": "b", "min_confidence": 0.3}, "between"),
+            ({"mode": "fill", "text_column": "a", "code_column": "b", "colour": 1}, "unknown normalize option"),
+        ],
+    )
+    def test_nonsense_is_refused(self, settings, message):
+        with pytest.raises(RecipeError, match=message):
+            CleaningRecipe.from_dict({"normalize": settings})
+
+
+def coded_rows() -> list[dict]:
+    return [
+        {"procedure": "Appendectomy", "code": "A1"},
+        {"procedure": "Appendectomy", "code": "A1"},
+        {"procedure": "Colonoscopy", "code": "C1"},
+        {"procedure": "appendectomy.", "code": None},  # exact once canonicalised
+        {"procedure": "Colonoscopi", "code": None},  # a typo: fuzzy only
+    ]
+
+
+class TestNormalizeRows:
+    def test_suggest_leaves_the_code_column_as_it_arrived(self):
+        from core.normalization import normalize_rows
+
+        rows = coded_rows()
+        summary = normalize_rows(rows, text_column="procedure", code_column="code", target_column="code_suggested")
+
+        assert [row["code"] for row in rows] == ["A1", "A1", "C1", None, None]
+        assert [row["code_suggested"] for row in rows] == ["A1", "A1", "C1", "A1", "C1"]
+        assert rows[0]["code_suggested_method"] == "source"
+        assert summary.filled == 2
+
+    def test_a_confidence_of_one_accepts_exact_matches_only(self):
+        from core.normalization import default_matcher, normalize_rows
+
+        rows = coded_rows()
+        normalize_rows(rows, text_column="procedure", code_column="code", matcher_factory=default_matcher(1.0))
+
+        assert [row["code"] for row in rows][3:] == ["A1", None]
+
+
+def worker(db_engine, store):
+    """The patches a task needs to run here: this database, the fake store."""
+    stack = ExitStack()
+    stack.enter_context(patch("sqlmodel.create_engine", return_value=db_engine))
+    stack.enter_context(patch("core.storage.upload_fileobj", side_effect=store.upload_fileobj))
+    stack.enter_context(patch("core.storage.download_to_path", side_effect=store.download_to_path))
+    stack.enter_context(patch("core.storage.get_s3_client", side_effect=store.get_s3_client))
+    return stack
+
+
+def land_upload(db_engine, db_session, project, store, tmp_path, name, text):
+    """Upload ``text`` as ``name`` and carry it through the layers."""
+    from core.config import get_settings
+    from tasks.celery_tasks import ingest_upload
+
+    bucket = get_settings().minio_bucket_datasets
+    csv = tmp_path / name
+    csv.write_text(text, encoding="utf-8")
+    key = f"u/{len(store.objects)}/{name}"
+    with csv.open("rb") as handle:
+        store.upload_fileobj(bucket, key, handle)
+    upload = Dataset(project_id=project.id, name=name, bucket=bucket,
+                     object_key=key, origin="upload", is_active=True)
+    db_session.add(upload)
+    db_session.commit()
+    db_session.refresh(upload)
+    with worker(db_engine, store):
+        result = ingest_upload(upload.id)
+    assert result["status"] == "success", result
+    db_session.refresh(upload)
+    return db_session.get(IngestionRun, upload.ingestion_run_id)
+
+
+def silver_rows(store, run) -> list[dict]:
+    from core import medallion
+
+    payload = store.objects[(medallion.bucket_for("silver"), run.silver_key)]
+    return pq.read_table(io.BytesIO(payload)).to_pylist()
+
+
+def silver_objects(store) -> dict:
+    from core import medallion
+
+    bucket = medallion.bucket_for("silver")
+    return {key: payload for key, payload in store.objects.items() if key[0] == bucket}
+
+
+# An id per row, or the two coded appendectomies are exact duplicates and
+# the standard keeps one.
+PROCEDURES = (
+    "id,procedure,code\n"
+    "1,Appendectomy,A1\n2,Appendectomy,A1\n3,Colonoscopy,C1\n4,appendectomy.,\n5,Colonoscopi,\n"
+)
+
+
+class TestUploadsCanBeNormalized:
+    def test_an_upload_is_coded_when_its_recipe_says_so(self, db_engine, db_session, project, tmp_path):
+        source = make_source(db_session, project, kind="upload", name="procedures")
+        source.cleaning_recipe = recipe(
+            normalize={"mode": "suggest", "text_column": "procedure", "code_column": "code"}
+        ).as_dict()
+        db_session.add(source)
+        db_session.commit()
+        store = FakeObjectStore()
+
+        run = land_upload(db_engine, db_session, project, store, tmp_path, "procedures.csv", PROCEDURES)
+
+        assert run.normalization["mode"] == "suggest"
+        assert run.normalization["filled"] == 2
+        rows = silver_rows(store, run)
+        assert [row["code"] for row in rows][3:] == [None, None], "suggest never writes the original"
+        assert [row["code_suggested"] for row in rows] == ["A1", "A1", "C1", "A1", "C1"]
+
+
+class TestRecleanApi:
+    def test_the_editor_is_told_how_much_of_silver_another_recipe_made(
+        self, test_app, db_session, own_project, diffed
+    ):
+        source = db_session.get(DataSource, diffed.source_id)
+
+        before = test_app.get(f"/sources/{source.id}/cleaning-recipe").json()
+        after = test_app.put(
+            f"/sources/{source.id}/cleaning-recipe", json={"recipe": {"disabled": ["trim_whitespace"]}}
+        ).json()
+
+        assert (before["runs"], before["stale_runs"]) == (1, 0)
+        assert (after["runs"], after["stale_runs"]) == (1, 1)
+        assert after["normalize_modes"] == ["off", "suggest", "fill"]
+
+    def test_the_registered_pair_is_the_default_normalisation(self, test_app, db_session, project):
+        source = make_source(db_session, project)
+        source.normalize_text_column, source.normalize_code_column = "procedure", "code"
+        db_session.add(source)
+        db_session.commit()
+
+        body = test_app.get(f"/sources/{source.id}/cleaning-recipe").json()
+
+        assert body["normalize_default"]["mode"] == "fill"
+        assert body["recipe"]["normalize"] is None
+
+    def test_a_reclean_is_queued(self, test_app, db_session, own_project, diffed):
+        with patch("tasks.celery_tasks.reclean_source.apply_async") as queued:
+            response = test_app.post(f"/sources/{diffed.source_id}/reclean")
+
+        assert response.status_code == 202
+        assert response.json()["reclean"]["status"] == "queued"
+        queued.assert_called_once_with(args=[diffed.source_id])
+
+    def test_one_at_a_time_unless_the_last_was_lost(self, test_app, db_session, own_project, diffed):
+        source = db_session.get(DataSource, diffed.source_id)
+        source.reclean = {"status": "running", "started_at": datetime.now(timezone.utc).isoformat()}
+        db_session.add(source)
+        db_session.commit()
+
+        with patch("tasks.celery_tasks.reclean_source.apply_async") as queued:
+            assert test_app.post(f"/sources/{source.id}/reclean").status_code == 409
+            source.reclean = {
+                "status": "running",
+                "started_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+            }
+            db_session.add(source)
+            db_session.commit()
+            assert test_app.post(f"/sources/{source.id}/reclean").status_code == 202
+        assert queued.call_count == 1
+
+    def test_nothing_landed_nothing_to_clean(self, test_app, db_session, project):
+        source = make_source(db_session, project)
+
+        response = test_app.post(f"/sources/{source.id}/reclean")
+
+        assert response.status_code == 409
+        assert "landed" in response.json()["detail"]
+
+    def test_another_members_source_is_not_found(self, other_member_app, db_session, project):
+        source = make_source(db_session, project)
+
+        assert other_member_app.post(f"/sources/{source.id}/reclean").status_code == 404
+
+
+SMOKERS = "patient_id,smoker\np1,unknown\np2,yes\n"
+
+
+class TestReclean:
+    def test_silver_is_rebuilt_with_the_current_recipe_and_gold_after_it(
+        self, db_engine, db_session, project, tmp_path
+    ):
+        from tasks.celery_tasks import reclean_source
+
+        store = FakeObjectStore()
+        run = land_upload(db_engine, db_session, project, store, tmp_path, "smokers.csv", SMOKERS)
+        assert [row["smoker"] for row in silver_rows(store, run)] == ["unknown", "yes"]
+        source = db_session.get(DataSource, run.source_id)
+        source.cleaning_recipe = recipe(null_tokens=["unknown"]).as_dict()
+        db_session.add(source)
+        db_session.commit()
+
+        with worker(db_engine, store):
+            result = reclean_source(source.id)
+
+        assert result["status"] == "success", result
+        db_session.refresh(run)
+        db_session.refresh(source)
+        # "unknown" is now a placeholder, and with it gone the column reads
+        # as a boolean.
+        assert [row["smoker"] for row in silver_rows(store, run)] == [None, True]
+        assert run.quality_report["recipe"]["null_tokens"] == ["unknown"]
+        assert source.reclean["status"] == "success"
+        assert source.reclean["runs"] == 1
+        assert source.reclean["gold_version"] == 2
+        active = db_session.exec(
+            select(Dataset).where(Dataset.project_id == project.id, Dataset.is_active == True)  # noqa: E712
+        ).all()
+        assert len(active) == 1 and "-v2-" in active[0].name
+
+    def test_a_failure_part_way_changes_nothing(self, db_engine, db_session, project, tmp_path):
+        from core import medallion
+        from tasks.celery_tasks import reclean_source
+
+        store = FakeObjectStore()
+        first = land_upload(db_engine, db_session, project, store, tmp_path, "smokers.csv", SMOKERS)
+        second = land_upload(db_engine, db_session, project, store, tmp_path, "smokers.csv", SMOKERS)
+        assert first.source_id == second.source_id
+        source = db_session.get(DataSource, first.source_id)
+        source.cleaning_recipe = recipe(null_tokens=["unknown"]).as_dict()
+        db_session.add(source)
+        db_session.commit()
+        before = silver_objects(store)
+
+        real = medallion.promote_to_silver
+        calls: list[int] = []
+
+        def the_second_one_fails(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("a rule broke")
+            return real(*args, **kwargs)
+
+        with worker(db_engine, store), patch("core.medallion.promote_to_silver", side_effect=the_second_one_fails):
+            result = reclean_source(source.id)
+
+        assert result["status"] == "failed"
+        db_session.refresh(source)
+        db_session.refresh(first)
+        assert source.reclean["status"] == "failed"
+        assert "a rule broke" in source.reclean["error"]
+        assert silver_objects(store) == before, "no silver object was replaced"
+        assert first.quality_report["recipe"]["null_tokens"] != ["unknown"]

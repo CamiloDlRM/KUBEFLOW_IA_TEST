@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getCleaningSteps } from '../api/client';
 import type { CleaningColumn, CleaningRow, CleaningStep, CleaningSteps as Steps, LayerStream } from '../types';
 import Spinner from './Spinner';
+import { describeNormalization } from './cleaning/recipe';
 
 /**
  * The cleaning standard, a rule at a time, each one shown as a diff.
@@ -99,6 +100,7 @@ export default function CleaningSteps({
  * about what a step looks like.
  */
 export function StepsView({ data }: { data: Steps }) {
+  const coding = describeNormalization(data.normalization);
   return (
     <>
       {data.lossy && data.lossy.length > 0 && (
@@ -126,6 +128,14 @@ export function StepsView({ data }: { data: Steps }) {
         Each rule was decided over the whole extraction. The {data.sample} rows below
         are the ones the rules acted on, numbered by where they arrived.
       </p>
+
+      {/* Coding runs after the rules, on the cleaned table, so it is said
+          once here rather than as a step with a before and after. */}
+      {coding && (
+        <p className={`-mt-2 mb-4 text-xs ${data.normalization?.error ? 'text-amber-300' : 'text-slate-400'}`}>
+          {coding}
+        </p>
+      )}
 
       <ol className="space-y-3">
         {data.steps.map((step, index) => (

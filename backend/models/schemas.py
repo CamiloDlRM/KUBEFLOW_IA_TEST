@@ -386,6 +386,10 @@ class DataSource(SQLModel, table=True):
     #: its own placeholders, forced types, and so on. ``{}`` is the standard.
     #: See :class:`core.cleaning.CleaningRecipe`.
     cleaning_recipe: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The last time this source's silver was cleaned again with its current
+    #: recipe: status (queued | running | success | failed), when, how many
+    #: extractions, the gold version it produced, or the error. ``{}`` if never.
+    reclean: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
@@ -1091,6 +1095,16 @@ class CleaningRecipeResponse(BaseModel):
     forceable_types: list[str]
     #: The lossy options this recipe turns on, in words.
     lossy: list[str] = Field(default_factory=list)
+    #: The normalisation that applies while the recipe sets none: what the
+    #: source was registered with.
+    normalize_default: dict[str, Any] = Field(default_factory=dict)
+    normalize_modes: list[str] = Field(default_factory=list)
+    #: Extractions in silver, and how many of them were cleaned with a recipe
+    #: other than this one — the ones re-cleaning would change.
+    runs: int = 0
+    stale_runs: int = 0
+    #: The last re-clean of this source's silver (see DataSource.reclean).
+    reclean: dict[str, Any] = Field(default_factory=dict)
 
 
 class DataSourceCreateRequest(BaseModel):
@@ -1487,6 +1501,8 @@ class CleaningStepsResponse(BaseModel):
     lossy: list[str] = Field(default_factory=list)
     #: True when this is a draft recipe tried out, not what the run did.
     preview: bool = False
+    #: What normalisation did after the rules (or would do, for a draft).
+    normalization: dict[str, Any] = Field(default_factory=dict)
 
 
 class CleaningPreviewRequest(BaseModel):
