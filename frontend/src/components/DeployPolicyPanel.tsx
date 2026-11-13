@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Info } from 'lucide-react';
 import { getRunSettings, setDeployPolicy } from '../api/client';
 import type { DeployPolicy } from '../types';
+import { SelectMenu, SuggestInput } from './SelectMenu';
 import Spinner from './Spinner';
 
 /** "Deploys when recall ≥ 0.9 and it beats the version serving." */
@@ -52,7 +53,7 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
   }
 
   const changed = JSON.stringify(draft) !== JSON.stringify(data?.policy);
-  const metrics = Array.from(new Set([draft.metric, ...(data?.metrics_available ?? []), 'accuracy']));
+  const metrics = Array.from(new Set([...(data?.metrics_available ?? []), 'accuracy']));
   // Said, not refused: a metric the notebook starts logging on its next run is a fair thing to type.
   const neverLogged =
     draft.auto_deploy &&
@@ -100,31 +101,29 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
         </label>
 
         <fieldset disabled={!draft.auto_deploy} className="flex flex-wrap items-end gap-3 disabled:opacity-50">
-          <label className="flex flex-col gap-1 text-xs text-slate-400">
-            Metric
-            <input
-              list={`metrics-${projectId}`}
+          {/* Not wrapped in their labels: the open list would be read as part of the name. */}
+          <div className="flex flex-col gap-1 text-xs text-slate-400">
+            <label htmlFor={`metric-${projectId}`}>Metric</label>
+            <SuggestInput
+              id={`metric-${projectId}`}
               value={draft.metric}
-              onChange={(event) => setDraft({ ...draft, metric: event.target.value })}
+              suggestions={metrics}
+              onChange={(metric) => setDraft({ ...draft, metric })}
               className={`${field} w-44 font-display`}
             />
-            <datalist id={`metrics-${projectId}`}>
-              {metrics.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-slate-400">
-            Better is
-            <select
+          </div>
+          <div className="flex flex-col gap-1 text-xs text-slate-400">
+            <span aria-hidden="true">Better is</span>
+            <SelectMenu
+              label="Better is"
               value={draft.direction}
-              onChange={(event) => setDraft({ ...draft, direction: event.target.value as DeployPolicy['direction'] })}
-              className={field}
-            >
-              <option value="higher">higher (≥)</option>
-              <option value="lower">lower (≤)</option>
-            </select>
-          </label>
+              options={[
+                { value: 'higher', label: 'higher (≥)' },
+                { value: 'lower', label: 'lower (≤)' },
+              ]}
+              onChange={(direction) => setDraft({ ...draft, direction })}
+            />
+          </div>
           <label className="flex flex-col gap-1 text-xs text-slate-400">
             Bar
             <input

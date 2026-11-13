@@ -116,6 +116,23 @@ describe('DeployPolicyPanel', () => {
     expect(screen.queryByText(/No run of this project has logged/)).not.toBeInTheDocument();
   });
 
+  it('offers the logged metrics and the direction in the app’s own menus', async () => {
+    api.setDeployPolicy.mockImplementation(async (_id, changes) => ({ ...SETTINGS, is_default: false, policy: changes }));
+    wrap(<DeployPolicyPanel projectId={4} />);
+
+    await userEvent.click(await screen.findByRole('combobox', { name: 'Metric' }));
+    await userEvent.click(screen.getByRole('button', { name: 'recall' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Better is: higher (≥)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'lower (≤)' }));
+    // Picking closes the list it was picked from.
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }));
+
+    await waitFor(() =>
+      expect(api.setDeployPolicy).toHaveBeenCalledWith(4, expect.objectContaining({ metric: 'recall', direction: 'lower' })),
+    );
+  });
+
   it('can go back to the platform default', async () => {
     api.getRunSettings.mockResolvedValue({ ...SETTINGS, is_default: false });
     api.setDeployPolicy.mockResolvedValue(SETTINGS);
