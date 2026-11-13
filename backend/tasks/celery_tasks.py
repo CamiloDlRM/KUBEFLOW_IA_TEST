@@ -1449,11 +1449,26 @@ def _through_the_layers(
     Bronze is uploaded before silver is built, because building silver is where
     a bug would lose data that the source may not hand over twice.
     """
+    from sqlmodel import Session
+
     from core import medallion
+    from core.cleaning import STANDARD, CleaningRecipe, RecipeError
+    from models.schemas import DataSource
 
     layer_key = medallion.bronze_key(project_id, source_id, run_id)
     medallion.upload_parquet("bronze", layer_key, bronze_path)
     log.info("layers.bronze_written", key=layer_key)
+
+    # The source's own recipe, or the standard. A stored recipe was checked
+    # when it was saved; one that no longer reads falls back to the standard
+    # rather than leaving the rows stuck in bronze.
+    with Session(engine) as session:
+        source = session.get(DataSource, source_id)
+        try:
+            recipe = CleaningRecipe.from_dict(source.cleaning_recipe if source else {})
+        except RecipeError as exc:
+            log.warning("layers.recipe_unreadable", source_id=source_id, error=str(exc))
+            recipe = STANDARD
 
     # The cleaning standard, then code normalisation. Normalisation runs here
     # rather than as a pipeline phase: the data lands once and is trained on
@@ -1464,6 +1479,7 @@ def _through_the_layers(
         workdir / f"silver-{run_id}.parquet",
         text_column=text_column,
         code_column=code_column,
+        recipe=recipe,
     )
     quality_report = build.report.summary()
     medallion.upload_parquet("silver", layer_key, build.path)

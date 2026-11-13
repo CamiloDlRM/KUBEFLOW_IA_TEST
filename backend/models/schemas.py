@@ -382,6 +382,11 @@ class DataSource(SQLModel, table=True):
     normalize_text_column: str = SQLField(default="")
     normalize_code_column: str = SQLField(default="")
 
+    #: How the cleaning standard is applied to this source: rules turned off,
+    #: its own placeholders, forced types, and so on. ``{}`` is the standard.
+    #: See :class:`core.cleaning.CleaningRecipe`.
+    cleaning_recipe: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
 
@@ -1056,6 +1061,38 @@ class GithubConfirmNewRequest(BaseModel):
     pending: str
 
 
+class CleaningRuleResponse(BaseModel):
+    """One rule of the standard, for a person choosing a recipe."""
+
+    name: str
+    tier: str
+    title: str
+    summary: str
+
+
+class CleaningRecipeRequest(BaseModel):
+    """A source's recipe, or ``reset`` to go back to the standard."""
+
+    recipe: dict[str, Any] = Field(default_factory=dict)
+    reset: bool = False
+
+
+class CleaningRecipeResponse(BaseModel):
+    """How a source is cleaned, against the standard it departs from."""
+
+    source_id: int
+    #: ``standard`` while the source has not set a recipe, ``custom`` after.
+    mode: str
+    #: The recipe in force, every option spelled out.
+    recipe: dict[str, Any]
+    #: The standard, so an editor can show what each option would be by default.
+    standard: dict[str, Any]
+    rules: list[CleaningRuleResponse]
+    forceable_types: list[str]
+    #: The lossy options this recipe turns on, in words.
+    lossy: list[str] = Field(default_factory=list)
+
+
 class DataSourceCreateRequest(BaseModel):
     """Payload to register an external system to extract from."""
 
@@ -1425,6 +1462,8 @@ class CleaningStepResponse(BaseModel):
     #: reader can see that the rule ran and found nothing to do — which is a
     #: different statement from the rule not existing.
     changed: bool = False
+    #: Turned off in the source's recipe, so it did not run at all.
+    skipped: bool = False
 
     #: The first rows, before and after this one rule, on aligned columns. Rows
     #: are matched by their position in the data as it arrived, so a

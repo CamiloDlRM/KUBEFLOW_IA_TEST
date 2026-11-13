@@ -28,7 +28,7 @@ from sqlmodel import Session, select
 
 from core import gold as gold_module
 from core import medallion
-from core.cleaning import Table, clean
+from core.cleaning import STANDARD, CleaningRecipe, RecipeError, Table, clean
 from core.config import get_settings
 from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
@@ -509,15 +509,24 @@ async def cleaning_steps(
     keep_as_text = (
         [source.normalize_code_column] if source and source.normalize_code_column else []
     )
+    # Replayed with the recipe the run was cleaned with, not the source's
+    # current one: after a recipe changes, the old runs' silver was still made
+    # the old way, and a replay that used the new recipe would show changes
+    # that never happened. Runs from before recipes carry none: the standard.
+    try:
+        recipe = CleaningRecipe.from_dict((run.quality_report or {}).get("recipe"))
+    except RecipeError:
+        recipe = STANDARD
 
     # `from_rows` copies the values out, so cleaning the scout table leaves
     # `rows` untouched and the second table starts from the same data.
-    scout, _ = clean(Table.from_rows(rows, columns), keep_as_text=keep_as_text)
+    scout, _ = clean(Table.from_rows(rows, columns), keep_as_text=keep_as_text, recipe=recipe)
     report, snapshots = clean(
         Table.from_rows(rows, columns),
         keep_as_text=keep_as_text,
         sample=limit,
         rows=_rows_worth_showing(scout, limit),
+        recipe=recipe,
     )
 
     return CleaningStepsResponse(
@@ -583,6 +592,7 @@ def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
                 note=outcome.note if outcome else "",
                 columns=outcome.columns if outcome else [],
                 changed=outcome.changed if outcome else True,
+                skipped=outcome.skipped if outcome else False,
                 preview_columns=[
                     CleaningColumnResponse(
                         before=previous.columns[before] if before is not None else None,

@@ -32,6 +32,9 @@ from core.ownership import get_visible_project_or_404, restrict_by_project
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
+    CleaningRecipeRequest,
+    CleaningRecipeResponse,
+    CleaningRuleResponse,
     DataSource,
     DataSourceCreateRequest,
     DataSourcePreviewRequest,
@@ -252,6 +255,77 @@ async def get_source(
     return DataSourceResponse.model_validate(
         _get_source_or_404(session, source_id, current_user)
     )
+
+
+def _recipe_response(source: DataSource) -> CleaningRecipeResponse:
+    from core.cleaning import FORCEABLE_TYPES, RULES, STANDARD, CleaningRecipe, RecipeError
+
+    try:
+        recipe = CleaningRecipe.from_dict(source.cleaning_recipe)
+    except RecipeError:
+        recipe = STANDARD
+    return CleaningRecipeResponse(
+        source_id=source.id,  # type: ignore[arg-type]
+        mode="custom" if source.cleaning_recipe else "standard",
+        recipe=recipe.as_dict(),
+        standard=STANDARD.as_dict(),
+        rules=[CleaningRuleResponse(**vars(rule)) for rule in RULES],
+        forceable_types=list(FORCEABLE_TYPES),
+        lossy=recipe.lossy,
+    )
+
+
+@router.get(
+    "/{source_id}/cleaning-recipe",
+    response_model=CleaningRecipeResponse,
+    summary="How this source is cleaned",
+)
+def get_cleaning_recipe(
+    source_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> CleaningRecipeResponse:
+    """The source's recipe — or the standard, if it set none — with the rules
+    and the options an editor needs to change it. Uploaded files are sources
+    too, so this works for them."""
+    return _recipe_response(_get_source_or_404(session, source_id, current_user))
+
+
+@router.put(
+    "/{source_id}/cleaning-recipe",
+    response_model=CleaningRecipeResponse,
+    summary="Choose how this source is cleaned",
+)
+def set_cleaning_recipe(
+    source_id: int,
+    body: CleaningRecipeRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> CleaningRecipeResponse:
+    """Save the source's recipe. It applies to what lands from now on; what
+    is already in silver was cleaned with the recipe of its own run, which is
+    kept on that run. ``reset`` goes back to the standard.
+
+    The recipe is checked before it is stored, and stored in full (every
+    option spelled out), so a later change to the standard's defaults does not
+    quietly change a source that chose them.
+    """
+    from core.cleaning import STANDARD, CleaningRecipe, RecipeError
+
+    source = _get_source_or_404(session, source_id, current_user)
+    if body.reset:
+        source.cleaning_recipe = {}
+    else:
+        try:
+            recipe = CleaningRecipe.from_dict(body.recipe)
+        except RecipeError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        source.cleaning_recipe = {} if recipe == STANDARD else recipe.as_dict()
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+    logger.info("source.cleaning_recipe.set", source_id=source_id, custom=bool(source.cleaning_recipe))
+    return _recipe_response(source)
 
 
 @router.post(
