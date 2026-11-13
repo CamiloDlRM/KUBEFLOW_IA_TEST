@@ -1388,8 +1388,8 @@ export const SECTIONS: ManualSection[] = [
         text: 'Comes from the config cell. Deploying the same name again adds a version and makes it active.',
       },
       {
-        term: 'Accuracy',
-        text: 'The metric recorded at registration, as a percentage. It is the value the deployment gate used.',
+        term: 'Metric',
+        text: 'What the model is judged on: the metric its project deploys on, as the run logged it. Accuracy reads as a percentage; any other metric as its number.',
       },
       {
         term: 'Rollback',

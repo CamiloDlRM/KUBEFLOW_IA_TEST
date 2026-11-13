@@ -102,6 +102,29 @@ class DeployPolicy:
         return value >= self.threshold if self.direction == "higher" else value <= self.threshold
 
 
+def deciding_metric(raw: dict[str, Any] | None) -> str:
+    """The metric a stored policy decides on; the platform's when it names none or is unusable."""
+    fallback = DeployPolicy.defaults(auto_deploy=True, threshold=0.0)
+    try:
+        return DeployPolicy.parse(raw, fallback=fallback).metric
+    except PolicyError:
+        return fallback.metric
+
+
+def judged_on(raw: dict[str, Any] | None, metrics: dict[str, Any] | None) -> tuple[str, float | None]:
+    """The number a model is shown by: the policy's metric as the run logged it, else its accuracy.
+
+    A version that deployed before the metric was chosen logged only the old
+    one, so it keeps its accuracy; a run that logged neither has no number.
+    """
+    wanted = deciding_metric(raw)
+    for name in (wanted, "accuracy"):
+        value = (metrics or {}).get(name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return name, float(value)
+    return wanted, None
+
+
 def decide(
     policy: DeployPolicy,
     metrics: dict[str, Any],

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DeployPolicyPanel, { describePolicy } from '../../src/components/DeployPolicyPanel';
 import RunPipelineModal, { parameterProblem, parseParameterValue } from '../../src/components/RunPipelineModal';
 import type { Project, RunSettings } from '../../src/types';
+import { modelMetric } from '../../src/utils/format';
 
 const api = {
   getRunSettings: vi.fn(),
@@ -162,5 +163,16 @@ describe('RunPipelineModal', () => {
 
     expect(screen.getByText('MODEL_OUTPUT_PATH is set by the platform.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled();
+  });
+});
+
+describe('modelMetric', () => {
+  it('names what a model is judged on, accuracy as a percentage', () => {
+    expect(modelMetric({ accuracy: 0.921, metric: 'accuracy', metric_value: 0.921 })).toEqual({ name: 'accuracy', value: '92.1%' });
+    // A regressor: its stored accuracy is 0, and must not read as 0%.
+    expect(modelMetric({ accuracy: 0, metric: 'rmse', metric_value: 8.5 })).toEqual({ name: 'rmse', value: '8.5' });
+    expect(modelMetric({ accuracy: 0, metric: 'accuracy', metric_value: null })).toEqual({ name: 'accuracy', value: '--' });
+    // An API older than the field.
+    expect(modelMetric({ accuracy: 0.88 })).toEqual({ name: 'accuracy', value: '88.0%' });
   });
 });

@@ -227,6 +227,21 @@ def _build_model_card(
     return f"Described {len(card.get('inputs', []))} input(s) for the test page."
 
 
+def _judged_line(project_id: int | None, metrics: dict[str, Any]) -> str:
+    """"Accuracy: 0.9100", or the metric this project deploys on when it is not accuracy."""
+    from sqlmodel import Session
+
+    from core.deploy_policy import judged_on
+    from db import engine
+    from models.schemas import Project
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id) if project_id is not None else None
+        name, value = judged_on(project.deploy_policy if project else None, metrics)
+    label = "Accuracy" if name == "accuracy" else name
+    return f"{label}: {value:.4f}" if value is not None else f"The notebook logged no '{name}'"
+
+
 def _deploy_decision(
     project_id: int | None, model_name: str, metrics: dict[str, Any]
 ) -> tuple[bool, str]:
@@ -1113,7 +1128,7 @@ def run_pipeline(
             _phase(
                 "register",
                 "success",
-                f"Model registered in MLflow run {mlflow_run_id}. Accuracy: {accuracy:.4f}. {card_note}",
+                f"Model registered in MLflow run {mlflow_run_id}. {_judged_line(project_id, metrics)}. {card_note}",
             )
             log.info(
                 "pipeline.phase.register.done",

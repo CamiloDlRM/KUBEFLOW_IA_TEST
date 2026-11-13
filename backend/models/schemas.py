@@ -880,6 +880,10 @@ class ModelDeploymentResponse(BaseModel):
     model_name: str
     version: str
     accuracy: float
+    #: What the model is judged on — its project's deciding metric, as its run
+    #: logged it — and that value. ``accuracy`` is 0.0 for a model that has none.
+    metric: str = "accuracy"
+    metric_value: float | None = None
     endpoint_url: str
     deployed_at: datetime
     is_active: bool

@@ -245,3 +245,58 @@ class TestTheWorkersDecision:
             deployed, _ = _deploy_decision(project.id, "encounters", {"accuracy": 0.99})
 
         assert deployed is settings.auto_deploy_on_success
+
+
+class TestWhatAModelIsShownBy:
+    """``GET /models`` reports the metric a model was judged on, not always accuracy."""
+
+    def _deployed(self, db_session, project, metrics):
+        from models.schemas import ModelDeployment
+
+        repo = seed_repo(db_session, project_id=project.id)
+        run = seed_pipeline(db_session, repo.id, project_id=project.id, metrics=metrics)
+        # What the worker stores for a run that logged no accuracy.
+        db_session.add(ModelDeployment(model_name="encounters", version="1", accuracy=metrics.get("accuracy", 0.0),
+                                       endpoint_url="http://x/predict/encounters", pipeline_id=run.id, is_active=True))
+        db_session.commit()
+
+    def test_a_regressor_is_shown_by_its_error_not_a_zero_accuracy(self, test_app, db_session, project):
+        project.deploy_policy = {"metric": "rmse", "direction": "lower", "threshold": 10}
+        db_session.add(project)
+        self._deployed(db_session, project, {"rmse": 8.5})
+
+        (model,) = test_app.get("/models").json()
+
+        assert (model["metric"], model["metric_value"]) == ("rmse", 8.5)
+
+    def test_a_version_older_than_the_metric_keeps_its_accuracy(self, test_app, db_session, project):
+        project.deploy_policy = {"metric": "recall"}
+        db_session.add(project)
+        self._deployed(db_session, project, {"accuracy": 0.92})
+
+        (model,) = test_app.get("/models").json()
+
+        assert (model["metric"], model["metric_value"]) == ("accuracy", 0.92)
+
+    def test_a_run_that_logged_neither_has_no_number_rather_than_zero(self, test_app, db_session, project):
+        self._deployed(db_session, project, {"f1": 0.8})
+
+        (model,) = test_app.get("/models").json()
+
+        assert (model["metric"], model["metric_value"]) == ("accuracy", None)
+
+
+class TestTheRegisterMessage:
+    """The run's log names the metric its project deploys on, not always accuracy."""
+
+    def test_it_says_the_deciding_metric(self, db_engine, db_session, project):
+        from tasks.celery_tasks import _judged_line
+
+        with patch("db.engine", db_engine):
+            assert _judged_line(project.id, {"accuracy": 0.91}) == "Accuracy: 0.9100"
+            project.deploy_policy = {"metric": "rmse", "direction": "lower", "threshold": 10}
+            db_session.add(project)
+            db_session.commit()
+            assert _judged_line(project.id, {"rmse": 8.5}) == "rmse: 8.5000"
+            # A regressor used to read "Accuracy: 0.0000".
+            assert _judged_line(None, {"f1": 0.8}) == "The notebook logged no 'accuracy'"

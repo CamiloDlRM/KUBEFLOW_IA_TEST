@@ -4,7 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import type { ModelDeployment } from '../types';
 import { BACK_BUTTON_CLASS } from './BackLink';
 import ShareLinkCell from './models/ShareLinkCell';
-import { formatDate } from '../utils/format';
+import { formatDate, modelMetric } from '../utils/format';
 import { runLink } from '../utils/links';
 import { GrafanaFrame, OpenInGrafanaLink, buildGrafanaEmbedUrl } from './MetricsPanels';
 
@@ -44,8 +44,8 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <InfoCard label="Accuracy">
-          <span className="font-display">{(model.accuracy * 100).toFixed(1)}%</span>
+        <InfoCard label={modelMetric(model).name}>
+          <span className="font-display">{modelMetric(model).value}</span>
         </InfoCard>
         <InfoCard label="Deployed">{formatDate(model.deployed_at)}</InfoCard>
         <InfoCard label="Produced by">
