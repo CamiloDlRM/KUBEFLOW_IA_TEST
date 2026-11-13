@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Info } from 'lucide-react';
 import { getRunSettings, setDeployPolicy } from '../api/client';
 import type { DeployPolicy } from '../types';
 import Spinner from './Spinner';
@@ -138,6 +139,19 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
             …and beat the version serving now
           </label>
         </fieldset>
+
+        {/* The worker refuses rather than deploy on a comparison it cannot make; said here, before a run is spent finding out. */}
+        {draft.auto_deploy && draft.must_beat_serving && (
+          <p className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-slate-400">
+            <Info size={14} className="mt-0.5 shrink-0 text-sky-300" aria-hidden="true" />
+            <span>
+              <span className="font-semibold text-sky-200">A run can only beat a version it can be compared with.</span>{' '}
+              If the version serving now never logged <span className="font-display text-slate-300">{draft.metric}</span> —
+              it deployed before this metric was chosen — a new run will not deploy on its own. Deploy one from the
+              model’s Versions, and later runs are compared again.
+            </span>
+          </p>
+        )}
 
         {data && data.metrics_available.length > 0 && (
           <p className="text-xs text-slate-500">

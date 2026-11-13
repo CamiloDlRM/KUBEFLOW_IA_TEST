@@ -62,6 +62,15 @@ class TestDecide:
         # Nothing serving yet: the bar alone decides.
         assert decide(strict, {"accuracy": 0.85}, serving=None)[0] is True
 
+    def test_it_will_not_deploy_on_a_comparison_it_could_not_make(self):
+        strict = policy(metric="recall", threshold=0.9, must_beat_serving=True)
+        deployed, reason = decide(strict, {"recall": 0.91}, serving=None, serving_unknown=True)
+        assert deployed is False
+        assert "the version serving now logged no 'recall'" in reason
+        # Only a policy that asks to beat it cares; and a missed bar is still the first thing said.
+        assert decide(policy(metric="recall", threshold=0.9), {"recall": 0.91}, None, serving_unknown=True)[0] is True
+        assert "missed the bar" in decide(strict, {"recall": 0.5}, None, serving_unknown=True)[1]
+
 
 class TestParse:
     def test_missing_fields_take_the_fallback(self):
@@ -209,6 +218,25 @@ class TestTheWorkersDecision:
 
         assert deployed is False
         assert "did not beat the version serving now (0.9200)" in reason
+
+    def test_a_serving_version_without_the_metric_is_not_replaced_blind(self, db_engine, db_session, project):
+        """The deciding metric changed after the serving version deployed."""
+        from models.schemas import ModelDeployment
+        from tasks.celery_tasks import _deploy_decision
+
+        project.deploy_policy = {"metric": "recall", "must_beat_serving": True, "threshold": 0.5}
+        db_session.add(project)
+        repo = seed_repo(db_session, project_id=project.id)
+        serving_run = seed_pipeline(db_session, repo.id, project_id=project.id, metrics={"accuracy": 0.92})
+        db_session.add(ModelDeployment(model_name="encounters", version="4", accuracy=0.92,
+                                       pipeline_id=serving_run.id, is_active=True))
+        db_session.commit()
+
+        with patch("db.engine", db_engine):
+            deployed, reason = _deploy_decision(project.id, "encounters", {"recall": 0.95})
+
+        assert deployed is False
+        assert "logged no 'recall' to compare it with" in reason
 
     def test_a_project_without_a_policy_uses_the_platforms(self, db_engine, project):
         from tasks.celery_tasks import _deploy_decision, settings

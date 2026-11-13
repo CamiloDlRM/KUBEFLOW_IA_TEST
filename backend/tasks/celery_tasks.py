@@ -250,6 +250,7 @@ def _deploy_decision(
         except PolicyError:
             policy = fallback
         serving: float | None = None
+        serving_unknown = False
         if policy.must_beat_serving:
             active = session.exec(
                 select(ModelDeployment).where(
@@ -263,7 +264,8 @@ def _deploy_decision(
                 if value is None and policy.metric == "accuracy":
                     value = active.accuracy
                 serving = float(value) if isinstance(value, (int, float)) else None
-    return decide(policy, metrics, serving)
+                serving_unknown = serving is None
+    return decide(policy, metrics, serving, serving_unknown=serving_unknown)
 
 
 def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:

@@ -89,6 +89,16 @@ describe('DeployPolicyPanel', () => {
     expect(screen.getByRole('spinbutton', { name: 'Bar' })).toBeDisabled();
   });
 
+  it('says what asking to beat the serving version costs, only once it is asked', async () => {
+    wrap(<DeployPolicyPanel projectId={4} />);
+    const beat = await screen.findByRole('checkbox', { name: /beat the version serving now/ });
+    expect(screen.queryByText(/can only beat a version it can be compared with/)).not.toBeInTheDocument();
+
+    await userEvent.click(beat);
+
+    expect(screen.getByText(/can only beat a version it can be compared with/)).toBeInTheDocument();
+  });
+
   it('can go back to the platform default', async () => {
     api.getRunSettings.mockResolvedValue({ ...SETTINGS, is_default: false });
     api.setDeployPolicy.mockResolvedValue(SETTINGS);

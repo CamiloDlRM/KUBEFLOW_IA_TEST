@@ -103,11 +103,18 @@ class DeployPolicy:
 
 
 def decide(
-    policy: DeployPolicy, metrics: dict[str, Any], serving: float | None
+    policy: DeployPolicy,
+    metrics: dict[str, Any],
+    serving: float | None,
+    *,
+    serving_unknown: bool = False,
 ) -> tuple[bool, str]:
     """Whether a run deploys under ``policy``, and the sentence that says why.
 
     ``serving`` is the policy's metric for the version serving now, if any.
+    ``serving_unknown`` says a version *is* serving but logged no such metric
+    (the deciding metric was changed after it deployed): a policy that must
+    beat it then refuses, rather than deploying on a comparison never made.
     The reason is stored on the run: "not deployed" with no reason is how a
     person ends up retraining a model that was fine.
     """
@@ -119,6 +126,11 @@ def decide(
     sign = ">=" if policy.direction == "higher" else "<="
     if not policy.clears(value):
         return False, f"{policy.metric} {value:.4f} missed the bar ({sign} {policy.threshold:g})."
+    if policy.must_beat_serving and serving is None and serving_unknown:
+        return False, (
+            f"{policy.metric} {value:.4f} cleared the bar, but the version serving now logged no "
+            f"'{policy.metric}' to compare it with; deploy it from the model's Versions."
+        )
     if policy.must_beat_serving and serving is not None and not policy.better(value, serving):
         return False, (
             f"{policy.metric} {value:.4f} cleared the bar but did not beat the version "
