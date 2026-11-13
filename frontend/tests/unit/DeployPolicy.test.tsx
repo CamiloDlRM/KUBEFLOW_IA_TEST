@@ -100,6 +100,22 @@ describe('DeployPolicyPanel', () => {
     expect(screen.getByText(/can only beat a version it can be compared with/)).toBeInTheDocument();
   });
 
+  it('warns about a metric no run has logged, without refusing it', async () => {
+    wrap(<DeployPolicyPanel projectId={4} />);
+    const metric = await screen.findByRole('combobox', { name: 'Metric' });
+    expect(screen.queryByText(/No run of this project has logged/)).not.toBeInTheDocument();
+
+    await userEvent.clear(metric);
+    await userEvent.type(metric, 'acuracy');
+
+    expect(screen.getByText(/No run of this project has logged/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save rules' })).toBeEnabled();
+
+    await userEvent.clear(metric);
+    await userEvent.type(metric, 'recall');
+    expect(screen.queryByText(/No run of this project has logged/)).not.toBeInTheDocument();
+  });
+
   it('can go back to the platform default', async () => {
     api.getRunSettings.mockResolvedValue({ ...SETTINGS, is_default: false });
     api.setDeployPolicy.mockResolvedValue(SETTINGS);

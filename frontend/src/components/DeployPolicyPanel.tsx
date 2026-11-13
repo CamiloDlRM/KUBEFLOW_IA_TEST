@@ -53,6 +53,12 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
 
   const changed = JSON.stringify(draft) !== JSON.stringify(data?.policy);
   const metrics = Array.from(new Set([draft.metric, ...(data?.metrics_available ?? []), 'accuracy']));
+  // Said, not refused: a metric the notebook starts logging on its next run is a fair thing to type.
+  const neverLogged =
+    draft.auto_deploy &&
+    Boolean(draft.metric.trim()) &&
+    (data?.metrics_available.length ?? 0) > 0 &&
+    !data!.metrics_available.includes(draft.metric.trim());
   const field =
     'rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-40';
 
@@ -150,6 +156,13 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
               it deployed before this metric was chosen — a new run will not deploy on its own. Deploy one from the
               model’s Versions, and later runs are compared again.
             </span>
+          </p>
+        )}
+
+        {neverLogged && (
+          <p className="text-xs text-amber-300">
+            No run of this project has logged <span className="font-display">{draft.metric.trim()}</span> yet. Check
+            the spelling: a run that does not log it will not deploy.
           </p>
         )}
 
