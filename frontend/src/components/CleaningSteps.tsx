@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getCleaningSteps } from '../api/client';
-import type { CleaningColumn, CleaningRow, CleaningStep, LayerStream } from '../types';
+import type { CleaningColumn, CleaningRow, CleaningStep, CleaningSteps as Steps, LayerStream } from '../types';
 import Spinner from './Spinner';
+import { describeNormalization } from './cleaning/recipe';
 
 /**
  * The cleaning standard, a rule at a time, each one shown as a diff.
@@ -49,8 +50,9 @@ export default function CleaningSteps({
             What the cleaning did, step by step
           </h3>
           <p className="mt-1 max-w-3xl text-sm text-slate-400">
-            The same standard runs on every source, in this order. Each step shows the rows
-            it touched before and after, so the first is{' '}
+            Each source is cleaned with its recipe — the platform standard unless it was
+            changed — in this order. Each step shows the rows it touched before and after, so
+            the first is{' '}
             <span className="text-amber-300">bronze</span> and the last is{' '}
             <span className="text-slate-200">silver</span>.
           </p>
@@ -86,40 +88,66 @@ export default function CleaningSteps({
           </p>
         )}
 
-        {data && (
-          <>
-            <div className="mb-3 flex flex-wrap items-center gap-3 text-xs">
-              <Legend tone="value" label="value corrected" />
-              <Legend tone="type" label="type applied" />
-              <Legend tone="null" label="emptied to null" />
-              <Legend tone="removed" label="row removed" />
-            </div>
-
-            <p className="mb-4 text-xs text-slate-500">
-              {data.rows_in.toLocaleString()} rows in, {data.rows_out.toLocaleString()} out.
-              {/* Said plainly: the rules decide over the whole extraction, and
-                  only the tables below are a sample. Otherwise a reader could
-                  reasonably think the type was inferred from eight rows. The
-                  numbers in the first column are where each row arrived, which
-                  is also why they are not 1 to 8. */}{' '}
-              Each rule was decided over the whole extraction. The {data.sample} rows below
-              are the ones the rules acted on, numbered by where they arrived.
-            </p>
-
-            <ol className="space-y-3">
-              {data.steps.map((step, index) => (
-                <Step
-                  key={step.rule || 'arrived'}
-                  step={step}
-                  number={index}
-                  last={index === data.steps.length - 1}
-                />
-              ))}
-            </ol>
-          </>
-        )}
+        {data && <StepsView data={data} />}
       </div>
     </section>
+  );
+}
+
+/**
+ * The steps themselves, for any replay: a run as it happened, or a draft
+ * recipe tried out before it is saved. Shared so the two can never disagree
+ * about what a step looks like.
+ */
+export function StepsView({ data }: { data: Steps }) {
+  const coding = describeNormalization(data.normalization);
+  return (
+    <>
+      {data.lossy && data.lossy.length > 0 && (
+        <ul className="mb-3 space-y-1 rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+          {data.lossy.map((warning) => (
+            <li key={warning}>Loses data: {warning}</li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mb-3 flex flex-wrap items-center gap-3 text-xs">
+        <Legend tone="value" label="value corrected" />
+        <Legend tone="type" label="type applied" />
+        <Legend tone="null" label="emptied to null" />
+        <Legend tone="removed" label="row removed" />
+      </div>
+
+      <p className="mb-4 text-xs text-slate-500">
+        {data.rows_in.toLocaleString()} rows in, {data.rows_out.toLocaleString()} out.
+        {/* Said plainly: the rules decide over the whole extraction, and
+            only the tables below are a sample. Otherwise a reader could
+            reasonably think the type was inferred from eight rows. The
+            numbers in the first column are where each row arrived, which
+            is also why they are not 1 to 8. */}{' '}
+        Each rule was decided over the whole extraction. The {data.sample} rows below
+        are the ones the rules acted on, numbered by where they arrived.
+      </p>
+
+      {/* Coding runs after the rules, on the cleaned table, so it is said
+          once here rather than as a step with a before and after. */}
+      {coding && (
+        <p className={`-mt-2 mb-4 text-xs ${data.normalization?.error ? 'text-amber-300' : 'text-slate-400'}`}>
+          {coding}
+        </p>
+      )}
+
+      <ol className="space-y-3">
+        {data.steps.map((step, index) => (
+          <Step
+            key={step.rule || 'arrived'}
+            step={step}
+            number={index}
+            last={index === data.steps.length - 1}
+          />
+        ))}
+      </ol>
+    </>
   );
 }
 
@@ -127,6 +155,7 @@ const TIER_LABEL: Record<string, string> = {
   structural: 'structural',
   categorical: 'categorical',
   domain: 'health',
+  custom: 'your rule',
 };
 
 /**
@@ -172,10 +201,20 @@ function Step({ step, number, last }: { step: CleaningStep; number: number; last
         <span
           className={`text-sm font-medium ${
             step.changed || isStart ? 'text-slate-100' : 'text-slate-500'
-          }`}
+          } ${step.skipped ? 'line-through decoration-slate-600' : ''}`}
         >
           {step.title}
         </span>
+        {step.skipped && (
+          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+            turned off
+          </span>
+        )}
+        {step.error && (
+          <span className="rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-red-300">
+            could not run
+          </span>
+        )}
         {/* The two ends of the standard are the two layers, said once each so
             the reader knows which table they are looking at. */}
         {isStart && (
@@ -193,7 +232,9 @@ function Step({ step, number, last }: { step: CleaningStep; number: number; last
 
       {open && (
         <div className="border-t border-slate-800 px-4 py-3">
-          {step.note && <p className="mb-2 text-xs text-slate-500">{step.note}</p>}
+          {step.note && (
+            <p className={`mb-2 text-xs ${step.error ? 'text-red-300' : 'text-slate-500'}`}>{step.note}</p>
+          )}
           {/* The preview is chosen to include the rows each rule acted on, but
               a rule late in the standard can find every slot taken. Saying so
               is better than a count above a table where nothing happened,
@@ -283,6 +324,14 @@ function ColumnHeader({ column }: { column: CleaningColumn }) {
       </th>
     );
   }
+  if (column.change === 'added') {
+    return (
+      <th className="px-2 py-1.5 font-medium">
+        <span className="text-emerald-300">{column.after}</span>
+        <span className="ml-1.5 block font-display text-[10px] font-normal text-emerald-400/70">new</span>
+      </th>
+    );
+  }
   return (
     <th className="px-2 py-1.5 font-medium text-slate-200">{column.after ?? column.before}</th>
   );
@@ -340,16 +389,19 @@ function Rows({
     <>
       <tr className="bg-amber-950/20">
         <td className="px-2 py-1 font-display text-[10px] text-amber-500/80">−{row.row}</td>
-        {columns.map((_, index) => (
+        {columns.map((column, index) => (
           <td
             key={index}
             className={`px-2 py-1 ${
-              row.cells[index] === 'changed'
-                ? 'bg-rose-900/30 text-rose-100'
-                : 'text-amber-200/50'
+              column.change === 'added'
+                ? ''
+                : row.cells[index] === 'changed'
+                  ? 'bg-rose-900/30 text-rose-100'
+                  : 'text-amber-200/50'
             }`}
           >
-            <Cell value={row.before[index]} />
+            {/* A new column had no value before this rule; "null" would claim one. */}
+            {column.change === 'added' ? <span className="text-slate-700">—</span> : <Cell value={row.before[index]} />}
           </td>
         ))}
       </tr>

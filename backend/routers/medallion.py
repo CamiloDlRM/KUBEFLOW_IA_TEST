@@ -28,13 +28,14 @@ from sqlmodel import Session, select
 
 from core import gold as gold_module
 from core import medallion
-from core.cleaning import Table, clean
+from core.cleaning import STANDARD, CleaningRecipe, RecipeError, Table, clean
 from core.config import get_settings
 from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
     CleaningColumnResponse,
+    CleaningPreviewRequest,
     CleaningRowResponse,
     CleaningStepResponse,
     CleaningStepsResponse,
@@ -497,7 +498,63 @@ async def cleaning_steps(
     it. Both are the honest price of a claim about what actually happened.
     """
     run = _run_for(session, project_id, source_id, run_id, current_user)
+    # Replayed with the recipe the run was cleaned with, not the source's
+    # current one: after a recipe changes, the old runs' silver was still made
+    # the old way, and a replay that used the new recipe would show changes
+    # that never happened. Runs from before recipes carry none: the standard.
+    try:
+        recipe = CleaningRecipe.from_dict((run.quality_report or {}).get("recipe"))
+    except RecipeError:
+        recipe = STANDARD
+    response = _replay(session, run, recipe, limit)
+    response.normalization = run.normalization or {}
+    return response
 
+
+@router.post(
+    "/{project_id}/medallion/steps/preview",
+    response_model=CleaningStepsResponse,
+    summary="Try a draft cleaning recipe on a source's latest extraction",
+)
+def preview_cleaning(
+    project_id: int,
+    body: CleaningPreviewRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> CleaningStepsResponse:
+    """What a recipe *would* do, on real rows, before anyone saves it.
+
+    The same replay as the step-by-step view — the whole bronze object, a
+    scout pass, the rows each rule touched — but with the draft instead of
+    the recipe the run used. Nothing is stored and silver is not touched.
+
+    ``def`` and not ``async def``: it reads a Parquet object and runs the
+    standard over it twice, which would stall the event loop.
+    """
+    run = _run_for(session, project_id, body.source_id, None, current_user)
+    try:
+        recipe = CleaningRecipe.from_dict(body.recipe)
+    except RecipeError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    response = _replay(session, run, recipe, body.limit, normalize=True)
+    response.preview = True
+    return response
+
+
+def _replay(
+    session: Session,
+    run: IngestionRun,
+    recipe: CleaningRecipe,
+    limit: int,
+    *,
+    normalize: bool = False,
+) -> CleaningStepsResponse:
+    """Run ``recipe`` over ``run``'s bronze object a rule at a time.
+
+    ``normalize`` also codes the cleaned table as the recipe asks, for a
+    draft: what a run did is already recorded on it, and coding again only to
+    say the same thing would be a full pass for nothing.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         bronze = medallion.download_parquet(
             "bronze", run.bronze_key, Path(tmpdir) / "bronze.parquet"
@@ -506,19 +563,26 @@ async def cleaning_steps(
         rows = list(medallion.iter_rows(bronze))
 
     source = session.get(DataSource, run.source_id)
-    keep_as_text = (
-        [source.normalize_code_column] if source and source.normalize_code_column else []
+    settings = recipe.normalization(
+        source.normalize_text_column if source else "",
+        source.normalize_code_column if source else "",
     )
+    keep_as_text = [settings.code_column] if settings.active else []
 
     # `from_rows` copies the values out, so cleaning the scout table leaves
     # `rows` untouched and the second table starts from the same data.
-    scout, _ = clean(Table.from_rows(rows, columns), keep_as_text=keep_as_text)
+    scout, _ = clean(Table.from_rows(rows, columns), keep_as_text=keep_as_text, recipe=recipe)
+    table = Table.from_rows(rows, columns)
     report, snapshots = clean(
-        Table.from_rows(rows, columns),
+        table,
         keep_as_text=keep_as_text,
         sample=limit,
         rows=_rows_worth_showing(scout, limit),
+        recipe=recipe,
     )
+    normalization: dict[str, Any] = {}
+    if normalize:
+        _, normalization = medallion.apply_normalization(table, report, settings)
 
     return CleaningStepsResponse(
         run_id=run.id,
@@ -527,6 +591,8 @@ async def cleaning_steps(
         rows_out=report.rows_out,
         sample=limit,
         steps=_steps(report, snapshots),
+        lossy=report.lossy,
+        normalization=normalization,
     )
 
 
@@ -583,6 +649,8 @@ def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
                 note=outcome.note if outcome else "",
                 columns=outcome.columns if outcome else [],
                 changed=outcome.changed if outcome else True,
+                skipped=outcome.skipped if outcome else False,
+                error=outcome.error if outcome else "",
                 preview_columns=[
                     CleaningColumnResponse(
                         before=previous.columns[before] if before is not None else None,
@@ -602,13 +670,15 @@ def _align(previous: Any, snapshot: Any) -> list[tuple[int | None, int | None, s
 
     ``before`` and ``after`` are indices into the two snapshots' rows, so the
     caller can read the same column out of both even though a rule may have
-    renamed it or dropped the one to its left. No rule adds or reorders a
-    column, so walking the earlier snapshot reaches every column there is.
+    renamed it or dropped the one to its left. The standard never adds a
+    column; a source's own rules can (a split, a computed value), and those
+    are placed after the column they sit next to in the later snapshot.
     """
     if previous is None:
         return [(None, index, "same") for index in range(len(snapshot.columns))]
 
     after_at = {column_id: index for index, column_id in enumerate(snapshot.column_ids)}
+    before_ids = set(previous.column_ids)
 
     aligned: list[tuple[int | None, int | None, str]] = []
     for before, column_id in enumerate(previous.column_ids):
@@ -619,6 +689,19 @@ def _align(previous: Any, snapshot: Any) -> list[tuple[int | None, int | None, s
             aligned.append((before, after, "renamed"))
         else:
             aligned.append((before, after, "same"))
+
+    for after, column_id in enumerate(snapshot.column_ids):
+        if column_id in before_ids:
+            continue
+        # Next to its left-hand neighbour in the new table, so a split column
+        # reads beside the one it came from.
+        slot = len(aligned)
+        if after:
+            neighbour = after - 1
+            for position, (_, placed, _) in enumerate(aligned):
+                if placed == neighbour:
+                    slot = position + 1
+        aligned.insert(slot, (None, after, "added"))
     return aligned
 
 
@@ -693,6 +776,8 @@ def _paired_rows(
                 cells=[
                     "absent"
                     if after is None
+                    else ("changed" if now[after] is not None else "same")
+                    if before is None
                     else "changed"
                     if was[before] != now[after]
                     else "same"
@@ -744,12 +829,19 @@ def _run_for(
 
 
 def _removed_rows(report: dict[str, Any]) -> tuple[set[int], bool]:
-    """Which bronze rows the cleaning removed, and whether the list is partial."""
+    """Which bronze rows the cleaning removed, and whether the list is partial.
+
+    The deduplication and any of the source's own checks that drop rows. Both
+    record rows by where they arrived, so the lists can simply be joined.
+    """
+    removed: set[int] = set()
+    truncated = False
     for rule in report.get("rules", []):
-        if rule.get("rule") == "deduplicate_rows":
-            return set(rule.get("removed_rows", [])), bool(
-                rule.get("removed_rows_truncated")
-            )
+        if rule.get("removed_rows"):
+            removed.update(rule.get("removed_rows", []))
+            truncated = truncated or bool(rule.get("removed_rows_truncated"))
+    if removed or truncated:
+        return removed, truncated
     return set(), False
 
 

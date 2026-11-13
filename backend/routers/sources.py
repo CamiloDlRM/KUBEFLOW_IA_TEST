@@ -13,6 +13,7 @@ a privileged act, bounded by the credential the source names. See
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import structlog
@@ -32,6 +33,9 @@ from core.ownership import get_visible_project_or_404, restrict_by_project
 from core.security import get_current_user
 from db import get_session
 from models.schemas import (
+    CleaningRecipeRequest,
+    CleaningRecipeResponse,
+    CleaningRuleResponse,
     DataSource,
     DataSourceCreateRequest,
     DataSourcePreviewRequest,
@@ -252,6 +256,176 @@ async def get_source(
     return DataSourceResponse.model_validate(
         _get_source_or_404(session, source_id, current_user)
     )
+
+
+def _recipe_response(session: Session, source: DataSource) -> CleaningRecipeResponse:
+    from core.cleaning import (
+        FORCEABLE_TYPES,
+        NORMALIZE_MODES,
+        RULES,
+        STANDARD,
+        CleaningRecipe,
+        NormalizeSettings,
+        RecipeError,
+    )
+
+    try:
+        recipe = CleaningRecipe.from_dict(source.cleaning_recipe)
+    except RecipeError:
+        recipe = STANDARD
+
+    # Which extractions in silver were cleaned some other way. A run records
+    # the recipe it was cleaned with; runs from before recipes carry none,
+    # which is the standard.
+    runs = session.exec(
+        select(IngestionRun).where(
+            IngestionRun.source_id == source.id,
+            IngestionRun.status == "success",
+            IngestionRun.silver_key != "",
+        )
+    ).all()
+    stale = 0
+    for run in runs:
+        try:
+            used = CleaningRecipe.from_dict((run.quality_report or {}).get("recipe"))
+        except RecipeError:
+            used = None
+        stale += used != recipe
+
+    return CleaningRecipeResponse(
+        source_id=source.id,  # type: ignore[arg-type]
+        mode="custom" if source.cleaning_recipe else "standard",
+        recipe=recipe.as_dict(),
+        standard=STANDARD.as_dict(),
+        rules=[CleaningRuleResponse(**vars(rule)) for rule in RULES],
+        forceable_types=list(FORCEABLE_TYPES),
+        lossy=recipe.lossy,
+        normalize_default=NormalizeSettings.legacy(
+            source.normalize_text_column, source.normalize_code_column
+        ).as_dict(),
+        normalize_modes=list(NORMALIZE_MODES),
+        runs=len(runs),
+        stale_runs=stale,
+        reclean=source.reclean or {},
+    )
+
+
+@router.get(
+    "/{source_id}/cleaning-recipe",
+    response_model=CleaningRecipeResponse,
+    summary="How this source is cleaned",
+)
+def get_cleaning_recipe(
+    source_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> CleaningRecipeResponse:
+    """The source's recipe — or the standard, if it set none — with the rules
+    and the options an editor needs to change it. Uploaded files are sources
+    too, so this works for them."""
+    return _recipe_response(session, _get_source_or_404(session, source_id, current_user))
+
+
+@router.put(
+    "/{source_id}/cleaning-recipe",
+    response_model=CleaningRecipeResponse,
+    summary="Choose how this source is cleaned",
+)
+def set_cleaning_recipe(
+    source_id: int,
+    body: CleaningRecipeRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> CleaningRecipeResponse:
+    """Save the source's recipe. It applies to what lands from now on; what
+    is already in silver was cleaned with the recipe of its own run, which is
+    kept on that run. ``reset`` goes back to the standard.
+
+    The recipe is checked before it is stored, and stored in full (every
+    option spelled out), so a later change to the standard's defaults does not
+    quietly change a source that chose them.
+    """
+    from core.cleaning import STANDARD, CleaningRecipe, RecipeError
+
+    source = _get_source_or_404(session, source_id, current_user)
+    if body.reset:
+        source.cleaning_recipe = {}
+    else:
+        try:
+            recipe = CleaningRecipe.from_dict(body.recipe)
+        except RecipeError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        source.cleaning_recipe = {} if recipe == STANDARD else recipe.as_dict()
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+    logger.info("source.cleaning_recipe.set", source_id=source_id, custom=bool(source.cleaning_recipe))
+    return _recipe_response(session, source)
+
+
+#: How long a queued or running re-clean blocks another. Past this it is
+#: assumed lost with its worker, so the source is not locked forever.
+_RECLEAN_STALE_AFTER = timedelta(hours=1)
+
+
+@router.post(
+    "/{source_id}/reclean",
+    response_model=CleaningRecipeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Clean this source's silver again with its current recipe",
+)
+def reclean(
+    source_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> CleaningRecipeResponse:
+    """Rebuild every silver object of the source from bronze with the recipe
+    it has now, then gold. Queued: the response carries ``reclean.status`` and
+    the editor follows it by reading the recipe again.
+
+    Refused while one is already under way, and when nothing has landed yet.
+    """
+    from tasks.celery_tasks import reclean_source
+
+    source = _get_source_or_404(session, source_id, current_user)
+    current = source.reclean or {}
+    if current.get("status") in ("queued", "running"):
+        since = _parse_time(current.get("started_at") or current.get("queued_at"))
+        if since is None or datetime.now(timezone.utc) - since < _RECLEAN_STALE_AFTER:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This source is already being cleaned again.",
+            )
+    landed = session.exec(
+        select(IngestionRun).where(
+            IngestionRun.source_id == source_id,
+            IngestionRun.status == "success",
+            IngestionRun.bronze_key != "",
+        )
+    ).first()
+    if landed is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nothing from this source has landed in bronze yet.",
+        )
+
+    source.reclean = {"status": "queued", "queued_at": datetime.now(timezone.utc).isoformat()}
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+    reclean_source.apply_async(args=[source_id])
+    logger.info("source.reclean.queued", source_id=source_id)
+    return _recipe_response(session, source)
+
+
+def _parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 @router.post(

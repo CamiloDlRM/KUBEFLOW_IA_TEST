@@ -421,12 +421,60 @@ class SilverBuild:
     normalization: dict[str, Any]
 
 
+def apply_normalization(table: Any, report: Any, settings: Any) -> tuple[Any, dict[str, Any]]:
+    """Code the free text of a cleaned table, as ``settings`` (a
+    :class:`core.cleaning.NormalizeSettings`) asks. Returns the table, rebuilt
+    with the audit columns, and what was done.
+
+    Never raises: the rows are real either way, and a result that says which
+    step it could not complete is more useful than none.
+    """
+    from core.cleaning import Table
+    from core.normalization import default_matcher, normalize_rows
+
+    if not settings.active:
+        return table, {}
+
+    # The cleaning renamed columns, so the configured names are followed
+    # through the rename map rather than used as given.
+    text_name = report.renamed.get(settings.text_column, settings.text_column)
+    code_name = report.renamed.get(settings.code_column, settings.code_column)
+    target = f"{code_name}_suggested" if settings.mode == "suggest" else code_name
+    try:
+        as_rows = table.to_rows()
+        summary = normalize_rows(
+            as_rows,
+            text_column=text_name,
+            code_column=code_name,
+            target_column=target,
+            matcher_factory=default_matcher(settings.min_confidence),
+        )
+    except Exception as exc:  # noqa: BLE001 — recorded, not raised
+        logger.warning("medallion.normalization_failed", error=str(exc))
+        return table, {"error": str(exc)[:500], "mode": settings.mode}
+
+    rebuilt = Table.from_rows(as_rows, list(as_rows[0].keys()) if as_rows else table.columns)
+    # The added columns are new, so they carry no inferred type yet.
+    report.types.setdefault(target, "string")
+    report.types.setdefault(f"{target}_method", "string")
+    report.types.setdefault(f"{target}_confidence", "decimal")
+    report.columns_out = len(rebuilt.columns)
+    return rebuilt, {
+        **summary.summary(),
+        "mode": settings.mode,
+        "column": target,
+        "min_confidence": settings.min_confidence,
+    }
+
+
 def promote_to_silver(
     bronze_path: Path,
     destination: Path,
     *,
     text_column: str = "",
     code_column: str = "",
+    recipe: Any = None,
+    normalize: Any = None,
 ) -> SilverBuild:
     """Build one silver object from one bronze object.
 
@@ -444,8 +492,9 @@ def promote_to_silver(
     database — but it is the first thing to revisit if a source ever lands a
     slice larger than the worker.
     """
-    from core.cleaning import Table, clean
-    from core.normalization import normalize_rows
+    from core.cleaning import NormalizeSettings, Table, clean
+
+    settings = normalize or NormalizeSettings.legacy(text_column, code_column)
 
     columns = columns_of(bronze_path)
     rows = list(iter_rows(bronze_path))
@@ -455,29 +504,9 @@ def promote_to_silver(
     # the coding step below writes text into it. Without this a SNOMED column
     # of pure digits is cast to an integer and the run fails at the final
     # write, after all the expensive work has already been done.
-    report, _ = clean(table, keep_as_text=[code_column] if code_column else [])
-
-    normalization: dict[str, Any] = {}
-    if text_column and code_column:
-        # The cleaning renamed columns, so the source's configured names have
-        # to be followed through the rename map rather than used as given.
-        text_name = report.renamed.get(text_column, text_column)
-        code_name = report.renamed.get(code_column, code_column)
-        try:
-            as_rows = table.to_rows()
-            summary = normalize_rows(
-                as_rows, text_column=text_name, code_column=code_name
-            )
-            normalization = summary.summary()
-            rebuilt_columns = list(as_rows[0].keys()) if as_rows else table.columns
-            table = Table.from_rows(as_rows, rebuilt_columns)
-            # The two audit columns are new, so they carry no inferred type yet.
-            report.types.setdefault(f"{code_name}_method", "string")
-            report.types.setdefault(f"{code_name}_confidence", "decimal")
-            report.columns_out = len(table.columns)
-        except Exception as exc:  # noqa: BLE001 — recorded, not raised
-            logger.warning("medallion.normalization_failed", error=str(exc))
-            normalization = {"error": str(exc)[:500]}
+    keep_as_text = [settings.code_column] if settings.active else []
+    report, _ = clean(table, keep_as_text=keep_as_text, recipe=recipe)
+    table, normalization = apply_normalization(table, report, settings)
 
     write_typed(table.columns, table.data, report.types, destination)
 

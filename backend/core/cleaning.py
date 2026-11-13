@@ -33,6 +33,15 @@ that 1% into nulls — deleting data in order to make a type claim true, and the
 **Everything that changed is counted, with examples.** The report is not a log;
 it is the deliverable. A silver layer whose difference from bronze cannot be
 stated is indistinguishable from a copy.
+
+**The standard is the default, not the only option.** Each source may carry a
+:class:`CleaningRecipe`: rules turned off, its own placeholder strings, columns
+kept as text, its own plausible ranges, which columns hold sex or should not be
+folded. Two options go against the rules above — forcing a type on a column
+whose values do not all fit it, and treating rows as duplicates when only some
+columns match — and they are off unless a source asks for them, then counted
+like everything else and listed as lossy on the report. The empty recipe is the
+standard exactly, so a source nobody configured is cleaned as it always was.
 """
 from __future__ import annotations
 
@@ -51,6 +60,11 @@ __all__ = [
     "Table",
     "RuleOutcome",
     "CleaningReport",
+    "CleaningRecipe",
+    "MeasureRange",
+    "RecipeError",
+    "RULES",
+    "STANDARD",
     "clean",
     "TIERS",
 ]
@@ -149,6 +163,13 @@ class RuleOutcome:
     #: Positions while a rule is running; ``clean`` rewrites them to each row's
     #: place in the data as it arrived, which is what survives a deduplication.
     touched_rows: list[int] = field(default_factory=list)
+    #: Turned off in the source's recipe. A skipped rule still appears in the
+    #: report, saying so: "the standard did not unify these spellings" and "this
+    #: source asked it not to" are different statements about the silver layer.
+    skipped: bool = False
+    #: Why one of the source's own rules could not run. Such a rule changes
+    #: nothing; the reason is here so it is fixed, not discovered.
+    error: str = ""
 
     def touch(self, row: int) -> None:
         """Note that this rule acted on a row."""
@@ -187,6 +208,7 @@ class RuleOutcome:
             or self.columns_removed
             or self.flagged
             or self.columns
+            or self.error
         )
 
     def summary(self) -> dict[str, Any]:
@@ -203,6 +225,8 @@ class RuleOutcome:
             "examples": self.examples,
             "removed_rows": self.removed_rows,
             "removed_rows_truncated": self.removed_rows_truncated,
+            "skipped": self.skipped,
+            "error": self.error,
         }
 
 
@@ -217,6 +241,11 @@ class CleaningReport:
     outcomes: list[RuleOutcome] = field(default_factory=list)
     types: dict[str, str] = field(default_factory=dict)
     renamed: dict[str, str] = field(default_factory=dict)
+    #: The recipe this report was produced with. Kept so the cleaning can be
+    #: replayed exactly as it ran, whatever the source's recipe says today.
+    recipe: dict[str, Any] = field(default_factory=dict)
+    #: The lossy options that recipe turned on, in words.
+    lossy: list[str] = field(default_factory=list)
 
     def add(self, outcome: RuleOutcome) -> RuleOutcome:
         self.outcomes.append(outcome)
@@ -244,8 +273,14 @@ class CleaningReport:
             # wants to read what happened, and twenty "0 changes" lines bury
             # the three that matter. The full list stays available in memory
             # for tests and for anyone asking whether a rule ran at all.
-            "rules": [outcome.summary() for outcome in self.outcomes if outcome.changed],
-            "rules_applied": len(self.outcomes),
+            "rules": [
+                outcome.summary()
+                for outcome in self.outcomes
+                if outcome.changed or outcome.skipped
+            ],
+            "rules_applied": sum(1 for outcome in self.outcomes if not outcome.skipped),
+            "recipe": self.recipe,
+            "lossy": self.lossy,
         }
 
 
@@ -347,20 +382,32 @@ _SENTINEL_NULLS: Final[frozenset[str]] = frozenset(
 )
 
 
-def resolve_sentinel_nulls(table: Table, report: CleaningReport) -> None:
-    """Turn placeholder strings into real nulls."""
+def resolve_sentinel_nulls(
+    table: Table, report: CleaningReport, recipe: CleaningRecipe | None = None
+) -> None:
+    """Turn placeholder strings into real nulls.
+
+    Which strings count is the recipe's; the standard's list is the default.
+    """
+    tokens = (recipe or STANDARD).null_tokens
     outcome = report.add(
         RuleOutcome("structural", "sentinel_nulls", "Placeholder values resolved to null")
     )
-    outcome.note = (
-        "'unknown', 'other' and 'not recorded' are left alone: in a clinical "
-        "record those are answers, not missing values"
-    )
+    if tokens == _SENTINEL_NULLS:
+        outcome.note = (
+            "'unknown', 'other' and 'not recorded' are left alone: in a clinical "
+            "record those are answers, not missing values"
+        )
+    else:
+        shown = ", ".join(repr(token) for token in sorted(tokens)[:8])
+        outcome.note = f"the placeholders this source's recipe names: {shown}" + (
+            "…" if len(tokens) > 8 else ""
+        )
     for name in table.columns:
         values = table.data[name]
         touched = 0
         for index, value in enumerate(values):
-            if isinstance(value, str) and value.strip().lower() in _SENTINEL_NULLS:
+            if isinstance(value, str) and value.strip().lower() in tokens:
                 outcome.record(name, value, None)
                 outcome.touch(index)
                 values[index] = None
@@ -432,7 +479,12 @@ def _parse_timestamp(text: str) -> datetime | date | None:
         return None
 
 
-def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str] = frozenset()) -> None:
+def cast_types(
+    table: Table,
+    report: CleaningReport,
+    keep_as_text: frozenset[str] = frozenset(),
+    recipe: CleaningRecipe | None = None,
+) -> None:
     """Give each column the narrowest type every one of its values supports.
 
     The order tried is integer, decimal, boolean, date, timestamp, text. A
@@ -455,11 +507,46 @@ def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str
     the two thousand values that genuinely were corrected under sixty thousand
     that were merely read properly. What each column became is in
     ``report.types``.
+
+    A recipe may also *force* a type on a column. That is the one way a type
+    gets claimed without every value supporting it, so it is opt-in, and every
+    value that does not fit becomes a null that is counted and shown — the
+    loss is the recipe's choice, never a silent one.
     """
+    recipe = recipe or STANDARD
     outcome = report.add(RuleOutcome("structural", "cast_types", "Types inferred and applied"))
-    protected = {_snake(name) for name in keep_as_text if name}
+    protected = {_snake(name) for name in (*keep_as_text, *recipe.keep_as_text) if name}
+    forced = {_snake(column): kind for column, kind in recipe.force_types}
+    forced_notes: list[str] = []
     for name in table.columns:
-        if name in protected or _IDENTIFIER_COLUMNS.search(name):
+        if _snake(name) in forced:
+            kind = forced[_snake(name)]
+            report.types[name] = kind
+            outcome.columns.append(name)
+            if kind == "string":
+                forced_notes.append(f"{name} kept as text")
+                continue
+            values = table.data[name]
+            lost = 0
+            for index, value in enumerate(values):
+                if value is None or value == "":
+                    values[index] = None
+                    continue
+                converted = _force(value, kind)
+                if converted is _UNPARSEABLE:
+                    outcome.record(name, value, None)
+                    outcome.touch(index)
+                    values[index] = None
+                    lost += 1
+                else:
+                    values[index] = converted
+            outcome.cells_changed += lost
+            forced_notes.append(
+                f"{name} forced to {kind}"
+                + (f": {lost} value(s) that did not fit became null" if lost else "")
+            )
+            continue
+        if name in protected or _snake(name) in protected or _IDENTIFIER_COLUMNS.search(name):
             report.types[name] = "string"
             continue
         values = table.data[name]
@@ -491,6 +578,10 @@ def cast_types(table: Table, report: CleaningReport, keep_as_text: frozenset[str
             f"{len(outcome.columns)} column(s) typed: "
             + ", ".join(f"{name} → {report.types[name]}" for name in outcome.columns)
             + ". A type is claimed only when every value in the column supports it."
+        )
+    if forced_notes:
+        outcome.note = (outcome.note + " " if outcome.note else "") + (
+            "Forced by this source's recipe: " + "; ".join(forced_notes) + "."
         )
 
 
@@ -536,6 +627,39 @@ def _best_cast(present: list[str]) -> tuple[str, list[Any]]:
     return "string", present
 
 
+#: What :func:`_force` returns for a value that does not fit the forced type.
+_UNPARSEABLE: Final = object()
+
+
+def _force(value: Any, kind: str) -> Any:
+    """Convert one value to ``kind``, or return :data:`_UNPARSEABLE`."""
+    text = value.strip() if isinstance(value, str) else str(value)
+    if kind == "integer":
+        if _INTEGER.match(text):
+            number = int(text)
+            return number if abs(number) < 2**63 else _UNPARSEABLE
+        if _DECIMAL.match(text) and float(text).is_integer():
+            return int(float(text))
+        return _UNPARSEABLE
+    if kind == "decimal":
+        return float(text) if _DECIMAL.match(text) else _UNPARSEABLE
+    if kind == "boolean":
+        lowered = text.lower()
+        if lowered in _TRUE:
+            return True
+        return False if lowered in _FALSE else _UNPARSEABLE
+    if kind in ("date", "timestamp"):
+        parsed = _parse_timestamp(text)
+        if parsed is None:
+            return _UNPARSEABLE
+        if kind == "date":
+            return parsed.date() if isinstance(parsed, datetime) else parsed
+        if not isinstance(parsed, datetime):
+            return datetime(parsed.year, parsed.month, parsed.day)
+        return parsed
+    return text
+
+
 def _displayable(value: Any) -> Any:
     """Render a converted value for the report's examples."""
     if isinstance(value, (datetime, date)):
@@ -543,19 +667,29 @@ def _displayable(value: Any) -> Any:
     return value
 
 
-def deduplicate_rows(table: Table, report: CleaningReport) -> None:
+def deduplicate_rows(
+    table: Table, report: CleaningReport, recipe: CleaningRecipe | None = None
+) -> None:
     """Remove rows identical in every column.
 
     The only deletion the standard allows. A row repeated in full carries no
     information the first copy did not, and duplicates inflate every count a
     model is later trained to predict.
+
+    A recipe may name key columns instead: rows matching on those are treated
+    as the same row and only the first is kept, *even where other columns
+    differ*. That deletes information, so it is opt-in and said in the note.
     """
-    outcome = report.add(RuleOutcome("structural", "deduplicate_rows", "Exact duplicate rows removed"))
+    wanted = {_snake(column) for column in (recipe or STANDARD).dedupe_on}
+    keys = [name for name in table.columns if _snake(name) in wanted]
+    title = "Duplicate rows removed by key" if keys else "Exact duplicate rows removed"
+    outcome = report.add(RuleOutcome("structural", "deduplicate_rows", title))
+    compared = keys or table.columns
     seen: set[tuple] = set()
     keep: list[int] = []
     for index in range(table.rows):
         signature = tuple(
-            _displayable(table.data[name][index]) for name in table.columns
+            _displayable(table.data[name][index]) for name in compared
         )
         if signature in seen:
             outcome.rows_removed += 1
@@ -571,7 +705,16 @@ def deduplicate_rows(table: Table, report: CleaningReport) -> None:
         for name in table.columns:
             values = table.data[name]
             table.data[name] = [values[index] for index in keep]
-        outcome.note = f"{outcome.rows_removed} row(s) were byte-for-byte repeats"
+        outcome.note = (
+            f"{outcome.rows_removed} row(s) repeated {', '.join(keys)} and were removed, keeping the "
+            "first — their other columns may have differed (this source's recipe asked for it)"
+            if keys
+            else f"{outcome.rows_removed} row(s) were byte-for-byte repeats"
+        )
+    elif wanted and not keys:
+        outcome.note = (
+            "none of the recipe's key columns are in this table, so only exact duplicates were compared"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -595,7 +738,9 @@ def _fold(value: str) -> str:
     return _WHITESPACE.sub(" ", folded).strip().lower()
 
 
-def fold_categories(table: Table, report: CleaningReport) -> None:
+def fold_categories(
+    table: Table, report: CleaningReport, recipe: CleaningRecipe | None = None
+) -> None:
     """Fold spelling variants of a category onto its most common spelling.
 
     ``"Cardiología"``, ``"CARDIOLOGIA"`` and ``"cardiologia"`` are one
@@ -607,13 +752,17 @@ def fold_categories(table: Table, report: CleaningReport) -> None:
     would rewrite a correctly accented value into an unaccented one — fixing
     consistency by making every value slightly wrong.
     """
+    recipe = recipe or STANDARD
+    skip = {_snake(column) for column in recipe.fold_skip}
     outcome = report.add(RuleOutcome("categorical", "fold_categories", "Category spellings unified"))
     for name in table.columns:
+        if _snake(name) in skip:
+            continue
         values = table.data[name]
         strings = [value for value in values if isinstance(value, str)]
         if not strings:
             continue
-        if len(set(strings)) > _CATEGORICAL_MAX_DISTINCT:
+        if len(set(strings)) > recipe.categorical_max_distinct:
             continue
 
         groups: dict[str, Counter] = {}
@@ -663,7 +812,9 @@ _SEX_UNAMBIGUOUS: Final[dict[str, str]] = {
 }
 
 
-def standardise_sex(table: Table, report: CleaningReport) -> None:
+def standardise_sex(
+    table: Table, report: CleaningReport, recipe: CleaningRecipe | None = None
+) -> None:
     """Map sex to ``male`` / ``female``, refusing where the coding is ambiguous.
 
     ``"M"`` is the whole problem. In English and in most Spanish records it is
@@ -677,9 +828,14 @@ def standardise_sex(table: Table, report: CleaningReport) -> None:
     it was found and the rule says so in its note. An honest refusal is
     recoverable; a confident inversion is not.
     """
+    named = (recipe or STANDARD).sex_columns
+    chosen = None if named is None else {_snake(column) for column in named}
     outcome = report.add(RuleOutcome("domain", "standardise_sex", "Sex mapped to a standard vocabulary"))
     for name in table.columns:
-        if not _SEX_COLUMNS.search(name):
+        # The recipe's columns when it names any; otherwise recognised by name.
+        if chosen is not None and _snake(name) not in chosen:
+            continue
+        if chosen is None and not _SEX_COLUMNS.search(name):
             continue
         values = table.data[name]
         present = {value.strip().lower() for value in values if isinstance(value, str)}
@@ -734,7 +890,9 @@ _PLAUSIBLE: Final[tuple[tuple[str, str, float, float], ...]] = (
 )
 
 
-def flag_implausible_measurements(table: Table, report: CleaningReport) -> None:
+def flag_implausible_measurements(
+    table: Table, report: CleaningReport, recipe: CleaningRecipe | None = None
+) -> None:
     """Count values outside the physically plausible range for their measure.
 
     Counted, never changed and never dropped. A value of 999 in a heart-rate
@@ -745,15 +903,16 @@ def flag_implausible_measurements(table: Table, report: CleaningReport) -> None:
     outcome = report.add(
         RuleOutcome("domain", "flag_implausible_measurements", "Implausible measurements flagged")
     )
+    ranges = (recipe or STANDARD).ranges
     details: list[str] = []
     for name in table.columns:
-        bounds = next(
-            ((unit, low, high) for pattern, unit, low, high in _PLAUSIBLE if re.search(pattern, name)),
-            None,
+        # A range named for this exact column wins over one matched by pattern.
+        found = next((r for r in ranges if r.column and _snake(r.column) == name), None) or next(
+            (r for r in ranges if r.pattern and re.search(r.pattern, name)), None
         )
-        if bounds is None:
+        if found is None:
             continue
-        unit, low, high = bounds
+        unit, low, high = found.unit, found.low, found.high
         offenders = 0
         for index, value in enumerate(table.data[name]):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -792,6 +951,360 @@ _PIPELINE = (
     standardise_sex,
     flag_implausible_measurements,
 )
+
+
+class RecipeError(ValueError):
+    """A cleaning recipe that cannot be used, and why."""
+
+
+@dataclass(frozen=True)
+class RuleInfo:
+    """One rule of the standard, as a person choosing a recipe sees it."""
+
+    name: str
+    tier: str
+    title: str
+    summary: str
+
+
+#: The rules in the order they run, under the names a recipe uses for them.
+RULES: Final[tuple[RuleInfo, ...]] = (
+    RuleInfo("normalise_column_names", "structural", "Column names standardised",
+             "Rename columns to snake_case ASCII."),
+    RuleInfo("trim_whitespace", "structural", "Whitespace normalised",
+             "Strip surrounding spaces and collapse repeated ones inside values."),
+    RuleInfo("sentinel_nulls", "structural", "Placeholder values resolved to null",
+             "Turn placeholder strings such as 'N/A' or '-' into real nulls."),
+    RuleInfo("drop_empty_columns", "structural", "Empty columns removed",
+             "Remove columns with no value in any row."),
+    RuleInfo("cast_types", "structural", "Types inferred and applied",
+             "Give each column the narrowest type every one of its values supports."),
+    RuleInfo("deduplicate_rows", "structural", "Exact duplicate rows removed",
+             "Remove rows repeated in every column (or, if chosen, in some key columns)."),
+    RuleInfo("fold_categories", "categorical", "Category spellings unified",
+             "Fold spelling variants of a category onto its most common spelling."),
+    RuleInfo("standardise_sex", "domain", "Sex mapped to a standard vocabulary",
+             "Map sex to male/female, refusing where 'M' is ambiguous."),
+    RuleInfo("flag_implausible_measurements", "domain", "Implausible measurements flagged",
+             "Count measurements outside a plausible range. Nothing is changed."),
+)
+_RULE_NAMES: Final[frozenset[str]] = frozenset(rule.name for rule in RULES)
+
+#: Types a recipe may force on a column.
+FORCEABLE_TYPES: Final[tuple[str, ...]] = ("string", "integer", "decimal", "boolean", "date", "timestamp")
+
+# Bounds on what a recipe may hold. A recipe is user input that ends up in a
+# JSON column and in every report built with it.
+_MAX_COLUMNS_LISTED: Final[int] = 500
+_MAX_TOKENS: Final[int] = 200
+_MAX_RANGES: Final[int] = 200
+_MAX_TEXT: Final[int] = 200
+
+
+@dataclass(frozen=True)
+class MeasureRange:
+    """A plausible range for a measurement, by exact column or by name pattern."""
+
+    unit: str
+    low: float
+    high: float
+    column: str = ""
+    pattern: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        entry: dict[str, Any] = {"unit": self.unit, "low": self.low, "high": self.high}
+        if self.column:
+            entry["column"] = self.column
+        else:
+            entry["pattern"] = self.pattern
+        return entry
+
+
+DEFAULT_RANGES: Final[tuple[MeasureRange, ...]] = tuple(
+    MeasureRange(unit=unit, low=low, high=high, pattern=pattern)
+    for pattern, unit, low, high in _PLAUSIBLE
+)
+
+
+def _names(raw: Any, field_name: str, *, limit: int = _MAX_COLUMNS_LISTED) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(item, str) for item in raw):
+        raise RecipeError(f"{field_name} must be a list of column names")
+    if len(raw) > limit:
+        raise RecipeError(f"{field_name} lists more than {limit} entries")
+    names = [item.strip() for item in raw if item.strip()]
+    if any(len(name) > _MAX_TEXT for name in names):
+        raise RecipeError(f"{field_name} has a name longer than {_MAX_TEXT} characters")
+    return names
+
+
+def _number(raw: Any, what: str) -> float:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise RecipeError(f"{what} must be a number")
+    value = float(raw)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise RecipeError(f"{what} must be a finite number")
+    return value
+
+
+#: What normalisation may do with a source's codes. ``off`` leaves them as
+#: they arrived; ``suggest`` writes a completed copy of the code column beside
+#: it and never touches the original; ``fill`` writes the missing codes into
+#: the code column itself, as sources registered with a text/code pair always
+#: have.
+NORMALIZE_MODES: Final[tuple[str, ...]] = ("off", "suggest", "fill")
+
+#: Lowest similarity a fuzzy match may be accepted at. Below this the matcher
+#: is guessing, and a wrong code is worse than an empty one.
+MIN_CONFIDENCE_FLOOR: Final[float] = 0.6
+
+
+@dataclass(frozen=True)
+class NormalizeSettings:
+    """Whether and how free text is coded on the way to silver.
+
+    Not a cleaning rule — it runs after them, on the cleaned table — but part
+    of the recipe, because it is the other half of what a source decides about
+    how its rows are prepared, and it is replayed and compared the same way.
+    """
+
+    mode: str = "off"
+    #: Free-text column the vocabulary is learned from and matched against.
+    text_column: str = ""
+    #: Column holding the code; rows where it is empty are the ones coded.
+    code_column: str = ""
+    #: Lowest similarity a fuzzy match is accepted at. ``1.0`` accepts exact
+    #: matches only (case, accents, punctuation and qualifiers aside).
+    min_confidence: float = 0.82
+
+    @property
+    def active(self) -> bool:
+        return self.mode != "off" and bool(self.text_column and self.code_column)
+
+    @property
+    def target_column(self) -> str:
+        """Where the codes are written: the code column, or a copy beside it."""
+        return f"{self.code_column}_suggested" if self.mode == "suggest" else self.code_column
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "text_column": self.text_column,
+            "code_column": self.code_column,
+            "min_confidence": self.min_confidence,
+        }
+
+    @classmethod
+    def legacy(cls, text_column: str, code_column: str) -> NormalizeSettings:
+        """What a source registered with a text/code pair has always done."""
+        if text_column and code_column:
+            return cls(mode="fill", text_column=text_column, code_column=code_column)
+        return cls()
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> NormalizeSettings:
+        if not isinstance(raw, dict):
+            raise RecipeError("normalize is an object with mode, text_column, code_column and min_confidence")
+        unknown = set(raw) - set(cls().as_dict())
+        if unknown:
+            raise RecipeError(f"unknown normalize option(s): {', '.join(sorted(unknown))}")
+        mode = raw.get("mode", "off")
+        if mode not in NORMALIZE_MODES:
+            raise RecipeError(f"normalize mode is one of {', '.join(NORMALIZE_MODES)}")
+        text_column = str(raw.get("text_column") or "").strip()
+        code_column = str(raw.get("code_column") or "").strip()
+        if len(text_column) > _MAX_TEXT or len(code_column) > _MAX_TEXT:
+            raise RecipeError(f"a normalize column name is longer than {_MAX_TEXT} characters")
+        if mode != "off":
+            if not text_column or not code_column:
+                raise RecipeError("normalizing needs both a text column and a code column")
+            if _snake(text_column) == _snake(code_column):
+                raise RecipeError("the text column and the code column must be different columns")
+        confidence = _number(raw.get("min_confidence", cls.min_confidence), "min_confidence")
+        if not MIN_CONFIDENCE_FLOOR <= confidence <= 1.0:
+            raise RecipeError(f"min_confidence is between {MIN_CONFIDENCE_FLOOR:g} and 1")
+        return cls(mode=mode, text_column=text_column, code_column=code_column, min_confidence=confidence)
+
+
+@dataclass(frozen=True)
+class CleaningRecipe:
+    """How one source wants the standard applied.
+
+    Every field defaults to the standard, so ``CleaningRecipe()`` *is* the
+    standard and a recipe only says where a source departs from it.
+    """
+
+    #: Rules turned off, by name (see :data:`RULES`).
+    disabled: frozenset[str] = frozenset()
+    #: Strings, compared trimmed and lowercased, that mean "no value".
+    null_tokens: frozenset[str] = _SENTINEL_NULLS
+    #: Columns never type-cast.
+    keep_as_text: frozenset[str] = frozenset()
+    #: ``(column, type)`` pairs. Lossy: values that do not fit become null.
+    force_types: tuple[tuple[str, str], ...] = ()
+    #: Columns that decide when two rows are the same. Empty means every
+    #: column (exact duplicates only). Lossy when not empty.
+    dedupe_on: tuple[str, ...] = ()
+    #: Most distinct values a column may have and still be folded.
+    categorical_max_distinct: int = _CATEGORICAL_MAX_DISTINCT
+    #: Columns never folded, whatever their cardinality.
+    fold_skip: frozenset[str] = frozenset()
+    #: Columns holding sex. ``None`` recognises them by name.
+    sex_columns: tuple[str, ...] | None = None
+    #: Plausible ranges, checked in order; an exact column beats a pattern.
+    ranges: tuple[MeasureRange, ...] = DEFAULT_RANGES
+    #: How codes are completed after cleaning. ``None`` keeps what the source
+    #: was registered with: filled in when it named a text and a code column,
+    #: nothing otherwise.
+    normalize: NormalizeSettings | None = None
+    #: The source's own rules, run in order after the standard. See
+    #: :mod:`core.custom_steps`.
+    steps: tuple[Any, ...] = ()
+
+    def enabled(self, rule: str) -> bool:
+        return rule not in self.disabled
+
+    @property
+    def lossy(self) -> list[str]:
+        """The options in this recipe that can lose data, in words."""
+        warnings = []
+        lossy_types = [f"{column} → {kind}" for column, kind in self.force_types if kind != "string"]
+        if lossy_types and self.enabled("cast_types"):
+            warnings.append(
+                "Forced types (" + ", ".join(lossy_types) + "): values that do not fit become null."
+            )
+        if self.dedupe_on and self.enabled("deduplicate_rows"):
+            warnings.append(
+                "Duplicates by key (" + ", ".join(self.dedupe_on) + "): rows matching on these "
+                "columns are removed even where other columns differ."
+            )
+        warnings.extend(step.lossy for step in self.steps if step.lossy)
+        return warnings
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "disabled": sorted(self.disabled),
+            "null_tokens": sorted(self.null_tokens),
+            "keep_as_text": sorted(self.keep_as_text),
+            "force_types": {column: kind for column, kind in self.force_types},
+            "dedupe_on": list(self.dedupe_on),
+            "categorical_max_distinct": self.categorical_max_distinct,
+            "fold_skip": sorted(self.fold_skip),
+            "sex_columns": None if self.sex_columns is None else list(self.sex_columns),
+            "ranges": [measure.as_dict() for measure in self.ranges],
+            "normalize": None if self.normalize is None else self.normalize.as_dict(),
+            "steps": [step.as_dict() for step in self.steps],
+        }
+
+    def normalization(self, text_column: str = "", code_column: str = "") -> NormalizeSettings:
+        """The normalisation that applies, given the source's registered pair."""
+        return self.normalize or NormalizeSettings.legacy(text_column, code_column)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> CleaningRecipe:
+        """Read a stored or submitted recipe. Missing fields keep the standard.
+
+        Raises :class:`RecipeError` naming what is wrong, never a bare
+        ``KeyError``: the message reaches the person editing the recipe.
+        """
+        if not raw:
+            return STANDARD
+        if not isinstance(raw, dict):
+            raise RecipeError("a recipe is an object of options")
+        unknown = set(raw) - set(STANDARD.as_dict())
+        if unknown:
+            raise RecipeError(f"unknown recipe option(s): {', '.join(sorted(unknown))}")
+
+        disabled = _names(raw.get("disabled"), "disabled")
+        bad_rules = sorted(set(disabled) - _RULE_NAMES)
+        if bad_rules:
+            raise RecipeError(f"no rule called {', '.join(bad_rules)}")
+
+        if "null_tokens" in raw:
+            tokens_raw = raw["null_tokens"]
+            if not isinstance(tokens_raw, (list, tuple)) or not all(
+                isinstance(token, str) for token in tokens_raw
+            ):
+                raise RecipeError("null_tokens must be a list of strings")
+            if len(tokens_raw) > _MAX_TOKENS or any(len(token) > 100 for token in tokens_raw):
+                raise RecipeError(f"null_tokens holds at most {_MAX_TOKENS} strings of 100 characters")
+            null_tokens = frozenset(token.strip().lower() for token in tokens_raw)
+        else:
+            null_tokens = _SENTINEL_NULLS
+
+        force_raw = raw.get("force_types") or {}
+        if not isinstance(force_raw, dict) or not all(
+            isinstance(column, str) and isinstance(kind, str) for column, kind in force_raw.items()
+        ):
+            raise RecipeError("force_types maps column names to types")
+        if len(force_raw) > _MAX_COLUMNS_LISTED:
+            raise RecipeError(f"force_types lists more than {_MAX_COLUMNS_LISTED} columns")
+        bad_types = sorted({kind for kind in force_raw.values() if kind not in FORCEABLE_TYPES})
+        if bad_types:
+            raise RecipeError(
+                f"cannot force type(s) {', '.join(bad_types)}; choose from {', '.join(FORCEABLE_TYPES)}"
+            )
+
+        max_distinct = raw.get("categorical_max_distinct", _CATEGORICAL_MAX_DISTINCT)
+        if isinstance(max_distinct, bool) or not isinstance(max_distinct, int) or not 2 <= max_distinct <= 100_000:
+            raise RecipeError("categorical_max_distinct is a whole number from 2 to 100000")
+
+        sex_raw = raw.get("sex_columns")
+        sex_columns = None if sex_raw is None else tuple(_names(sex_raw, "sex_columns", limit=50))
+
+        if "ranges" in raw:
+            ranges_raw = raw["ranges"]
+            if not isinstance(ranges_raw, (list, tuple)) or len(ranges_raw) > _MAX_RANGES:
+                raise RecipeError(f"ranges is a list of at most {_MAX_RANGES} entries")
+            ranges = []
+            for entry in ranges_raw:
+                if not isinstance(entry, dict):
+                    raise RecipeError("each range is an object with unit, low, high and a column or pattern")
+                column = str(entry.get("column") or "").strip()
+                pattern = str(entry.get("pattern") or "").strip()
+                if bool(column) == bool(pattern):
+                    raise RecipeError("each range names either a column or a pattern, not both")
+                if len(column) > _MAX_TEXT or len(pattern) > _MAX_TEXT:
+                    raise RecipeError(f"a range's column or pattern is longer than {_MAX_TEXT} characters")
+                if pattern:
+                    try:
+                        re.compile(pattern)
+                    except re.error as exc:
+                        raise RecipeError(f"range pattern {pattern!r} is not a valid expression: {exc}")
+                low = _number(entry.get("low"), "a range's low")
+                high = _number(entry.get("high"), "a range's high")
+                if low >= high:
+                    raise RecipeError(f"a range's low ({low:g}) must be below its high ({high:g})")
+                unit = str(entry.get("unit") or "").strip()[:30]
+                ranges.append(MeasureRange(unit=unit, low=low, high=high, column=column, pattern=pattern))
+            measure_ranges = tuple(ranges)
+        else:
+            measure_ranges = DEFAULT_RANGES
+
+        return cls(
+            disabled=frozenset(disabled),
+            null_tokens=null_tokens,
+            keep_as_text=frozenset(_names(raw.get("keep_as_text"), "keep_as_text")),
+            force_types=tuple(sorted(force_raw.items())),
+            dedupe_on=tuple(_names(raw.get("dedupe_on"), "dedupe_on", limit=100)),
+            categorical_max_distinct=max_distinct,
+            fold_skip=frozenset(_names(raw.get("fold_skip"), "fold_skip")),
+            sex_columns=sex_columns,
+            ranges=measure_ranges,
+            normalize=None if raw.get("normalize") is None else NormalizeSettings.from_dict(raw["normalize"]),
+            steps=_read_steps(raw.get("steps")),
+        )
+
+
+def _read_steps(raw: Any) -> tuple[Any, ...]:
+    from core.custom_steps import read_steps
+
+    return read_steps(raw)
+
+
+#: The standard itself: the recipe of a source that has not set one.
+STANDARD: Final[CleaningRecipe] = CleaningRecipe()
 
 
 @dataclass
@@ -846,11 +1359,15 @@ def clean(
     keep_as_text: Sequence[str] = (),
     sample: int = 0,
     rows: Sequence[int] | None = None,
+    recipe: CleaningRecipe | None = None,
 ) -> tuple[CleaningReport, list[Snapshot]]:
     """Apply the standard to ``table`` in place and report what changed.
 
     Args:
         table: Rewritten in place.
+        recipe: How this source wants the standard applied. ``None`` is the
+            standard. Kept on the report, so the cleaning can be replayed as
+            it ran.
         keep_as_text: Columns that must not be type-cast — identifiers and any
             column a later step will write text into. Matched after the column
             names are standardised, so the caller may pass either spelling.
@@ -870,7 +1387,10 @@ def clean(
         ``(report, snapshots)``. ``snapshots`` is empty unless ``sample`` was
         given.
     """
+    recipe = recipe or STANDARD
     report = CleaningReport(rows_in=table.rows, columns_in=len(table.columns))
+    report.recipe = recipe.as_dict()
+    report.lossy = recipe.lossy
     protected = frozenset(keep_as_text)
 
     # Row identity is tracked alongside the data rather than inside it: adding
@@ -878,18 +1398,25 @@ def clean(
     # duplicate comparison, which reads every column.
     ids = list(range(table.rows))
     column_ids = list(range(len(table.columns)))
+    original_columns = list(table.columns)
     wanted = set(range(sample) if rows is None else rows)
     snapshots: list[Snapshot] = []
     if sample:
         snapshots.append(_snapshot(table, ids, column_ids, "", "As it arrived", wanted))
 
-    for rule in _PIPELINE:
+    for rule, info in zip(_PIPELINE, RULES):
         before = table.rows
         before_columns = list(table.columns)
-        if rule is cast_types:
-            rule(table, report, protected)
-        else:
+        if not recipe.enabled(info.name):
+            skipped = report.add(RuleOutcome(info.tier, info.name, info.title))
+            skipped.skipped = True
+            skipped.note = "Turned off in this source's cleaning recipe."
+        elif rule is cast_types:
+            rule(table, report, protected, recipe)
+        elif rule in (normalise_column_names, trim_whitespace, drop_empty_columns):
             rule(table, report)
+        else:
+            rule(table, report, recipe)
 
         # A rule counts rows where they were when it ran. Everything that reads
         # them afterwards wants the place the row arrived in, which is the one
@@ -913,6 +1440,12 @@ def clean(
                 _snapshot(table, ids, column_ids, outcome.rule, outcome.title, wanted)
             )
 
+    if recipe.steps:
+        ids, column_ids = _run_custom_steps(
+            table, report, recipe, protected, ids, column_ids, original_columns,
+            snapshots if sample else None, wanted,
+        )
+
     report.rows_out = table.rows
     report.columns_out = len(table.columns)
 
@@ -924,3 +1457,60 @@ def clean(
         flagged=report.flagged,
     )
     return report, snapshots
+
+
+def _run_custom_steps(
+    table: Table,
+    report: CleaningReport,
+    recipe: CleaningRecipe,
+    protected: frozenset[str],
+    ids: list[int],
+    column_ids: list[int],
+    original_columns: list[str],
+    snapshots: list[Snapshot] | None,
+    wanted: set[int],
+) -> tuple[list[int], list[int]]:
+    """Run the source's own rules after the standard, keeping identities.
+
+    Unlike the standard's rules these may add a column (a split, a computed
+    value) and remove rows (a failed check), so row and column identity are
+    followed through each one explicitly: a new column gets a new identity,
+    a renamed one keeps its own, and removed rows leave ``ids`` the way a
+    deduplication does.
+    """
+    from core.custom_steps import cap_removed, run_step
+
+    protected_names = frozenset(_snake(name) for name in (*protected, *recipe.keep_as_text) if name)
+    next_column_id = max(column_ids, default=-1) + 1
+    for number, step in enumerate(recipe.steps, start=1):
+        before_columns = list(table.columns)
+        outcome, result = run_step(table, report, step, number, protected_names)
+        outcome.touched_rows = [ids[position] for position in outcome.touched_rows if position < len(ids)]
+
+        if result.removed:
+            outcome.removed_rows, outcome.removed_rows_truncated = cap_removed(ids, result.removed)
+            gone = set(result.removed)
+            ids = [row_id for index, row_id in enumerate(ids) if index not in gone]
+
+        # A rename is recorded against the name the column arrived with, so
+        # whatever reads ``renamed`` later (coding, the bronze/silver diff)
+        # follows it to its final name.
+        for old, new in result.renamed.items():
+            for original in original_columns:
+                if report.renamed.get(original, original) == old:
+                    report.renamed[original] = new
+
+        identity = dict(zip(before_columns, column_ids))
+        for old, new in result.renamed.items():
+            identity[new] = identity.pop(old)
+        followed: list[int] = []
+        for name in table.columns:
+            if name not in identity:
+                identity[name] = next_column_id
+                next_column_id += 1
+            followed.append(identity[name])
+        column_ids = followed
+
+        if snapshots is not None:
+            snapshots.append(_snapshot(table, ids, column_ids, outcome.rule, outcome.title, wanted))
+    return ids, column_ids
