@@ -2,7 +2,7 @@
   "id": null,
   "uid": "mlops-ml",
   "title": "My Models",
-  "description": "Per-user view of training pipelines and deployed models. Every query is scoped to the signed-in user through ${__user.login} -> users.username -> repositories.owner_id.",
+  "description": "Per-user view of training pipelines and deployed models. Every query is scoped to the signed-in user through ${__user.login} -> users.username -> the owner of the repository or project.",
   "tags": ["mlops", "ml"],
   "timezone": "browser",
   "editable": false,
@@ -24,8 +24,8 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "My repositories",
-      "description": "Active repositories owned by the signed-in user.",
+      "title": "My projects",
+      "description": "Active projects owned by the signed-in user.",
       "datasource": {
         "type": "postgres",
         "uid": "mlops-postgres"
@@ -70,7 +70,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT COUNT(*) AS \"repositories\"\nFROM repositories r\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND r.is_active;"
+          "rawSql": "SELECT COUNT(*) AS \"projects\"\nFROM projects pr\nJOIN users u ON u.id = pr.owner_id\nWHERE u.username = '${__user.login}'\n  AND pr.is_active;"
         }
       ]
     },
@@ -272,8 +272,8 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Accuracy over time (per repository)",
-      "description": "Accuracy extracted from pipelines.metrics JSON for every successful run of the user's repositories.",
+      "title": "Accuracy over time (per project)",
+      "description": "Accuracy extracted from pipelines.metrics JSON for every successful run of the user's projects. Runs older than projects are named by their repository.",
       "datasource": {
         "type": "postgres",
         "uid": "mlops-postgres"
@@ -330,14 +330,14 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  r.github_url || ' @ ' || COALESCE(NULLIF(p.branch, ''), pr.branch) AS metric,\n  (p.metrics->>'accuracy')::float AS accuracy\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(p.finished_at)\nORDER BY 1;"
+          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  COALESCE(pr.name, r.github_url) || ' @ ' || COALESCE(NULLIF(p.branch, ''), pr.branch) AS metric,\n  (p.metrics->>'accuracy')::float AS accuracy\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(p.finished_at)\nORDER BY 1;"
         }
       ]
     },
     {
       "id": 6,
       "type": "barchart",
-      "title": "Accuracy by branch (main vs testing-ia-agent)",
+      "title": "Accuracy by branch",
       "description": "Average and best accuracy per branch, so an AI-suggested branch can be compared against main.",
       "datasource": {
         "type": "postgres",
@@ -536,95 +536,6 @@
           "rawQuery": true,
           "format": "time_series",
           "rawSql": "SELECT\n  $__timeGroupAlias(p.started_at, $__interval),\n  AVG(EXTRACT(EPOCH FROM (p.finished_at - p.started_at))) AS \"avg_duration\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND p.finished_at IS NOT NULL\n  AND p.finished_at >= p.started_at\n  AND $__timeFilter(p.started_at)\nGROUP BY 1\nORDER BY 1;"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "type": "table",
-      "title": "Recent pipeline runs",
-      "description": "Last 50 runs of the user's repositories.",
-      "datasource": {
-        "type": "postgres",
-        "uid": "mlops-postgres"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 29
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true
-          },
-          "mappings": []
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "accuracy"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percentunit"
-              },
-              {
-                "id": "decimals",
-                "value": 3
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "duration"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "showHeader": true,
-        "footer": {
-          "show": false,
-          "reducer": ["sum"],
-          "fields": ""
-        },
-        "sortBy": [
-          {
-            "displayName": "finished",
-            "desc": true
-          }
-        ]
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "postgres",
-            "uid": "mlops-postgres"
-          },
-          "editorMode": "code",
-          "rawQuery": true,
-          "format": "table",
-          "rawSql": "SELECT\n  p.finished_at AS \"finished\",\n  r.github_url AS \"repository\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  p.status AS \"status\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  CASE\n    WHEN p.metrics->>'accuracy' ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN (p.metrics->>'accuracy')::float\n  END AS \"accuracy\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"duration\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at)\nORDER BY p.started_at DESC\nLIMIT 50;"
         }
       ]
     }
