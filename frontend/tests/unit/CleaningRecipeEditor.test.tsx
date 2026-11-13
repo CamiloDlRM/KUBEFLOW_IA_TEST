@@ -5,12 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CleaningRecipeEditor from '../../src/components/cleaning/CleaningRecipeEditor';
 import ChipsInput from '../../src/components/cleaning/ChipsInput';
 import {
+  STEP_KINDS,
   describeNormalization,
   lossyWarnings,
+  newStep,
   patternLabel,
   recipeProblem,
   sameRecipe,
   sendable,
+  stepLossy,
+  stepProblem,
+  stepTitle,
 } from '../../src/components/cleaning/recipe';
 import type { CleaningRecipe, CleaningRecipeState, CleaningSteps, LayerStream } from '../../src/types';
 
@@ -39,6 +44,7 @@ const STANDARD: CleaningRecipe = {
   sex_columns: null,
   ranges: [{ unit: 'bpm', low: 20, high: 300, pattern: 'heart_rate' }],
   normalize: null,
+  steps: [],
 };
 
 function state(overrides: Partial<CleaningRecipeState> = {}): CleaningRecipeState {
@@ -148,6 +154,21 @@ describe('recipe helpers', () => {
     expect(describeNormalization({ mode: 'fill', column: 'code', filled: 5, unresolved: 0 })).toMatch(
       /5 filled in into code/,
     );
+  });
+
+  it('knows what each kind of rule still needs and what it can lose', () => {
+    for (const { kind } of STEP_KINDS) {
+      // A new rule always needs something from the person, except a check's
+      // default action, which is chosen.
+      expect(stepProblem(newStep(kind))).not.toBeNull();
+    }
+    expect(stepLossy({ kind: 'replace_values', label: '', column: 'a', ignore_case: false, mapping: [{ from: 'x', to: '' }] }))
+      .toMatch(/replaced by null/);
+    expect(stepLossy({ kind: 'validate', label: '', condition: 'a > 1', action: 'flag' })).toBeNull();
+    expect(stepTitle({ kind: 'split_column', label: '', column: 'bp', separator: '/', into: ['sys', 'dia'] })).toBe(
+      'Split bp into sys, dia',
+    );
+    expect(recipeProblem({ ...STANDARD, steps: [newStep('compute')] })).toMatch(/^Your rule 1:/);
   });
 
   it('reads a built-in name pattern as the names it matches', () => {
@@ -345,6 +366,67 @@ describe('CleaningRecipeEditor', () => {
 
     const preview = await screen.findByRole('region', { name: 'Preview' });
     expect(preview).toHaveTextContent('Codes: 2 suggested into code_suggested, 1 left empty, 3 already coded');
+  });
+
+  it('adds a rule of its own, warns it loses data, and saves it', async () => {
+    saveCleaningRecipe.mockResolvedValue(state({ mode: 'custom' }));
+    renderEditor();
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Add a rule' }), 'validate');
+
+    const rule = screen.getByRole('listitem', { name: /Rule 1: Check/ });
+    expect(within(rule).getByText('Still needed: write the condition.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save recipe' })).toBeDisabled();
+
+    await userEvent.type(within(rule).getByRole('textbox', { name: /Every row should satisfy/ }), 'edad >= 0');
+    await userEvent.click(within(rule).getByRole('radio', { name: /Remove it/ }));
+    expect(screen.getByRole('list', { name: 'Lossy options' })).toHaveTextContent('rows that fail the condition are removed');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save recipe' }));
+    await waitFor(() =>
+      expect(saveCleaningRecipe).toHaveBeenCalledWith(3, {
+        recipe: { ...STANDARD, steps: [{ kind: 'validate', label: '', condition: 'edad >= 0', action: 'drop' }] },
+      }),
+    );
+  });
+
+  it('reorders and removes rules', async () => {
+    getCleaningRecipe.mockResolvedValue(
+      state({
+        mode: 'custom',
+        recipe: {
+          ...STANDARD,
+          steps: [
+            { kind: 'rename', label: '', column: 'edad', to: 'age' },
+            { kind: 'drop_columns', label: '', columns: ['notes'] },
+          ],
+        },
+      }),
+    );
+    renderEditor();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Move rule 2 up' }));
+    expect(screen.getAllByRole('listitem', { name: /^Rule \d/ }).map((item) => item.getAttribute('aria-label'))).toEqual([
+      'Rule 1: Drop notes',
+      'Rule 2: Rename edad → age',
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: 'Remove rule 1' }));
+    expect(screen.getAllByRole('listitem', { name: /^Rule \d/ })).toHaveLength(1);
+  });
+
+  it('copies the rules of another source', async () => {
+    const other = { kind: 'fill_nulls' as const, label: '', column: 'ward', value: 'unknown' };
+    getCleaningRecipe.mockImplementation((id: number) =>
+      Promise.resolve(id === 9 ? state({ source_id: 9, recipe: { ...STANDARD, steps: [other] } }) : state()),
+    );
+    renderEditor([
+      ...STREAMS,
+      { source_id: 9, source_name: 'pharmacy', relation: 'pharmacy', objects: 1, rows: 5, size_bytes: 10 },
+    ]);
+
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Copy rules from another source' }), '9');
+
+    expect(await screen.findByText('Copied 1 rule(s) from pharmacy. Save to keep them.')).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: "Rule 1: Fill empty ward with 'unknown'" })).toBeInTheDocument();
   });
 
   it('renders nothing when no stream belongs to a source', () => {

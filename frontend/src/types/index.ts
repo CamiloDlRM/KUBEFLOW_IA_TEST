@@ -690,6 +690,8 @@ export interface CleaningStep {
   changed: boolean;
   /** Turned off in the source's recipe, so it did not run. */
   skipped?: boolean;
+  /** One of the source's own rules that could not run, and why. */
+  error?: string;
   /** The first rows before and after this one rule, on aligned columns. Rows
    *  are matched by their place in the data as it arrived, so an earlier
    *  removal does not make everything below it look rewritten. */
@@ -699,11 +701,12 @@ export interface CleaningStep {
 
 /** One column, named on both sides of a single rule. */
 export interface CleaningColumn {
-  /** Its name before the rule; null only on the first step. */
+  /** Its name before the rule; null on the first step and for a column the rule added. */
   before: string | null;
   /** Its name after; null when the rule dropped it. */
   after: string | null;
-  change: 'same' | 'renamed' | 'dropped';
+  /** `added` only for the source's own rules: a split or a computed column. */
+  change: 'same' | 'renamed' | 'dropped' | 'added';
 }
 
 export interface CleaningRow {
@@ -797,7 +800,40 @@ export interface CleaningRecipe {
   ranges: MeasureRange[];
   /** null keeps what the source was registered with (`normalize_default`). */
   normalize: NormalizeSettings | null;
+  /** The source's own rules, run in order after the standard. */
+  steps: CustomStep[];
 }
+
+/** One of a source's own silver rules. Mirrors core.custom_steps. */
+export type CustomStep =
+  | { kind: 'rename'; label: string; column: string; to: string }
+  | { kind: 'drop_columns'; label: string; columns: string[] }
+  | {
+      kind: 'replace_values';
+      label: string;
+      column: string;
+      /** `to: null` empties the value (lossy). */
+      mapping: { from: string; to: string | null }[];
+      ignore_case: boolean;
+    }
+  | { kind: 'fill_nulls'; label: string; column: string; value: string }
+  | {
+      kind: 'convert_units';
+      label: string;
+      column: string;
+      factor: number;
+      offset: number;
+      /** Optional condition (DuckDB SQL); empty converts every row. */
+      when: string;
+      from_unit: string;
+      to_unit: string;
+    }
+  | { kind: 'parse_dates'; label: string; column: string; format: string; as: 'date' | 'timestamp' }
+  | { kind: 'split_column'; label: string; column: string; separator: string; into: string[] }
+  | { kind: 'validate'; label: string; condition: string; action: 'flag' | 'drop' }
+  | { kind: 'compute'; label: string; column: string; expression: string };
+
+export type CustomStepKind = CustomStep['kind'];
 
 export interface CleaningRule {
   name: string;

@@ -650,6 +650,7 @@ def _steps(report: Any, snapshots: list[Any]) -> list[CleaningStepResponse]:
                 columns=outcome.columns if outcome else [],
                 changed=outcome.changed if outcome else True,
                 skipped=outcome.skipped if outcome else False,
+                error=outcome.error if outcome else "",
                 preview_columns=[
                     CleaningColumnResponse(
                         before=previous.columns[before] if before is not None else None,
@@ -669,13 +670,15 @@ def _align(previous: Any, snapshot: Any) -> list[tuple[int | None, int | None, s
 
     ``before`` and ``after`` are indices into the two snapshots' rows, so the
     caller can read the same column out of both even though a rule may have
-    renamed it or dropped the one to its left. No rule adds or reorders a
-    column, so walking the earlier snapshot reaches every column there is.
+    renamed it or dropped the one to its left. The standard never adds a
+    column; a source's own rules can (a split, a computed value), and those
+    are placed after the column they sit next to in the later snapshot.
     """
     if previous is None:
         return [(None, index, "same") for index in range(len(snapshot.columns))]
 
     after_at = {column_id: index for index, column_id in enumerate(snapshot.column_ids)}
+    before_ids = set(previous.column_ids)
 
     aligned: list[tuple[int | None, int | None, str]] = []
     for before, column_id in enumerate(previous.column_ids):
@@ -686,6 +689,19 @@ def _align(previous: Any, snapshot: Any) -> list[tuple[int | None, int | None, s
             aligned.append((before, after, "renamed"))
         else:
             aligned.append((before, after, "same"))
+
+    for after, column_id in enumerate(snapshot.column_ids):
+        if column_id in before_ids:
+            continue
+        # Next to its left-hand neighbour in the new table, so a split column
+        # reads beside the one it came from.
+        slot = len(aligned)
+        if after:
+            neighbour = after - 1
+            for position, (_, placed, _) in enumerate(aligned):
+                if placed == neighbour:
+                    slot = position + 1
+        aligned.insert(slot, (None, after, "added"))
     return aligned
 
 
@@ -760,6 +776,8 @@ def _paired_rows(
                 cells=[
                     "absent"
                     if after is None
+                    else ("changed" if now[after] is not None else "same")
+                    if before is None
                     else "changed"
                     if was[before] != now[after]
                     else "same"
@@ -811,12 +829,19 @@ def _run_for(
 
 
 def _removed_rows(report: dict[str, Any]) -> tuple[set[int], bool]:
-    """Which bronze rows the cleaning removed, and whether the list is partial."""
+    """Which bronze rows the cleaning removed, and whether the list is partial.
+
+    The deduplication and any of the source's own checks that drop rows. Both
+    record rows by where they arrived, so the lists can simply be joined.
+    """
+    removed: set[int] = set()
+    truncated = False
     for rule in report.get("rules", []):
-        if rule.get("rule") == "deduplicate_rows":
-            return set(rule.get("removed_rows", [])), bool(
-                rule.get("removed_rows_truncated")
-            )
+        if rule.get("removed_rows"):
+            removed.update(rule.get("removed_rows", []))
+            truncated = truncated or bool(rule.get("removed_rows_truncated"))
+    if removed or truncated:
+        return removed, truncated
     return set(), False
 
 

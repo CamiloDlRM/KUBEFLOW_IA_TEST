@@ -167,6 +167,9 @@ class RuleOutcome:
     #: report, saying so: "the standard did not unify these spellings" and "this
     #: source asked it not to" are different statements about the silver layer.
     skipped: bool = False
+    #: Why one of the source's own rules could not run. Such a rule changes
+    #: nothing; the reason is here so it is fixed, not discovered.
+    error: str = ""
 
     def touch(self, row: int) -> None:
         """Note that this rule acted on a row."""
@@ -205,6 +208,7 @@ class RuleOutcome:
             or self.columns_removed
             or self.flagged
             or self.columns
+            or self.error
         )
 
     def summary(self) -> dict[str, Any]:
@@ -222,6 +226,7 @@ class RuleOutcome:
             "removed_rows": self.removed_rows,
             "removed_rows_truncated": self.removed_rows_truncated,
             "skipped": self.skipped,
+            "error": self.error,
         }
 
 
@@ -1153,6 +1158,9 @@ class CleaningRecipe:
     #: was registered with: filled in when it named a text and a code column,
     #: nothing otherwise.
     normalize: NormalizeSettings | None = None
+    #: The source's own rules, run in order after the standard. See
+    #: :mod:`core.custom_steps`.
+    steps: tuple[Any, ...] = ()
 
     def enabled(self, rule: str) -> bool:
         return rule not in self.disabled
@@ -1171,6 +1179,7 @@ class CleaningRecipe:
                 "Duplicates by key (" + ", ".join(self.dedupe_on) + "): rows matching on these "
                 "columns are removed even where other columns differ."
             )
+        warnings.extend(step.lossy for step in self.steps if step.lossy)
         return warnings
 
     def as_dict(self) -> dict[str, Any]:
@@ -1185,6 +1194,7 @@ class CleaningRecipe:
             "sex_columns": None if self.sex_columns is None else list(self.sex_columns),
             "ranges": [measure.as_dict() for measure in self.ranges],
             "normalize": None if self.normalize is None else self.normalize.as_dict(),
+            "steps": [step.as_dict() for step in self.steps],
         }
 
     def normalization(self, text_column: str = "", code_column: str = "") -> NormalizeSettings:
@@ -1283,7 +1293,14 @@ class CleaningRecipe:
             sex_columns=sex_columns,
             ranges=measure_ranges,
             normalize=None if raw.get("normalize") is None else NormalizeSettings.from_dict(raw["normalize"]),
+            steps=_read_steps(raw.get("steps")),
         )
+
+
+def _read_steps(raw: Any) -> tuple[Any, ...]:
+    from core.custom_steps import read_steps
+
+    return read_steps(raw)
 
 
 #: The standard itself: the recipe of a source that has not set one.
@@ -1381,6 +1398,7 @@ def clean(
     # duplicate comparison, which reads every column.
     ids = list(range(table.rows))
     column_ids = list(range(len(table.columns)))
+    original_columns = list(table.columns)
     wanted = set(range(sample) if rows is None else rows)
     snapshots: list[Snapshot] = []
     if sample:
@@ -1422,6 +1440,12 @@ def clean(
                 _snapshot(table, ids, column_ids, outcome.rule, outcome.title, wanted)
             )
 
+    if recipe.steps:
+        ids, column_ids = _run_custom_steps(
+            table, report, recipe, protected, ids, column_ids, original_columns,
+            snapshots if sample else None, wanted,
+        )
+
     report.rows_out = table.rows
     report.columns_out = len(table.columns)
 
@@ -1433,3 +1457,60 @@ def clean(
         flagged=report.flagged,
     )
     return report, snapshots
+
+
+def _run_custom_steps(
+    table: Table,
+    report: CleaningReport,
+    recipe: CleaningRecipe,
+    protected: frozenset[str],
+    ids: list[int],
+    column_ids: list[int],
+    original_columns: list[str],
+    snapshots: list[Snapshot] | None,
+    wanted: set[int],
+) -> tuple[list[int], list[int]]:
+    """Run the source's own rules after the standard, keeping identities.
+
+    Unlike the standard's rules these may add a column (a split, a computed
+    value) and remove rows (a failed check), so row and column identity are
+    followed through each one explicitly: a new column gets a new identity,
+    a renamed one keeps its own, and removed rows leave ``ids`` the way a
+    deduplication does.
+    """
+    from core.custom_steps import cap_removed, run_step
+
+    protected_names = frozenset(_snake(name) for name in (*protected, *recipe.keep_as_text) if name)
+    next_column_id = max(column_ids, default=-1) + 1
+    for number, step in enumerate(recipe.steps, start=1):
+        before_columns = list(table.columns)
+        outcome, result = run_step(table, report, step, number, protected_names)
+        outcome.touched_rows = [ids[position] for position in outcome.touched_rows if position < len(ids)]
+
+        if result.removed:
+            outcome.removed_rows, outcome.removed_rows_truncated = cap_removed(ids, result.removed)
+            gone = set(result.removed)
+            ids = [row_id for index, row_id in enumerate(ids) if index not in gone]
+
+        # A rename is recorded against the name the column arrived with, so
+        # whatever reads ``renamed`` later (coding, the bronze/silver diff)
+        # follows it to its final name.
+        for old, new in result.renamed.items():
+            for original in original_columns:
+                if report.renamed.get(original, original) == old:
+                    report.renamed[original] = new
+
+        identity = dict(zip(before_columns, column_ids))
+        for old, new in result.renamed.items():
+            identity[new] = identity.pop(old)
+        followed: list[int] = []
+        for name in table.columns:
+            if name not in identity:
+                identity[name] = next_column_id
+                next_column_id += 1
+            followed.append(identity[name])
+        column_ids = followed
+
+        if snapshots is not None:
+            snapshots.append(_snapshot(table, ids, column_ids, outcome.rule, outcome.title, wanted))
+    return ids, column_ids

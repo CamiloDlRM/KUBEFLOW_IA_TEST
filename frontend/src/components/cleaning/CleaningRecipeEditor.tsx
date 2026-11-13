@@ -20,6 +20,7 @@ import type {
 import Spinner from '../Spinner';
 import { StepsView } from '../CleaningSteps';
 import ChipsInput from './ChipsInput';
+import CustomSteps from './CustomSteps';
 import { describeNormalize, lossyWarnings, patternLabel, recipeProblem, sameRecipe, sendable } from './recipe';
 
 const IN_PROGRESS = new Set(['queued', 'running']);
@@ -100,12 +101,27 @@ export default function CleaningRecipeEditor({
         )}
       </header>
       {/* Keyed by source, so switching sources starts from that source's recipe. */}
-      <SourceRecipe key={sourceId} projectId={projectId} sourceId={sourceId} />
+      <SourceRecipe
+        key={sourceId}
+        projectId={projectId}
+        sourceId={sourceId}
+        otherSources={sources
+          .filter((stream) => stream.source_id !== sourceId)
+          .map((stream) => ({ id: stream.source_id, name: stream.source_name }))}
+      />
     </section>
   );
 }
 
-function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: number }) {
+function SourceRecipe({
+  projectId,
+  sourceId,
+  otherSources,
+}: {
+  projectId: number;
+  sourceId: number;
+  otherSources: { id: number; name: string }[];
+}) {
   const queryClient = useQueryClient();
   const { data: state, isLoading, error } = useQuery({
     queryKey: ['cleaning-recipe', sourceId],
@@ -217,6 +233,13 @@ function SourceRecipe({ projectId, sourceId }: { projectId: number; sourceId: nu
           </ul>
         </div>
       ))}
+
+      <CustomSteps
+        steps={draft.steps}
+        onChange={(steps) => update({ steps })}
+        columns={columns}
+        otherSources={otherSources}
+      />
 
       <NormalizeOptions
         value={draft.normalize}

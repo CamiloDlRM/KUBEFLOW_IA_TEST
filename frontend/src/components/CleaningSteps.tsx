@@ -155,6 +155,7 @@ const TIER_LABEL: Record<string, string> = {
   structural: 'structural',
   categorical: 'categorical',
   domain: 'health',
+  custom: 'your rule',
 };
 
 /**
@@ -209,6 +210,11 @@ function Step({ step, number, last }: { step: CleaningStep; number: number; last
             turned off
           </span>
         )}
+        {step.error && (
+          <span className="rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-red-300">
+            could not run
+          </span>
+        )}
         {/* The two ends of the standard are the two layers, said once each so
             the reader knows which table they are looking at. */}
         {isStart && (
@@ -226,7 +232,9 @@ function Step({ step, number, last }: { step: CleaningStep; number: number; last
 
       {open && (
         <div className="border-t border-slate-800 px-4 py-3">
-          {step.note && <p className="mb-2 text-xs text-slate-500">{step.note}</p>}
+          {step.note && (
+            <p className={`mb-2 text-xs ${step.error ? 'text-red-300' : 'text-slate-500'}`}>{step.note}</p>
+          )}
           {/* The preview is chosen to include the rows each rule acted on, but
               a rule late in the standard can find every slot taken. Saying so
               is better than a count above a table where nothing happened,
@@ -316,6 +324,14 @@ function ColumnHeader({ column }: { column: CleaningColumn }) {
       </th>
     );
   }
+  if (column.change === 'added') {
+    return (
+      <th className="px-2 py-1.5 font-medium">
+        <span className="text-emerald-300">{column.after}</span>
+        <span className="ml-1.5 block font-display text-[10px] font-normal text-emerald-400/70">new</span>
+      </th>
+    );
+  }
   return (
     <th className="px-2 py-1.5 font-medium text-slate-200">{column.after ?? column.before}</th>
   );
@@ -373,16 +389,19 @@ function Rows({
     <>
       <tr className="bg-amber-950/20">
         <td className="px-2 py-1 font-display text-[10px] text-amber-500/80">−{row.row}</td>
-        {columns.map((_, index) => (
+        {columns.map((column, index) => (
           <td
             key={index}
             className={`px-2 py-1 ${
-              row.cells[index] === 'changed'
-                ? 'bg-rose-900/30 text-rose-100'
-                : 'text-amber-200/50'
+              column.change === 'added'
+                ? ''
+                : row.cells[index] === 'changed'
+                  ? 'bg-rose-900/30 text-rose-100'
+                  : 'text-amber-200/50'
             }`}
           >
-            <Cell value={row.before[index]} />
+            {/* A new column had no value before this rule; "null" would claim one. */}
+            {column.change === 'added' ? <span className="text-slate-700">—</span> : <Cell value={row.before[index]} />}
           </td>
         ))}
       </tr>

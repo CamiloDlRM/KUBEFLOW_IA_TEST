@@ -1478,6 +1478,8 @@ class CleaningStepResponse(BaseModel):
     changed: bool = False
     #: Turned off in the source's recipe, so it did not run at all.
     skipped: bool = False
+    #: One of the source's own rules that could not run, and why.
+    error: str = ""
 
     #: The first rows, before and after this one rule, on aligned columns. Rows
     #: are matched by their position in the data as it arrived, so a
