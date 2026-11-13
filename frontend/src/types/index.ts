@@ -209,6 +209,10 @@ export interface ModelDeployment {
   model_name: string;
   version: string;
   accuracy: number;
+  /** What the model is judged on: its project's deciding metric, as its run logged it. */
+  metric?: string;
+  /** Null when the run logged neither that metric nor accuracy. */
+  metric_value?: number | null;
   endpoint_url: string;
   deployed_at: string;
   is_active: boolean;

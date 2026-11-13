@@ -100,7 +100,23 @@ export default function Projects() {
   );
 }
 
+/**
+ * What the project is missing on the way to a deployed model, in the order the
+ * work usually goes. Null once it has one.
+ */
+// shortcut: reads "has data" as gold or an active dataset, so a project set to train
+// on silver is still told to build gold; read pipeline_input if that turns up.
+export function nextStep(project: Project): string | null {
+  if (project.deployed_model) return null;
+  if (!project.active_dataset && project.gold_rows === 0) {
+    return project.sources === 0 ? 'connect a data source' : 'build the gold table';
+  }
+  if (!project.repository) return 'link a repository';
+  return 'run the pipeline';
+}
+
 function ProjectCard({ project }: { project: Project }) {
+  const next = nextStep(project);
   return (
     <li>
       <Link
@@ -123,6 +139,14 @@ function ProjectCard({ project }: { project: Project }) {
               {project.gold_rows.toLocaleString()}
             </dd>
           </div>
+          {project.deployed_model && (
+            <div className="min-w-0">
+              <dt className="text-slate-500">Model</dt>
+              <dd className="mt-0.5 truncate font-semibold text-slate-200">
+                {project.deployed_model}
+              </dd>
+            </div>
+          )}
         </dl>
 
         <p className="mt-4 truncate text-xs">
@@ -136,6 +160,13 @@ function ProjectCard({ project }: { project: Project }) {
             <span className="text-slate-600">No repository linked yet</span>
           )}
         </p>
+
+        {/* A pointer, not a warning: same muted tone as the line above. */}
+        {next && (
+          <p className="mt-1 truncate text-xs text-slate-500">
+            Next: <span className="text-brand-400">{next}</span>
+          </p>
+        )}
       </Link>
     </li>
   );

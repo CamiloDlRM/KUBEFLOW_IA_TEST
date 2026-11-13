@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Info } from 'lucide-react';
 import { getRunSettings, setDeployPolicy } from '../api/client';
 import type { DeployPolicy } from '../types';
+import { SelectMenu, SuggestInput } from './SelectMenu';
 import Spinner from './Spinner';
 
 /** "Deploys when recall ≥ 0.9 and it beats the version serving." */
@@ -51,7 +53,13 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
   }
 
   const changed = JSON.stringify(draft) !== JSON.stringify(data?.policy);
-  const metrics = Array.from(new Set([draft.metric, ...(data?.metrics_available ?? []), 'accuracy']));
+  const metrics = Array.from(new Set([...(data?.metrics_available ?? []), 'accuracy']));
+  // Said, not refused: a metric the notebook starts logging on its next run is a fair thing to type.
+  const neverLogged =
+    draft.auto_deploy &&
+    Boolean(draft.metric.trim()) &&
+    (data?.metrics_available.length ?? 0) > 0 &&
+    !data!.metrics_available.includes(draft.metric.trim());
   const field =
     'rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-40';
 
@@ -93,31 +101,29 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
         </label>
 
         <fieldset disabled={!draft.auto_deploy} className="flex flex-wrap items-end gap-3 disabled:opacity-50">
-          <label className="flex flex-col gap-1 text-xs text-slate-400">
-            Metric
-            <input
-              list={`metrics-${projectId}`}
+          {/* Not wrapped in their labels: the open list would be read as part of the name. */}
+          <div className="flex flex-col gap-1 text-xs text-slate-400">
+            <label htmlFor={`metric-${projectId}`}>Metric</label>
+            <SuggestInput
+              id={`metric-${projectId}`}
               value={draft.metric}
-              onChange={(event) => setDraft({ ...draft, metric: event.target.value })}
+              suggestions={metrics}
+              onChange={(metric) => setDraft({ ...draft, metric })}
               className={`${field} w-44 font-display`}
             />
-            <datalist id={`metrics-${projectId}`}>
-              {metrics.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-slate-400">
-            Better is
-            <select
+          </div>
+          <div className="flex flex-col gap-1 text-xs text-slate-400">
+            <span aria-hidden="true">Better is</span>
+            <SelectMenu
+              label="Better is"
               value={draft.direction}
-              onChange={(event) => setDraft({ ...draft, direction: event.target.value as DeployPolicy['direction'] })}
-              className={field}
-            >
-              <option value="higher">higher (≥)</option>
-              <option value="lower">lower (≤)</option>
-            </select>
-          </label>
+              options={[
+                { value: 'higher', label: 'higher (≥)' },
+                { value: 'lower', label: 'lower (≤)' },
+              ]}
+              onChange={(direction) => setDraft({ ...draft, direction })}
+            />
+          </div>
           <label className="flex flex-col gap-1 text-xs text-slate-400">
             Bar
             <input
@@ -138,6 +144,26 @@ export default function DeployPolicyPanel({ projectId }: { projectId: number }) 
             …and beat the version serving now
           </label>
         </fieldset>
+
+        {/* The worker refuses rather than deploy on a comparison it cannot make; said here, before a run is spent finding out. */}
+        {draft.auto_deploy && draft.must_beat_serving && (
+          <p className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-slate-400">
+            <Info size={14} className="mt-0.5 shrink-0 text-sky-300" aria-hidden="true" />
+            <span>
+              <span className="font-semibold text-sky-200">A run can only beat a version it can be compared with.</span>{' '}
+              If the version serving now never logged <span className="font-display text-slate-300">{draft.metric}</span> —
+              it deployed before this metric was chosen — a new run will not deploy on its own. Deploy one from the
+              model’s Versions, and later runs are compared again.
+            </span>
+          </p>
+        )}
+
+        {neverLogged && (
+          <p className="text-xs text-amber-300">
+            No run of this project has logged <span className="font-display">{draft.metric.trim()}</span> yet. Check
+            the spelling: a run that does not log it will not deploy.
+          </p>
+        )}
 
         {data && data.metrics_available.length > 0 && (
           <p className="text-xs text-slate-500">

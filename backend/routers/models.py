@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.config import AppSettings, get_settings
+from core.deploy_policy import judged_on
 from core.metrics import record_model_prediction, record_model_reload, record_model_rollback
 from core.model_server import model_server_headers
 from core.predict_input import InvalidPredictInput, check_predict_input, expected_features
@@ -30,6 +31,7 @@ from models.schemas import (
     MessageResponse,
     ModelDeployment,
     Pipeline,
+    Project,
     ModelDeploymentResponse,
     ModelShareLink,
     ModelVersionResponse,
@@ -179,9 +181,26 @@ async def list_models(
         ).all()
     } if names else {}
 
+    # A model is judged on what its project deploys on, which is not always
+    # accuracy: a regressor has none, and showing its stored 0.0 says "0%".
+    project_ids = {run.project_id for run in runs.values() if run.project_id is not None}
+    projects = {
+        project.id: project
+        for project in session.exec(select(Project).where(Project.id.in_(project_ids))).all()  # type: ignore[union-attr]
+    } if project_ids else {}
+
+    def _judged_on(d: ModelDeployment, run: Pipeline | None) -> tuple[str, float | None]:
+        project = projects.get(run.project_id) if run else None
+        # A deployment with no run has only the accuracy it was recorded with.
+        logged = (run.metrics or {}) if run else {"accuracy": d.accuracy}
+        return judged_on(project.deploy_policy if project else None, logged)
+
     def _from_run(d: ModelDeployment) -> dict:
         run = runs.get(d.pipeline_id or "")
+        metric, metric_value = _judged_on(d, run)
         return {
+            "metric": metric,
+            "metric_value": metric_value,
             "owner_username": owners.get(d.pipeline_id or ""),
             "model_card": (run.model_card or {}) if run else {},
             "project_id": run.project_id if run else None,

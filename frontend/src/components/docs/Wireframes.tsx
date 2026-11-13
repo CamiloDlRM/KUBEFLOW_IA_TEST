@@ -379,6 +379,10 @@ export function ProjectsScreen() {
                 </span>
               </div>
               <p className="mt-1 wf-text">{index === 0 ? '⌁ hospital-ml' : 'No repository linked yet'}</p>
+              <p className="relative wf-text">
+                Next: {index === 0 ? 'run the pipeline' : 'link a repository'}
+                {index === 0 && <Pin n={6} />}
+              </p>
               {index === 0 && <Pin n={3} />}
             </div>
           ))}
@@ -797,7 +801,7 @@ export function ModelsScreen() {
               <tr>
                 <th>Model</th>
                 <th>Version</th>
-                <th>Accuracy</th>
+                <th>Metric</th>
                 <th>Deployed</th>
                 <th>Status</th>
                 <th>Endpoint</th>
@@ -808,7 +812,7 @@ export function ModelsScreen() {
               <tr>
                 <td className="font-semibold text-[var(--ink)]">readmission-risk</td>
                 <td>v3</td>
-                <td className="font-display">87.1%</td>
+                <td className="font-display">accuracy 87.1%</td>
                 <td>Oct 31, 2026</td>
                 <td className="relative">
                   <WfStatus tone="ok">active</WfStatus>
@@ -830,7 +834,7 @@ export function ModelsScreen() {
               <tr>
                 <td className="font-semibold text-[var(--ink)]">claims-triage</td>
                 <td>v1</td>
-                <td className="font-display">91.4%</td>
+                <td className="font-display">accuracy 91.4%</td>
                 <td>Oct 29, 2026</td>
                 <td>
                   <WfStatus tone="ok">active</WfStatus>

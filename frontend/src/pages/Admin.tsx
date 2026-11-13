@@ -179,11 +179,12 @@ export default function Admin() {
         )}
       </div>
 
-      {/* ACS migration note */}
+      {/* Only where the Mailhog link can be reached: anywhere else it is a dead link and a false claim. */}
+      {['localhost', '127.0.0.1'].includes(window.location.hostname) && (
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
         <h4 className="mb-1 text-xs font-semibold text-slate-400">Email provider</h4>
         <p className="text-xs text-slate-500 leading-relaxed">
-          Currently using <span className="text-slate-400">Mailhog</span> (local SMTP mock —{' '}
+          A local install sends mail to <span className="text-slate-400">Mailhog</span> by default (local SMTP mock —{' '}
           <a
             href="http://localhost:8025"
             target="_blank"
@@ -199,6 +200,7 @@ export default function Admin() {
           <code className="text-slate-300">SMTP_PASSWORD</code> in your environment.
         </p>
       </div>
+      )}
     </div>
   );
 }

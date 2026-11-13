@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import Projects from '../../src/pages/Projects';
+import Projects, { nextStep } from '../../src/pages/Projects';
 import ProjectDetail from '../../src/pages/ProjectDetail';
 import type { Project } from '../../src/types';
 
@@ -139,6 +139,26 @@ describe('Projects', () => {
     ]);
     renderList();
     expect(await screen.findByText(/Mlops-notebooks/)).toBeInTheDocument();
+  });
+
+  it('points at the first thing a project is missing', () => {
+    const repository = { id: 1, github_url: 'https://github.com/a/b.git', branch: 'main', notebook_path: 'nb.ipynb' };
+    expect(nextStep(project({ sources: 0, gold_rows: 0 }))).toBe('connect a data source');
+    expect(nextStep(project({ gold_rows: 0 }))).toBe('build the gold table');
+    expect(nextStep(project())).toBe('link a repository');
+    expect(nextStep(project({ repository }))).toBe('run the pipeline');
+    // An uploaded dataset is data to train on even with no gold table.
+    expect(
+      nextStep(project({ sources: 0, gold_rows: 0, active_dataset: { id: 1, name: 'x.csv', size_bytes: 1 } })),
+    ).toBe('link a repository');
+    expect(nextStep(project({ repository, deployed_model: 'readmit' }))).toBeNull();
+  });
+
+  it('names the model a project has deployed, and stops suggesting a next step', async () => {
+    getProjects.mockResolvedValue([project({ deployed_model: 'readmit' })]);
+    renderList();
+    expect(await screen.findByText('readmit')).toBeInTheDocument();
+    expect(screen.queryByText(/Next:/)).not.toBeInTheDocument();
   });
 
   it('invites a first project when there are none', async () => {

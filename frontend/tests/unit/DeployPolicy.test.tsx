@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DeployPolicyPanel, { describePolicy } from '../../src/components/DeployPolicyPanel';
 import RunPipelineModal, { parameterProblem, parseParameterValue } from '../../src/components/RunPipelineModal';
 import type { Project, RunSettings } from '../../src/types';
+import { modelMetric } from '../../src/utils/format';
 
 const api = {
   getRunSettings: vi.fn(),
@@ -89,6 +90,49 @@ describe('DeployPolicyPanel', () => {
     expect(screen.getByRole('spinbutton', { name: 'Bar' })).toBeDisabled();
   });
 
+  it('says what asking to beat the serving version costs, only once it is asked', async () => {
+    wrap(<DeployPolicyPanel projectId={4} />);
+    const beat = await screen.findByRole('checkbox', { name: /beat the version serving now/ });
+    expect(screen.queryByText(/can only beat a version it can be compared with/)).not.toBeInTheDocument();
+
+    await userEvent.click(beat);
+
+    expect(screen.getByText(/can only beat a version it can be compared with/)).toBeInTheDocument();
+  });
+
+  it('warns about a metric no run has logged, without refusing it', async () => {
+    wrap(<DeployPolicyPanel projectId={4} />);
+    const metric = await screen.findByRole('combobox', { name: 'Metric' });
+    expect(screen.queryByText(/No run of this project has logged/)).not.toBeInTheDocument();
+
+    await userEvent.clear(metric);
+    await userEvent.type(metric, 'acuracy');
+
+    expect(screen.getByText(/No run of this project has logged/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save rules' })).toBeEnabled();
+
+    await userEvent.clear(metric);
+    await userEvent.type(metric, 'recall');
+    expect(screen.queryByText(/No run of this project has logged/)).not.toBeInTheDocument();
+  });
+
+  it('offers the logged metrics and the direction in the app’s own menus', async () => {
+    api.setDeployPolicy.mockImplementation(async (_id, changes) => ({ ...SETTINGS, is_default: false, policy: changes }));
+    wrap(<DeployPolicyPanel projectId={4} />);
+
+    await userEvent.click(await screen.findByRole('combobox', { name: 'Metric' }));
+    await userEvent.click(screen.getByRole('button', { name: 'recall' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Better is: higher (≥)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'lower (≤)' }));
+    // Picking closes the list it was picked from.
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }));
+
+    await waitFor(() =>
+      expect(api.setDeployPolicy).toHaveBeenCalledWith(4, expect.objectContaining({ metric: 'recall', direction: 'lower' })),
+    );
+  });
+
   it('can go back to the platform default', async () => {
     api.getRunSettings.mockResolvedValue({ ...SETTINGS, is_default: false });
     api.setDeployPolicy.mockResolvedValue(SETTINGS);
@@ -152,5 +196,16 @@ describe('RunPipelineModal', () => {
 
     expect(screen.getByText('MODEL_OUTPUT_PATH is set by the platform.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled();
+  });
+});
+
+describe('modelMetric', () => {
+  it('names what a model is judged on, accuracy as a percentage', () => {
+    expect(modelMetric({ accuracy: 0.921, metric: 'accuracy', metric_value: 0.921 })).toEqual({ name: 'accuracy', value: '92.1%' });
+    // A regressor: its stored accuracy is 0, and must not read as 0%.
+    expect(modelMetric({ accuracy: 0, metric: 'rmse', metric_value: 8.5 })).toEqual({ name: 'rmse', value: '8.5' });
+    expect(modelMetric({ accuracy: 0, metric: 'accuracy', metric_value: null })).toEqual({ name: 'accuracy', value: '--' });
+    // An API older than the field.
+    expect(modelMetric({ accuracy: 0.88 })).toEqual({ name: 'accuracy', value: '88.0%' });
   });
 });

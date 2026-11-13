@@ -7,7 +7,7 @@ import ModelDashboard, { ModelStatusBadge } from '../components/ModelDashboard';
 import TestModelModal from '../components/models/TestModelModal';
 import VersionsDialog from '../components/models/VersionsDialog';
 import ShareLinkCell from '../components/models/ShareLinkCell';
-import { formatDate } from '../utils/format';
+import { formatDate, modelMetric } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 import MaiaEmptyState from '../components/MaiaEmptyState';
 
@@ -86,7 +86,7 @@ export default function Models() {
                 <th className="px-4 py-3">Model</th>
                 {isAdmin && <th className="px-4 py-3">User</th>}
                 <th className="px-4 py-3">Version</th>
-                <th className="px-4 py-3">Accuracy</th>
+                <th className="px-4 py-3">Metric</th>
                 <th className="px-4 py-3">Deployed</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Public link</th>
@@ -110,7 +110,7 @@ export default function Models() {
                   )}
                   <td className="px-4 py-3 text-slate-300">v{m.version}</td>
                   <td className="px-4 py-3 font-display text-slate-300">
-                    {(m.accuracy * 100).toFixed(1)}%
+                    <span className="text-slate-500">{modelMetric(m).name}</span> {modelMetric(m).value}
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400">{formatDate(m.deployed_at)}</td>
                   <td className="px-4 py-3">

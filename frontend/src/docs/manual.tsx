@@ -611,6 +611,11 @@ export const SECTIONS: ManualSection[] = [
         label: 'Rows in gold',
         text: 'The size of the table training will read. Zero until the first gold build exists.',
       },
+      {
+        n: 6,
+        label: 'Model and Next',
+        text: 'Once the project has deployed a model the card names it. Until then, “Next” says the first thing still missing: a data source, the gold table, a repository, or a run.',
+      },
     ],
     steps: [
       {
@@ -1383,8 +1388,8 @@ export const SECTIONS: ManualSection[] = [
         text: 'Comes from the config cell. Deploying the same name again adds a version and makes it active.',
       },
       {
-        term: 'Accuracy',
-        text: 'The metric recorded at registration, as a percentage. It is the value the deployment gate used.',
+        term: 'Metric',
+        text: 'What the model is judged on: the metric its project deploys on, as the run logged it. Accuracy reads as a percentage; any other metric as its number.',
       },
       {
         term: 'Rollback',
