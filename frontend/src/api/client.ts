@@ -24,6 +24,8 @@ import type {
   Insight,
   BranchInfo,
   EditorNotebook,
+  NotebookReview,
+  NotebookReviewPayload,
   NotebookSavePayload,
   NotebookSaved,
   TriggerAccepted,
@@ -211,6 +213,14 @@ export async function getRepoNotebook(repoId: number, branch: string, path: stri
 /** Commits the edited cells to the notebook's branch. */
 export async function saveRepoNotebook(repoId: number, payload: NotebookSavePayload): Promise<NotebookSaved> {
   const { data } = await apiClient.put<NotebookSaved>(`/repos/${repoId}/notebook`, payload);
+  return data;
+}
+
+/** Maia's review of the cells in the editor. Waits on a language model, so far longer than the default. */
+export async function reviewRepoNotebook(repoId: number, payload: NotebookReviewPayload): Promise<NotebookReview> {
+  const { data } = await apiClient.post<NotebookReview>(`/repos/${repoId}/notebook/review`, payload, {
+    timeout: 300_000,
+  });
   return data;
 }
 
