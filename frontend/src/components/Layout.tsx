@@ -117,14 +117,14 @@ export default function Layout() {
       {/* Main content */}
       <main className={`min-h-0 min-w-0 flex-1 ${fullScreen ? 'overflow-hidden pt-16 md:pt-0' : 'overflow-y-auto p-6 pt-16 md:pt-6'}`}>
         {(githubTokenStatus === 'invalid' || githubTokenStatus === 'expiring') && (
-          <div role="alert" className="mb-4 rounded-lg border border-yellow-700 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
+          <div role="alert" className="mb-4 rounded-lg border border-amber-700 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
             {githubTokenStatus === 'invalid'
               ? 'Your GitHub token has expired or is not valid. Repositories using it will fail.'
               : 'Your GitHub token expires in less than 7 days.'}{' '}
             {currentUser?.auth_provider === 'github' ? (
               'Sign in again with GitHub to renew it.'
             ) : (
-              <Link to="/account" className="font-medium underline hover:text-yellow-200">Update it in your account</Link>
+              <Link to="/account" className="font-medium underline hover:text-amber-200">Update it in your account</Link>
             )}
           </div>
         )}

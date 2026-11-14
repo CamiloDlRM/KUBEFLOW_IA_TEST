@@ -13,10 +13,10 @@ interface LogViewerProps {
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
-  connecting: 'text-yellow-400',
+  connecting: 'text-amber-400',
   connected: 'text-emerald-400',
   disconnected: 'text-red-400',
-  reconnecting: 'text-yellow-400',
+  reconnecting: 'text-amber-400',
 };
 
 const statusLabels: Record<ConnectionStatus, string> = {
@@ -118,7 +118,7 @@ export default function LogViewer({
           <span className={`flex items-center gap-1.5 text-xs font-medium ${statusColors[status]}`}>
             <span
               className={`inline-block h-2 w-2 rounded-full ${
-                status === 'connected' ? 'bg-emerald-400' : status === 'disconnected' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'
+                status === 'connected' ? 'bg-emerald-400' : status === 'disconnected' ? 'bg-red-400' : 'bg-amber-400 animate-pulse'
               }`}
             />
             {statusLabels[status]}

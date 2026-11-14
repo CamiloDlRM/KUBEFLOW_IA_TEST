@@ -16,9 +16,9 @@ type Tab = 'password' | 'email' | 'github';
 
 function SuccessBanner({ res }: { res: ChangeRequestedResponse }) {
   return (
-    <div className="rounded-lg bg-green-500/10 px-4 py-3">
-      <p className="text-sm font-medium text-green-400">Check your email</p>
-      <p className="mt-0.5 text-xs text-green-400/70">
+    <div className="rounded-lg bg-emerald-500/10 px-4 py-3">
+      <p className="text-sm font-medium text-emerald-400">Check your email</p>
+      <p className="mt-0.5 text-xs text-emerald-400/70">
         We sent a confirmation link to <strong>{res.email}</strong>.
         Click it to apply the change.
       </p>
@@ -191,7 +191,7 @@ function EmailForm() {
 
   return (
     <form onSubmit={handle} className="space-y-4">
-      <div className="rounded-lg bg-yellow-500/10 px-3 py-2 text-xs text-yellow-400">
+      <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
         No email on this account. Set one to enable password change confirmations. It cannot be changed afterwards.
       </div>
       <div>

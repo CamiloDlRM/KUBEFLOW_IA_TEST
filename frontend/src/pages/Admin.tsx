@@ -120,21 +120,21 @@ export default function Admin() {
           <div className="space-y-4">
             {/* Status banner */}
             {result.email_sent ? (
-              <div className="flex items-start gap-3 rounded-lg bg-green-500/10 px-4 py-3">
-                <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-green-400" />
+              <div className="flex items-start gap-3 rounded-lg bg-emerald-500/10 px-4 py-3">
+                <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                 <div>
-                  <p className="text-sm font-medium text-green-400">Invite sent</p>
-                  <p className="text-xs text-green-400/70">
+                  <p className="text-sm font-medium text-emerald-400">Invite sent</p>
+                  <p className="text-xs text-emerald-400/70">
                     Email delivered to <strong>{result.email}</strong>
                   </p>
                 </div>
               </div>
             ) : (
-              <div className="flex items-start gap-3 rounded-lg bg-yellow-500/10 px-4 py-3">
-                <WarnIcon className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
+              <div className="flex items-start gap-3 rounded-lg bg-amber-500/10 px-4 py-3">
+                <WarnIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
                 <div>
-                  <p className="text-sm font-medium text-yellow-400">Email not sent</p>
-                  <p className="text-xs text-yellow-400/70">
+                  <p className="text-sm font-medium text-amber-400">Email not sent</p>
+                  <p className="text-xs text-amber-400/70">
                     SMTP is disabled. Copy the link below and share it manually.
                   </p>
                 </div>
