@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, type UseMutationResult } from '@tanstack/react-query';
-import { Database, Info } from 'lucide-react';
+import { Database, Info, Pencil } from 'lucide-react';
 import { getModels, getPipelineInput, getPipelineInputOptions, getWsUrl } from '../../api/client';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { MountedInput, Pipeline, PipelineInputChoice, PipelineInputState } from '../../types';
@@ -60,6 +60,27 @@ function FailureAskMaia({ nodeId, view, openMaia }: { nodeId: string; view: Pipe
             text="She reviews the error and this run's code, explains the likely cause and can push a fix."
             onClick={() => openMaia(true)}
         />
+    );
+}
+
+/** On the phase whose cell raised: straight to the editor, on that cell, with the error it raised. */
+function FailureEditCell({ phaseId, view }: { phaseId: string; view: PipelineView }) {
+    const run = view.shownRun;
+    // Only a run that kept its cells knows which one broke.
+    if (run?.status !== 'failed' || view.errorNode !== phaseId || !view.fromRun) return null;
+    const path = run.notebook_path || view.notebookPath;
+    if (!path || !view.branch) return null;
+    return (
+        <Link
+            to={`/repos/${run.repo_id}/notebook?${new URLSearchParams({ branch: view.branch, path, run: run.id })}`}
+            className="flex w-full shrink-0 items-center gap-3 rounded-xl border border-slate-700 bg-slate-950/40 px-4 py-2.5 text-left transition hover:border-brand-500/60 hover:bg-slate-800/60"
+        >
+            <Pencil size={16} className="shrink-0 text-brand-400" aria-hidden="true" />
+            <span>
+                <span className="block font-display text-sm font-semibold text-slate-100">Edit the cell that failed</span>
+                <span className="block font-body2 text-xs text-slate-400">Opens the notebook on that cell, with the error it raised.</span>
+            </span>
+        </Link>
     );
 }
 
@@ -254,6 +275,7 @@ export function PhasePanel({ phaseId, projectId, view, openMaia }: { phaseId: st
     return (
         <div className="flex h-full min-h-0 flex-col gap-3">
             <FailureAskMaia nodeId={phaseId} view={view} openMaia={openMaia} />
+            <FailureEditCell phaseId={phaseId} view={view} />
             <div className="min-h-0 flex-[3]">
                 <PhaseDetail {...detail} fill hideOutput />
             </div>
