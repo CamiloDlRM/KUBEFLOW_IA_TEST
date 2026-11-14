@@ -21,6 +21,8 @@ from models.schemas import (
     MessageResponse,
     NotebookEditorCell,
     NotebookEditorResponse,
+    NotebookReviewRequest,
+    NotebookReviewResponse,
     NotebookSaveRequest,
     NotebookSaveResponse,
     ModelDeployment,
@@ -440,6 +442,75 @@ async def save_repo_notebook(
         user_id=current_user.id,
     )
     return NotebookSaveResponse(commit_sha=commit_sha, sha=new_sha, changed_cells=changed)
+
+
+#: About 50,000 tokens: what one review may send to the AI provider.
+_MAX_REVIEW_CHARS = 200_000
+
+
+@router.post(
+    "/{repo_id}/notebook/review",
+    response_model=NotebookReviewResponse,
+    summary="Have Maia review the cells open in the editor",
+)
+async def review_repo_notebook(
+    repo_id: int,
+    body: NotebookReviewRequest,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> NotebookReviewResponse:
+    """Maia's comment on one cell (``focus_index``) or on the whole notebook, and the code she proposes.
+
+    Reads and writes nothing on GitHub: the cells come from the editor, unsaved
+    edits included, and her proposals go back to it as drafts for the user to
+    keep or discard. Restricted to repositories the caller can see.
+    """
+    from fastapi.concurrency import run_in_threadpool
+
+    from core.ai_advisor import advisor_configured, review_cells
+
+    get_visible_repo_or_404(session, repo_id, current_user)
+    if body.focus_index is not None and body.focus_index not in {cell.index for cell in body.cells}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cell {body.focus_index} is not one of the cells sent.",
+        )
+    cells = [cell.model_dump() for cell in body.cells]
+
+    def too_long() -> bool:
+        return sum(len(cell["source"]) for cell in cells) > _MAX_REVIEW_CHARS
+
+    if too_long() and body.focus_index is not None:
+        # Too long to send whole: the selected cell goes alone.
+        cells = [cell for cell in cells if cell["index"] == body.focus_index]
+    if too_long():
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="This notebook is too long to review at once. Select one cell and ask again.",
+        )
+    if not advisor_configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"AI advisor provider '{settings.ai_advisor_provider}' is not "
+                "configured on the server (missing API key or base URL)."
+            ),
+        )
+
+    try:
+        # shortcut: the request stays open for as long as the model takes; move to
+        # Celery and polling, as insights do, if that starts timing out.
+        review = await run_in_threadpool(
+            review_cells, cells=cells, focus_index=body.focus_index, error=body.error
+        )
+    except Exception as exc:
+        logger.error("repo.review_notebook_failed", repo_id=repo_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Maia could not review the notebook: {exc}",
+        ) from exc
+    return NotebookReviewResponse(**review)
 
 
 async def launch_pipeline(

@@ -419,3 +419,92 @@ def generate_improved_notebook(
     patched = apply_cells_patch(notebook, cells)
     log.info("ai_advisor.apply.done", cells_changed=len(cells))
     return patched, commit_message
+
+
+# ---------------------------------------------------------------------------
+# Notebook editor: review the cells on screen, on request
+# ---------------------------------------------------------------------------
+
+EDITOR_SYSTEM_PROMPT = """\
+You are Maia, an expert ML engineer reviewing a training notebook inside its \
+editor. You receive the notebook's cells, each with its index, type and tags. \
+The author may point you at one cell, and at the error that cell raised in the \
+last pipeline run.
+
+Say what is wrong or could be better, briefly and concretely, and propose fixed \
+code where it helps. You cannot add, remove or reorder cells: only rewrite the \
+source of existing code cells. Keep the `mlops:*` cell tags working: do NOT \
+remove or rename MODEL_NAME, VERSION, MODEL_OUTPUT_PATH, or the joblib.dump export.
+
+Respond ONLY with a JSON object, no prose and no Markdown fences, with exactly \
+this shape:
+
+{
+  "comment": "<your review, as Markdown, in the language of the notebook's comments (default to Spanish)>",
+  "cells": [
+    {"index": <int, index of an existing code cell>, "source": "<the FULL new source code of that cell>"}
+  ]
+}
+
+Rules:
+- "cells" holds only the cells you propose to change; leave it empty when none.
+- Pointed at one cell, change only that cell unless the fix needs another.
+- "source" must be the complete replacement source for the cell, not a diff.\
+"""
+
+
+def review_cells(
+    *,
+    cells: list[dict[str, Any]],
+    focus_index: int | None = None,
+    error: str = "",
+) -> dict[str, Any]:
+    """Ask the configured provider to review the editor's cells.
+
+    ``cells`` are the editor's (``index``, ``cell_type``, ``source``, ``tags``),
+    unsaved edits included. Returns ``{"comment", "cells": [{"index", "source"}]}``.
+    Nothing is written anywhere: the proposals go back to the editor as drafts.
+
+    Raises:
+        RuntimeError: if the provider is not configured.
+    """
+    settings = get_settings()
+    if not advisor_configured(settings):
+        raise RuntimeError(
+            f"AI advisor provider '{settings.ai_advisor_provider}' is not "
+            "configured (missing API key or base URL)."
+        )
+
+    backend = _BACKENDS[settings.ai_advisor_provider]
+    model = resolve_model(settings)
+
+    listing = "\n\n".join(
+        f"# --- Cell {cell['index']} ({cell['cell_type']})"
+        + (f" [tags: {', '.join(cell['tags'])}]" if cell.get("tags") else "")
+        + f" ---\n{cell['source']}"
+        for cell in cells
+    )
+    ask = "## Revisa todo el notebook\n" if focus_index is None else f"## Revisa la celda {focus_index}\n"
+    if error:
+        ask += f"En la ultima ejecucion esa celda fallo con:\n```\n{error}\n```\n"
+    prompt = f"{ask}\n## Celdas del notebook\n```python\n{listing}\n```"
+
+    log = logger.bind(provider=settings.ai_advisor_provider, model=model)
+    log.info("ai_advisor.review.start", prompt_chars=len(prompt), focus_index=focus_index)
+
+    raw = backend(settings, model, prompt, EDITOR_SYSTEM_PROMPT)
+    try:
+        review = _extract_json(raw)
+    except ValueError:
+        # A model that answered in prose still said something worth showing.
+        review = {"comment": raw}
+
+    # Only existing code cells can take a proposal: the editor cannot do more.
+    code = {cell["index"] for cell in cells if cell["cell_type"] == "code"}
+    proposals = [
+        {"index": change["index"], "source": str(change.get("source", ""))}
+        for change in review.get("cells") or []
+        if isinstance(change, dict) and change.get("index") in code
+    ]
+    log.info("ai_advisor.review.done", proposals=len(proposals))
+    return {"comment": str(review.get("comment") or ""), "cells": proposals}

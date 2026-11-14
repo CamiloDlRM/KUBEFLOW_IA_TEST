@@ -1682,6 +1682,22 @@ class NotebookSaveResponse(BaseModel):
     changed_cells: int
 
 
+class NotebookReviewRequest(BaseModel):
+    """The editor's cells as they are on screen, unsaved edits included, for Maia to review."""
+
+    cells: list[NotebookEditorCell] = Field(min_length=1, max_length=500)
+    #: The one cell to review; the whole notebook when left out.
+    focus_index: int | None = None
+    #: What that cell raised in the last run, when the editor was opened from a failed run.
+    error: str = Field(default="", max_length=4000)
+
+
+class NotebookReviewResponse(BaseModel):
+    comment: str
+    #: Replacement sources Maia proposes; the editor takes them as unsaved edits.
+    cells: list[NotebookCellEdit] = []
+
+
 # ---------------------------------------------------------------------------
 # Datasets (MinIO)
 # ---------------------------------------------------------------------------
