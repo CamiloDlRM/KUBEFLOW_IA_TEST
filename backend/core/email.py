@@ -164,15 +164,15 @@ def _build_change_message(
     *,
     to_address: str,
     confirm_url: str,
-    change_type: str,  # "password" | "username"
-    new_username: str | None,
+    change_type: str,  # "password" | "username" | "email"
+    new_username: str | None,  # the new value: a username, or an address when change_type is "email"
     settings: AppSettings,
 ) -> MIMEMultipart:
-    label = "password" if change_type == "password" else "username"
+    label = change_type if change_type in ("password", "email") else "username"
     detail = (
         "your password will be updated"
         if change_type == "password"
-        else f"your username will be changed to <strong style='color:#e2e8f0'>{new_username}</strong>"
+        else f"your {label} will be changed to <strong style='color:#e2e8f0'>{new_username}</strong>"
     )
 
     msg = MIMEMultipart("alternative")
