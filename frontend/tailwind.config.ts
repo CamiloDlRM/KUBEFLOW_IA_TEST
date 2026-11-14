@@ -9,7 +9,6 @@ const config: Config = {
         body: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         display: ['Space Grotesk', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         body2: ['Outfit', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        logo: ['Birthstone Bounce', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         // Code, ids and logs are set in the display font too. Tailwind's base styles give
         // <code>, <pre>, <kbd> and <samp> the `mono` family, so it points there as well.
         mono: ['Space Grotesk', 'ui-sans-serif', 'system-ui', 'sans-serif'],
