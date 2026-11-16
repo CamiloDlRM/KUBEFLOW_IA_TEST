@@ -47,7 +47,9 @@ export default function App() {
       <Route path="/confirm-change" element={<ConfirmChange />} />
       <Route path="/auth/github" element={<GithubCallback />} />
       <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
-      <Route path="/docs" element={<Docs />} />
+      <Route path="/user-manual" element={<Docs />} />
+      <Route path="/user_manual" element={<Navigate to="/user-manual" replace />} />
+      <Route path="/docs" element={<Navigate to="/user-manual" replace />} />
 
       {/* Protected routes */}
       <Route

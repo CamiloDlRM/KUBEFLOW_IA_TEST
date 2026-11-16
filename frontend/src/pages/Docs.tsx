@@ -370,18 +370,18 @@ export default function Docs() {
                   <dd>chapters</dd>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <dt className="sr-only">Schematics</dt>
+                  <dt className="sr-only">Screens</dt>
                   <dd className="text-[13px] font-semibold tabular-nums text-[var(--ink)]">
                     {wireframeCount}
                   </dd>
-                  <dd>screen schematics</dd>
+                  <dd>illustrated screens</dd>
                 </div>
               </dl>
             </div>
 
-            {/* The visual key is part of the manual's argument: these are drawings. */}
+            {/* The visual key explains both real screen captures and schematic diagrams. */}
             <aside className="border border-[var(--rule-strong)] bg-[var(--paper-soft)]/80 p-4">
-              <p className="manual-eyebrow">How to read a drawing</p>
+              <p className="manual-eyebrow">How to read the screens</p>
               <dl className="mt-3 space-y-2.5">
                 {LEGEND.map((item) => (
                   <div key={item.label} className="flex items-start gap-3">
@@ -617,7 +617,7 @@ export default function Docs() {
               </div>
             </div>
             <p className="manual-eyebrow mt-8 text-[9px]">
-              Maia · User manual · Edition 01 · {wireframeCount} schematics
+              Maia · User manual · Edition 01 · {wireframeCount} illustrated screens
             </p>
           </footer>
         </main>

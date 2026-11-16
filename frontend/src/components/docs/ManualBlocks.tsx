@@ -440,3 +440,43 @@ export function IssuesTable() {
     </div>
   );
 }
+
+/* ---- Real application screenshot ----------------------------------- */
+
+export function ScreenshotFrame({
+  src,
+  alt,
+  path,
+  caption,
+}: {
+  src: string;
+  alt: string;
+  path?: string;
+  caption?: string;
+}) {
+  return (
+    <figure className="wf overflow-hidden">
+      {path && (
+        <div className="wf-chrome">
+          <span className="wf-dot" />
+          <span className="wf-dot" />
+          <span className="wf-dot" />
+          <span className="wf-title ml-2 truncate">{path}</span>
+        </div>
+      )}
+      <div className="bg-[var(--paper-deep)]">
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          className="block h-auto w-full object-contain"
+        />
+      </div>
+      {caption && (
+        <figcaption className="border-t border-[var(--rule)] px-3 py-1.5 font-display text-[10.5px] text-[var(--ink-3)]">
+          {caption}
+        </figcaption>
+      )}
+    </figure>
+  );
+}
