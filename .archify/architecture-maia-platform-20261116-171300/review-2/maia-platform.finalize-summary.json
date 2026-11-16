@@ -1,0 +1,366 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Users\\SAMUEL RICARDO\\Desktop\\Samuel\\MLOPs\\PF_ingenieria_sistemas\\KUBEFLOW_IA_TEST\\.archify\\architecture-maia-platform-20261116-171300\\candidate.json",
+    "sha256": "98698d0d4ede3db223649050457497bd60af6e74fed3381bab41dbca8c320467",
+    "bytes": 42066
+  },
+  "artifact": {
+    "path": "C:\\Users\\SAMUEL RICARDO\\Desktop\\Samuel\\MLOPs\\PF_ingenieria_sistemas\\KUBEFLOW_IA_TEST\\.archify\\architecture-maia-platform-20261116-171300\\maia-platform.html",
+    "sha256": "f8a7b33ef2c1853f69c6b6574fe0823cc9081728ddf72741e9bd6e49eed1d284",
+    "bytes": 804440
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Users\\SAMUEL RICARDO\\Desktop\\Samuel\\MLOPs\\PF_ingenieria_sistemas\\KUBEFLOW_IA_TEST\\.archify\\architecture-maia-platform-20261116-171300\\review-2\\maia-platform.finalize.json",
+    "summaryReceipt": "C:\\Users\\SAMUEL RICARDO\\Desktop\\Samuel\\MLOPs\\PF_ingenieria_sistemas\\KUBEFLOW_IA_TEST\\.archify\\architecture-maia-platform-20261116-171300\\review-2\\maia-platform.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Users\\SAMUEL RICARDO\\Desktop\\Samuel\\MLOPs\\PF_ingenieria_sistemas\\KUBEFLOW_IA_TEST\\.archify\\architecture-maia-platform-20261116-171300\\review-2\\maia-platform.browser-check.json"
+  },
+  "update": {
+    "status": "update_available",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.2.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.2.0",
+    "severity": "normal",
+    "checkedAt": "2026-11-16T22:18:34.168Z",
+    "source": "cache",
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.0.1 → 3.2.0. A previous check at 2026-11-16T22:18:34.168Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.2.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:70e210265c59f24dcbdf2a502ff671104b5454e7ee7d3554aecd86bad32384f5"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 16095,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 12,
+      "routesOverSuggestedBends": 7,
+      "routesOverSuggestedStretch": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "id": "github-backend",
+            "from": "github",
+            "to": "backend",
+            "label": "Webhook HMAC",
+            "collectionIndex": 3,
+            "artifactIndex": 4
+          },
+          "right": {
+            "id": "backend-minio",
+            "from": "backend",
+            "to": "minio",
+            "label": "datasets S3",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "point": [
+            639,
+            246
+          ],
+          "sharedNode": "backend"
+        },
+        {
+          "left": {
+            "id": "github-worker",
+            "from": "github",
+            "to": "worker",
+            "label": "ipynb / testing-ia",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "right": {
+            "id": "redis-worker",
+            "from": "redis",
+            "to": "worker",
+            "label": "cola pipelines",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "point": [
+            1116,
+            246
+          ],
+          "sharedNode": "worker"
+        },
+        {
+          "left": {
+            "id": "github-worker",
+            "from": "github",
+            "to": "worker",
+            "label": "ipynb / testing-ia",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "right": {
+            "id": "backend-ai-llm",
+            "from": "backend",
+            "to": "ai_llm",
+            "label": "KPI / Gold LLM",
+            "collectionIndex": 12,
+            "artifactIndex": 13
+          },
+          "point": [
+            1116,
+            182
+          ]
+        },
+        {
+          "left": {
+            "id": "backend-redis",
+            "from": "backend",
+            "to": "redis",
+            "label": "encola / pubsub",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "right": {
+            "id": "backend-minio",
+            "from": "backend",
+            "to": "minio",
+            "label": "datasets S3",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "point": [
+            834.8,
+            302
+          ],
+          "sharedNode": "backend"
+        },
+        {
+          "left": {
+            "id": "redis-worker",
+            "from": "redis",
+            "to": "worker",
+            "label": "cola pipelines",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "right": {
+            "id": "worker-ai-llm",
+            "from": "worker",
+            "to": "ai_llm",
+            "label": "AI Advisor",
+            "collectionIndex": 13,
+            "artifactIndex": 14
+          },
+          "point": [
+            1213.95,
+            246
+          ],
+          "sharedNode": "worker"
+        },
+        {
+          "left": {
+            "id": "backend-grafana",
+            "from": "backend",
+            "to": "grafana",
+            "label": "proxy /grafana",
+            "collectionIndex": 9,
+            "artifactIndex": 10
+          },
+          "right": {
+            "id": "prometheus-backend",
+            "from": "prometheus",
+            "to": "backend",
+            "label": "scrape /metrics",
+            "collectionIndex": 24,
+            "artifactIndex": 25
+          },
+          "point": [
+            625,
+            417
+          ],
+          "sharedNode": "backend"
+        },
+        {
+          "left": {
+            "id": "backend-model-server",
+            "from": "backend",
+            "to": "model_server",
+            "label": "/predict + reload",
+            "collectionIndex": 10,
+            "artifactIndex": 11
+          },
+          "right": {
+            "id": "model-server-minio",
+            "from": "model_server",
+            "to": "minio",
+            "label": "descarga joblib",
+            "collectionIndex": 21,
+            "artifactIndex": 22
+          },
+          "point": [
+            913,
+            656
+          ],
+          "sharedNode": "model_server"
+        },
+        {
+          "left": {
+            "id": "backend-model-server",
+            "from": "backend",
+            "to": "model_server",
+            "label": "/predict + reload",
+            "collectionIndex": 10,
+            "artifactIndex": 11
+          },
+          "right": {
+            "id": "grafana-postgres",
+            "from": "grafana",
+            "to": "postgres",
+            "label": "SELECT grafana_ro",
+            "collectionIndex": 22,
+            "artifactIndex": 23
+          },
+          "point": [
+            852,
+            512
+          ]
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "id": "backend-model-server",
+            "from": "backend",
+            "to": "model_server",
+            "label": "/predict + reload",
+            "collectionIndex": 10,
+            "artifactIndex": 11
+          },
+          "bends": 4,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "backend-minio",
+            "from": "backend",
+            "to": "minio",
+            "label": "datasets S3",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "bends": 5,
+          "stretch": 1.065
+        },
+        {
+          "relationship": {
+            "id": "backend-ai-llm",
+            "from": "backend",
+            "to": "ai_llm",
+            "label": "KPI / Gold LLM",
+            "collectionIndex": 12,
+            "artifactIndex": 13
+          },
+          "bends": 3,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "worker-mlflow",
+            "from": "worker",
+            "to": "mlflow",
+            "label": "runs + métricas",
+            "collectionIndex": 15,
+            "artifactIndex": 16
+          },
+          "bends": 3,
+          "stretch": 1.111,
+          "directCorridorBlockers": [
+            {
+              "id": "minio",
+              "label": "MinIO (S3)",
+              "box": [
+                1140,
+                480,
+                178,
+                64
+              ]
+            }
+          ]
+        },
+        {
+          "relationship": {
+            "id": "worker-model-server",
+            "from": "worker",
+            "to": "model_server",
+            "label": "/internal/load",
+            "collectionIndex": 16,
+            "artifactIndex": 17
+          },
+          "bends": 3,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "model-server-minio",
+            "from": "model_server",
+            "to": "minio",
+            "label": "descarga joblib",
+            "collectionIndex": 21,
+            "artifactIndex": 22
+          },
+          "bends": 3,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "prometheus-backend",
+            "from": "prometheus",
+            "to": "backend",
+            "label": "scrape /metrics",
+            "collectionIndex": 24,
+            "artifactIndex": 25
+          },
+          "bends": 4,
+          "stretch": 1.427,
+          "directCorridorBlockers": [
+            {
+              "id": "grafana",
+              "label": "Grafana 11.3",
+              "box": [
+                555,
+                480,
+                168,
+                64
+              ]
+            }
+          ]
+        }
+      ],
+      "truncated": true
+    },
+    "hints": [
+      "backend has 5 relationships facing its right side, which fits 4 ports: make that side at least 88px, or move some of those neighbours so they face another side of backend.",
+      "github → backend and backend → minio cross next to backend: move node github or minio so the two reach backend from different sides (for example one level with it, one directly above or below it).",
+      "github → worker and redis → worker cross next to worker: move node github or redis so the two reach worker from different sides (for example one level with it, one directly above or below it).",
+      "github → worker crosses backend → ai_llm: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "backend → redis and backend → minio cross next to backend: move node redis or minio so the two reach backend from different sides (for example one level with it, one directly above or below it).",
+      "redis → worker and worker → ai_llm cross next to worker: move node redis or ai_llm so the two reach worker from different sides (for example one level with it, one directly above or below it).",
+      "backend → grafana and prometheus → backend cross next to backend: move node grafana or prometheus so the two reach backend from different sides (for example one level with it, one directly above or below it).",
+      "backend → model_server and model_server → minio cross next to model_server: move node backend or minio so the two reach model_server from different sides (for example one level with it, one directly above or below it)."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}
