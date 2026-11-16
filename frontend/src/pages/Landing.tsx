@@ -8,7 +8,7 @@ import { ScrollVelocity } from '@/components/ScrollVelocity';
 import { useMediaQuery } from 'react-responsive';
 import righarrow_icon from '../assets/rightarrow_icon.svg';
 import { PipelineTimeline, type PipelineStep } from '@/components/PipelineTimeline';
-import { Database, GitBranch, Cpu, Rocket, LineChart, ShieldCheck, Sparkles, ChevronDown, BookOpen, Users } from "lucide-react";
+import { Database, GitBranch, Cpu, Rocket, LineChart, ShieldCheck, Sparkles, ChevronDown, BookOpen, Code2, Users } from "lucide-react";
 import AboutUs from "@/components/AboutUs/AboutUs";
 import LandingMaia, { type LandingStop } from "@/components/LandingMaia";
 
@@ -154,6 +154,10 @@ export default function Landing() {
           <Link to="/user-manual" aria-label='User Manual' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 hover:border-indigo-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2' : 'gap-2 px-3'} `}>
             <BookOpen className='h-5 w-5' />
             <span aria-hidden='true' className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out  ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[8rem] translate-x-0 opacity-100'}`}>User Manual</span>
+          </Link>
+          <Link to="/tech-docs" aria-label='Tech Docs' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 hover:border-indigo-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2' : 'gap-2 px-3'} `}>
+            <Code2 className='h-5 w-5' />
+            <span aria-hidden='true' className={`font-body inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-out  ${isScrolled ? 'max-w-0 -translate-x-1 opacity-0' : 'max-w-[7rem] translate-x-0 opacity-100'}`}>Tech Docs</span>
           </Link>
           <a href='#about' aria-label='About Us' className={`inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/60 py-2 text-sm max-[640px]:text-xs font-medium text-slate-200 hover:border-indigo-500 hover:text-white transition-[gap,padding] duration-300 ${isScrolled ? 'gap-0 px-2' : 'gap-2 px-3'} `}>
             <Users className='h-5 w-5' />

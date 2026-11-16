@@ -468,7 +468,6 @@ export function ScreenshotFrame({
         <img
           src={src}
           alt={alt}
-          loading="lazy"
           className="block h-auto w-full object-contain"
         />
       </div>
