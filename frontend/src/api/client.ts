@@ -9,6 +9,8 @@ import type {
   PaginatedPipelines,
   PipelineLogsResponse,
   ModelDeployment,
+  ModelTraffic,
+  PipelineStats,
   PredictionResult,
   HealthResponse,
   ReadyResponse,
@@ -467,6 +469,16 @@ export async function applyInsight(
 
 export async function getModels(): Promise<ModelDeployment[]> {
   const { data } = await apiClient.get<ModelDeployment[]>('/models');
+  return data;
+}
+
+export async function getPipelineStats(): Promise<PipelineStats> {
+  const { data } = await apiClient.get<PipelineStats>('/pipelines/stats');
+  return data;
+}
+
+export async function getModelTraffic(): Promise<ModelTraffic> {
+  const { data } = await apiClient.get<ModelTraffic>('/models/traffic');
   return data;
 }
 
