@@ -885,6 +885,19 @@ class WebhookAccepted(BaseModel):
     pipeline_ids: list[str] = []
 
 
+class ModelTrafficResponse(BaseModel):
+    """Prediction requests per deployed model, over ``window``."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    window: str
+    #: False when Prometheus could not be reached: the counts are then unknown,
+    #: not zero.
+    available: bool
+    #: Every model the caller may see, with 0 for one nobody has called.
+    requests: dict[str, int]
+
+
 class ModelDeploymentResponse(BaseModel):
     """Deployed model read representation."""
 
