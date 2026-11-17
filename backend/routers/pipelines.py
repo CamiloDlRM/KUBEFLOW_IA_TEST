@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
@@ -19,6 +20,7 @@ from models.schemas import (
     PipelineListResponse,
     PipelineLogsResponse,
     PipelineResponse,
+    PipelineStatsResponse,
     User,
 )
 
@@ -75,6 +77,52 @@ async def list_pipelines(
         for p in pipelines
     ]
     return PipelineListResponse(items=items, total=total, page=page, size=size)
+
+
+#: The window the dashboard's success rate covers.
+STATS_WINDOW_DAYS = 30
+
+
+@router.get(
+    "/stats",
+    response_model=PipelineStatsResponse,
+    summary="Success rate of the caller's runs",
+)
+async def pipeline_stats(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> PipelineStatsResponse:
+    """Count the caller's finished runs over the window, and the one before it.
+
+    Scoped like :func:`list_pipelines`: a member's own runs, an admin's all.
+    Queued and running runs are left out: they have no outcome yet.
+    """
+    now = datetime.now(timezone.utc)
+    window = timedelta(days=STATS_WINDOW_DAYS)
+
+    def counts(start: datetime, end: datetime) -> tuple[int, int]:
+        statement = restrict_by_repo(
+            select(Pipeline.status, func.count())
+            .where(Pipeline.status.in_(("success", "failed")))  # type: ignore[attr-defined]
+            .where(Pipeline.started_at >= start, Pipeline.started_at < end)  # type: ignore[operator]
+            .group_by(Pipeline.status),
+            Pipeline.repo_id,
+            session,
+            current_user,
+        )
+        by_status = dict(session.exec(statement).all())
+        succeeded = by_status.get("success", 0)
+        return succeeded + by_status.get("failed", 0), succeeded
+
+    finished, succeeded = counts(now - window, now)
+    before_finished, before_succeeded = counts(now - 2 * window, now - window)
+    return PipelineStatsResponse(
+        window_days=STATS_WINDOW_DAYS,
+        finished=finished,
+        succeeded=succeeded,
+        success_rate=succeeded / finished if finished else None,
+        previous_success_rate=before_succeeded / before_finished if before_finished else None,
+    )
 
 
 @router.get(

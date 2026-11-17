@@ -35,7 +35,7 @@ export default function Projects() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-100">Projects</h2>
+        <h2 className="font-display text-2xl font-bold text-slate-100">Projects</h2>
         <p className="mt-1 max-w-2xl text-sm text-slate-400">
           A project holds its data and, when you have one, the repository that trains on it.
           You can start with either.

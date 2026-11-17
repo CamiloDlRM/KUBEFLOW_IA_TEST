@@ -34,7 +34,7 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
           All models
         </button>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <h2 className="text-2xl font-bold text-slate-100">{model.model_name}</h2>
+          <h2 className="font-display text-2xl font-bold text-slate-100">{model.model_name}</h2>
           <span className="text-sm text-slate-400">v{model.version}</span>
           <ModelStatusBadge active={model.is_active} />
         </div>

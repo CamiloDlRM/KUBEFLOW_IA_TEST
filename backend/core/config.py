@@ -269,6 +269,13 @@ class AppSettings(BaseSettings):
         default=True,
         description="Expose the /metrics endpoint for Prometheus scraping.",
     )
+    prometheus_internal_url: str = Field(
+        default="http://prometheus:9090",
+        description=(
+            "Prometheus URL as seen from the backend container. Read for each "
+            "model's request count on the dashboard."
+        ),
+    )
 
     # --- Object storage (MinIO / S3) ---
     minio_endpoint: str = Field(

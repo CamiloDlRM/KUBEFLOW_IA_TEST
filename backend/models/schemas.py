@@ -792,6 +792,19 @@ class PipelineDetailResponse(PipelineResponse):
     model_card: dict[str, Any] = Field(default_factory=dict)
 
 
+class PipelineStatsResponse(BaseModel):
+    """How the caller's runs have gone over the last ``window_days``."""
+
+    window_days: int
+    #: Finished runs (success or failed) started in the window.
+    finished: int
+    succeeded: int
+    #: ``succeeded / finished``; ``None`` when nothing finished in the window.
+    success_rate: float | None
+    #: The same rate for the window before, to say whether it is improving.
+    previous_success_rate: float | None
+
+
 class PipelineListResponse(BaseModel):
     """Paginated list of pipelines."""
 
@@ -870,6 +883,19 @@ class WebhookAccepted(BaseModel):
     pipeline_id: str
     #: Every run the event started: a push may change several linked notebooks.
     pipeline_ids: list[str] = []
+
+
+class ModelTrafficResponse(BaseModel):
+    """Prediction requests per deployed model, over ``window``."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    window: str
+    #: False when Prometheus could not be reached: the counts are then unknown,
+    #: not zero.
+    available: bool
+    #: Every model the caller may see, with 0 for one nobody has called.
+    requests: dict[str, int]
 
 
 class ModelDeploymentResponse(BaseModel):

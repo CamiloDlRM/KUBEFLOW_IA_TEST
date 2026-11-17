@@ -34,6 +34,7 @@ from models.schemas import (
     Project,
     ModelDeploymentResponse,
     ModelShareLink,
+    ModelTrafficResponse,
     ModelVersionResponse,
     PredictRequest,
     PredictResponse,
@@ -208,6 +209,59 @@ async def list_models(
         }
 
     return [ModelDeploymentResponse.model_validate(d).model_copy(update=_from_run(d)) for d in deployments]
+
+
+#: How far back the dashboard counts a model's prediction requests.
+TRAFFIC_WINDOW = "30d"
+
+
+@router.get(
+    "/traffic",
+    response_model=ModelTrafficResponse,
+    summary="Prediction requests per deployed model",
+)
+async def model_traffic(
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> ModelTrafficResponse:
+    """Count each visible deployed model's prediction requests over the window.
+
+    The counts live in Prometheus, which knows nothing of owners, so the model
+    names come from the same ownership-filtered query as :func:`list_models`
+    and only those are returned: a member never learns another tenant's
+    traffic, nor that a model by some name exists.
+    """
+    statement = restrict_by_pipeline(
+        select(ModelDeployment.model_name).where(ModelDeployment.is_active == True),  # noqa: E712
+        ModelDeployment.pipeline_id,
+        session,
+        current_user,
+    )
+    names = set(session.exec(statement).all())
+    counts = dict.fromkeys(names, 0)
+    if not names:
+        return ModelTrafficResponse(window=TRAFFIC_WINDOW, available=True, requests=counts)
+
+    query = f"sum by (model_name) (increase(mlops_model_predictions_total[{TRAFFIC_WINDOW}]))"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                f"{settings.prometheus_internal_url.rstrip('/')}/api/v1/query",
+                params={"query": query},
+            )
+            response.raise_for_status()
+            result = response.json()["data"]["result"]
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        logger.warning("models.traffic_unavailable", error=str(exc))
+        return ModelTrafficResponse(window=TRAFFIC_WINDOW, available=False, requests=counts)
+
+    for series in result:
+        name = series.get("metric", {}).get("model_name")
+        if name in counts:
+            # increase() extrapolates, so it reads 2.9 for three requests.
+            counts[name] = round(float(series["value"][1]))
+    return ModelTrafficResponse(window=TRAFFIC_WINDOW, available=True, requests=counts)
 
 
 def _owned_model_or_404(session: Session, model_name: str, user: User) -> None:

@@ -88,7 +88,7 @@ export default function DataFactory() {
     <div className="space-y-6">
       <div>
         <BackLink to={`/projects/${id}`}>{project?.name ?? 'Project'}</BackLink>
-        <h2 className="mt-4 text-2xl font-bold text-slate-100">Data Factory</h2>
+        <h2 className="font-display mt-4 text-2xl font-bold text-slate-100">Data Factory</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           Where the data comes in, gets cleaned, becomes the table this project trains on,
           and finally answers something. Pick any stage you have reached.

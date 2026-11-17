@@ -228,6 +228,25 @@ export interface ModelDeployment {
   share_url?: string | null;
 }
 
+/** How the caller's runs went over the last `window_days`. */
+export interface PipelineStats {
+  window_days: number;
+  finished: number;
+  succeeded: number;
+  /** Null when no run finished in the window. */
+  success_rate: number | null;
+  previous_success_rate: number | null;
+}
+
+/** Prediction requests per deployed model the caller may see. */
+export interface ModelTraffic {
+  /** How far back the counts go, e.g. `30d`. */
+  window: string;
+  /** False when the counts could not be read: unknown, not zero. */
+  available: boolean;
+  requests: Record<string, number>;
+}
+
 /** A model's public link, as its owner sees it. */
 export interface ShareLink {
   model_name: string;

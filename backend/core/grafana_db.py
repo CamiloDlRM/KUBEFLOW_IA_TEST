@@ -52,8 +52,10 @@ TABLE_GRANTS: Final[dict[str, tuple[str, ...]]] = {
     # hashed_password is intentionally absent.
     "users": ("id", "username", "role", "email", "is_active", "created_at"),
     "repositories": (),
-    # Only the branch a run falls back to; the rest of a project is not Grafana's.
-    "projects": ("id", "branch"),
+    # Only what the panels read: owner and status for "My projects", name and
+    # branch to label runs, deploy_policy for the deciding metric. Description,
+    # notebook path and pipeline input are not Grafana's.
+    "projects": ("id", "name", "owner_id", "is_active", "branch", "deploy_policy"),
     "pipelines": (),
     "model_deployments": (),
     "pipeline_insights": (),

@@ -50,7 +50,7 @@ export default function AddRepository() {
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-bold text-slate-100">My Repos</h2>
+            <h2 className="font-display text-2xl font-bold text-slate-100">My Repos</h2>
             <div>
               <h3 className="text-lg font-semibold text-slate-200 pt-4">Add a new repository</h3>
               <p className="mt-1 text-sm text-slate-400">
@@ -134,10 +134,9 @@ export default function AddRepository() {
 
       <section className="space-y-3">
         <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-lg font-semibold text-slate-100">Your repositories</h3>
-            <NotebookTemplateLink />
-          </div>
+          {/* The template link lives in the add-repository form only: it is what
+              you need before registering one, and twice on a page was noise. */}
+          <h3 className="text-lg font-semibold text-slate-100">Your repositories</h3>
           <p className="mt-1 text-sm text-slate-400">
             Each repository is registered once per account. Explore its current branches and notebooks here.
             Link a repository to a project to run pipelines.

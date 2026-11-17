@@ -59,7 +59,7 @@ export default function ProjectDetail() {
         <BackLink to="/projects">All projects</BackLink>
         <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-2xl font-bold text-slate-100">{project.name}</h2>
+            <h2 className="font-display text-2xl font-bold text-slate-100">{project.name}</h2>
             {project.description && (
               <p className="mt-1 max-w-2xl text-sm text-slate-400">{project.description}</p>
             )}
