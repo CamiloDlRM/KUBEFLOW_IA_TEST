@@ -792,6 +792,19 @@ class PipelineDetailResponse(PipelineResponse):
     model_card: dict[str, Any] = Field(default_factory=dict)
 
 
+class PipelineStatsResponse(BaseModel):
+    """How the caller's runs have gone over the last ``window_days``."""
+
+    window_days: int
+    #: Finished runs (success or failed) started in the window.
+    finished: int
+    succeeded: int
+    #: ``succeeded / finished``; ``None`` when nothing finished in the window.
+    success_rate: float | None
+    #: The same rate for the window before, to say whether it is improving.
+    previous_success_rate: float | None
+
+
 class PipelineListResponse(BaseModel):
     """Paginated list of pipelines."""
 
