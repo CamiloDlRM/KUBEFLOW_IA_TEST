@@ -89,8 +89,11 @@ export default function Models() {
                 <th className="px-4 py-3">Metric</th>
                 <th className="px-4 py-3">Deployed</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Public link</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                {/* Both sized to their content, so the table's spare width goes to
+                    the columns on the left instead of opening a gap between the
+                    link and the buttons. */}
+                <th className="w-px whitespace-nowrap px-4 py-3">Public link</th>
+                <th className="w-px whitespace-nowrap px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -116,10 +119,10 @@ export default function Models() {
                   <td className="px-4 py-3">
                     <ModelStatusBadge active={m.is_active} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="w-px whitespace-nowrap px-4 py-3">
                     <ShareLinkCell model={m} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="w-px whitespace-nowrap px-4 py-3">
                     <div className="flex justify-end gap-2">
                       <button
                         onClick={() => setTestModal(m)}
