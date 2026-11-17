@@ -51,7 +51,7 @@ export default function Admin() {
     <div className="mx-auto max-w-lg space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-slate-100">Admin Panel</h2>
+        <h2 className="font-display text-xl font-semibold text-slate-100">Admin Panel</h2>
         <p className="mt-1 text-sm text-slate-400">
           Signed in as{' '}
           <span className="font-medium text-slate-300">{currentUser?.username}</span>{' '}

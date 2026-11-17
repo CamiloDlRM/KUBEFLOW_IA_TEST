@@ -50,7 +50,7 @@ export default function AddRepository() {
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-bold text-slate-100">My Repos</h2>
+            <h2 className="font-display text-2xl font-bold text-slate-100">My Repos</h2>
             <div>
               <h3 className="text-lg font-semibold text-slate-200 pt-4">Add a new repository</h3>
               <p className="mt-1 text-sm text-slate-400">

@@ -34,7 +34,7 @@ export default function ConfirmChange() {
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-slate-100">MLOps Platform</h1>
+          <h1 className="font-display text-2xl font-bold text-slate-100">MLOps Platform</h1>
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center shadow-xl">
