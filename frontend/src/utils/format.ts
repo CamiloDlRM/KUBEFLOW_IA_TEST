@@ -72,3 +72,19 @@ export function truncate(str: string, len = 7): string {
 export function displayName(username: string | undefined | null): string {
   return (username ?? '').replace(/@[gt]$/, '');
 }
+
+/**
+ * The number a model is judged on, named: accuracy as the percentage it always
+ * read as, any other metric as its run logged it.
+ */
+export function modelMetric(model: {
+  accuracy: number;
+  metric?: string;
+  metric_value?: number | null;
+}): { name: string; value: string } {
+  const name = model.metric ?? 'accuracy';
+  // An API older than `metric` sends only the accuracy.
+  const value = model.metric === undefined ? model.accuracy : model.metric_value;
+  if (value == null) return { name, value: '--' };
+  return { name, value: name === 'accuracy' ? `${(value * 100).toFixed(1)}%` : String(Number(value.toFixed(4))) };
+}

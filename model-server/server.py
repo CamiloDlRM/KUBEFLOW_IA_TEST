@@ -5,7 +5,9 @@ Models are held in memory and can be loaded/unloaded at runtime.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import secrets
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -14,10 +16,12 @@ from typing import Any, AsyncIterator
 
 import structlog
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from starlette.concurrency import run_in_threadpool
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -31,12 +35,20 @@ class ModelServerSettings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        protected_namespaces=("settings_",),
     )
 
     mlflow_tracking_uri: str = Field(default="http://mlflow:5000")
     models_base_path: str = Field(default="/app/model_artifacts")
     log_level: str = Field(default="INFO")
     port: int = Field(default=8001)
+    #: Shared with the backend and worker. Every endpoint but the health checks
+    #: requires it, so only the platform can load, unload or query models. Empty
+    #: disables the check, for local runs.
+    model_server_internal_token: str = Field(default="")
+    #: Rows one prediction may carry, and how long it may run.
+    predict_max_rows: int = Field(default=1000)
+    predict_timeout_seconds: float = Field(default=20.0)
 
 
 settings = ModelServerSettings()
@@ -115,9 +127,18 @@ class LoadModelRequest(BaseModel):
 class PredictRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
-    data: list[list[float]] = Field(
-        ..., description="2-D array of feature vectors."
+    data: list[list[FiniteFloat]] = Field(
+        ..., min_length=1, description="2-D array of feature vectors."
     )
+
+    @field_validator("data")
+    @classmethod
+    def _rows_are_rectangular(cls, data: list[list[float]]) -> list[list[float]]:
+        if any(len(row) == 0 for row in data):
+            raise ValueError("every row needs at least one number")
+        if len({len(row) for row in data}) > 1:
+            raise ValueError("every row must have the same number of values")
+        return data
 
 
 class PredictResponse(BaseModel):
@@ -149,6 +170,30 @@ class MessageResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Internal token
+# ---------------------------------------------------------------------------
+
+
+def require_internal_token(x_internal_token: str | None = Header(default=None)) -> None:
+    """Refuse callers without the platform's shared token.
+
+    Loading a model unpickles an artifact (joblib), which runs code: an open
+    load endpoint would let anyone run code here. Unloading takes models
+    offline, and predicting skips the backend's limits. So all of it is the
+    platform's alone. Compared in constant time, so the token cannot be
+    guessed a character at a time from response timings.
+    """
+    expected = settings.model_server_internal_token
+    if not expected:
+        return
+    if not x_internal_token or not secrets.compare_digest(x_internal_token, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing or wrong internal token.")
+
+
+_internal = [Depends(require_internal_token)]
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
@@ -171,6 +216,17 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 with where and why, never the value sent: a NaN cannot be written as
+    JSON, so echoing it back turned a 422 into a 500."""
+    errors = [
+        {key: value for key, value in error.items() if key in ("type", "loc", "msg")}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +258,7 @@ async def ready() -> ReadyResponse:
     "/internal/load/{model_name}",
     response_model=MessageResponse,
     tags=["internal"],
+    dependencies=_internal,
     summary="Load a model from MLflow",
 )
 async def load_model(
@@ -273,7 +330,7 @@ async def load_model(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to load model: {exc}",
+            detail="Failed to load model; see the model-server logs.",
         )
 
 
@@ -297,6 +354,7 @@ def _probabilities(model: Any, data: list[list[float]]) -> list[dict[str, float]
     "/predict/{model_name}",
     response_model=PredictResponse,
     tags=["inference"],
+    dependencies=_internal,
     summary="Run inference",
 )
 async def predict(
@@ -316,11 +374,32 @@ async def predict(
         )
 
     entry = _models[model_name]
-    try:
+    if len(body.data) > settings.predict_max_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"At most {settings.predict_max_rows} rows per request.",
+        )
+    # scikit-learn models remember how many features they were fitted on: a row
+    # of another length is refused here instead of failing inside the model.
+    expected = getattr(entry.model, "n_features_in_", None)
+    if isinstance(expected, int) and len(body.data[0]) != expected:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Each row must have {expected} values; got {len(body.data[0])}.",
+        )
+
+    def _infer() -> tuple[list[Any], list[dict[str, float]] | None]:
         prediction = entry.model.predict(body.data)
+        values = prediction.tolist() if hasattr(prediction, "tolist") else list(prediction)
+        return values, _probabilities(entry.model, body.data)
+
+    try:
+        # Off the event loop, so a slow model does not stall every other request,
+        # and bounded, so a pathological input cannot hold a worker forever.
+        result, probabilities = await asyncio.wait_for(
+            run_in_threadpool(_infer), timeout=settings.predict_timeout_seconds
+        )
         entry.request_count += 1
-        result = prediction.tolist() if hasattr(prediction, "tolist") else list(prediction)
-        probabilities = _probabilities(entry.model, body.data)
 
         logger.info(
             "model.predict",
@@ -334,11 +413,19 @@ async def predict(
             version=entry.version,
             probabilities=probabilities,
         )
+    except asyncio.TimeoutError:
+        logger.error("model.predict_timeout", model_name=model_name, rows=len(body.data))
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="The model took too long to answer.",
+        )
     except Exception as exc:
+        # The exception text is internal detail (paths, shapes, library
+        # internals): it goes to the log, not to whoever sent the request.
         logger.exception("model.predict_failed", model_name=model_name, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Prediction failed: {exc}",
+            detail="Prediction failed.",
         )
 
 
@@ -346,6 +433,7 @@ async def predict(
     "/models",
     response_model=list[ModelInfoResponse],
     tags=["models"],
+    dependencies=_internal,
     summary="List loaded models",
 )
 async def list_models() -> list[ModelInfoResponse]:
@@ -366,6 +454,7 @@ async def list_models() -> list[ModelInfoResponse]:
     "/models/{model_name}",
     response_model=MessageResponse,
     tags=["models"],
+    dependencies=_internal,
     summary="Unload a model",
 )
 async def delete_model(

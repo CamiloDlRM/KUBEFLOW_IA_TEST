@@ -19,6 +19,10 @@ from models.schemas import (
     BranchInfo,
     LinkedNotebookResponse,
     MessageResponse,
+    NotebookEditorCell,
+    NotebookEditorResponse,
+    NotebookSaveRequest,
+    NotebookSaveResponse,
     ModelDeployment,
     Pipeline,
     Project,
@@ -285,6 +289,157 @@ async def list_repo_notebooks(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to list notebooks from GitHub: {exc}",
         ) from exc
+
+
+def _require_notebook_path(path: str) -> str:
+    """Only notebooks are edited here: never another file of the repository."""
+    cleaned = path.strip().strip("/")
+    if not cleaned.lower().endswith(".ipynb") or ".." in cleaned.split("/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .ipynb notebooks can be edited.",
+        )
+    return cleaned
+
+
+def _github_error(action: str, exc: Exception) -> HTTPException:
+    """What GitHub answered, in words the editor can show."""
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (401, 403):
+            detail = (
+                f"GitHub refused to {action}: the token has no write access to this repository "
+                "(or the branch is protected)."
+            )
+        elif code == 404:
+            detail = f"GitHub could not {action}: the notebook or the branch was not found."
+        else:
+            detail = f"GitHub could not {action} (HTTP {code})."
+    else:
+        detail = f"Failed to {action}: {exc}"
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+
+
+@router.get(
+    "/{repo_id}/notebook",
+    response_model=NotebookEditorResponse,
+    summary="Open a notebook for editing",
+)
+async def read_repo_notebook(
+    repo_id: int,
+    branch: str,
+    path: str,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> NotebookEditorResponse:
+    """Return the notebook's cells (text and tags, no outputs) as ``branch`` has them now."""
+    import json
+
+    from core.github import get_file
+    from core.notebook_edit import editor_cells
+
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    notebook_path = _require_notebook_path(path)
+    try:
+        raw, sha = await get_file(repo.github_url, repo_token(repo, settings), branch, notebook_path)
+    except Exception as exc:
+        logger.error("repo.read_notebook_failed", repo_id=repo_id, branch=branch, error=str(exc))
+        raise _github_error("read the notebook", exc) from exc
+    try:
+        notebook = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This file is not a valid notebook (its JSON cannot be read).",
+        ) from exc
+
+    linked = [
+        project.name
+        for project in linked_projects(session, repo)
+        if project.branch == branch and project.notebook_path.strip("/") == notebook_path
+    ]
+    return NotebookEditorResponse(
+        branch=branch,
+        notebook_path=notebook_path,
+        sha=sha,
+        cells=[NotebookEditorCell(**cell) for cell in editor_cells(notebook)],
+        linked_projects=linked,
+    )
+
+
+@router.put(
+    "/{repo_id}/notebook",
+    response_model=NotebookSaveResponse,
+    summary="Commit an edited notebook to its branch",
+)
+async def save_repo_notebook(
+    repo_id: int,
+    body: NotebookSaveRequest,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> NotebookSaveResponse:
+    """Swap the edited cells into the notebook and push it to the branch it came from.
+
+    The edits are applied to the file as GitHub has it now, and only if that
+    is still the version the editor opened (``sha``): a commit made meanwhile
+    is never overwritten.
+    """
+    import json
+
+    from core.github import FileChangedError, get_file, put_file
+    from core.notebook_edit import apply_edits, serialize
+
+    repo = get_visible_repo_or_404(session, repo_id, current_user)
+    notebook_path = _require_notebook_path(body.notebook_path)
+    token = repo_token(repo, settings)
+    changed_elsewhere = HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="The notebook changed on GitHub since you opened it. Reload to get the latest version.",
+    )
+    try:
+        raw, sha = await get_file(repo.github_url, token, body.branch, notebook_path)
+    except Exception as exc:
+        logger.error("repo.save_notebook_read_failed", repo_id=repo_id, error=str(exc))
+        raise _github_error("read the notebook", exc) from exc
+    if sha != body.sha:
+        raise changed_elsewhere
+
+    notebook = json.loads(raw)
+    try:
+        changed = apply_edits(notebook, {edit.index: edit.source for edit in body.cells})
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if changed == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="There are no changes to save.",
+        )
+
+    message = body.message.strip() or f"Update {notebook_path} from Maia"
+    try:
+        commit_sha, new_sha = await put_file(
+            repo.github_url, token, body.branch, notebook_path, serialize(notebook), message, sha
+        )
+    except FileChangedError as exc:
+        raise changed_elsewhere from exc
+    except Exception as exc:
+        logger.error("repo.save_notebook_failed", repo_id=repo_id, branch=body.branch, error=str(exc))
+        raise _github_error("save the notebook", exc) from exc
+
+    logger.info(
+        "repo.notebook_saved",
+        repo_id=repo_id,
+        branch=body.branch,
+        path=notebook_path,
+        commit_sha=commit_sha,
+        changed_cells=changed,
+        user_id=current_user.id,
+    )
+    return NotebookSaveResponse(commit_sha=commit_sha, sha=new_sha, changed_cells=changed)
 
 
 async def launch_pipeline(

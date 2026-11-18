@@ -74,6 +74,12 @@ export default function Layout() {
               {displayName(currentUser?.username)}!
             </p>
           </div>
+          {/* The manual, a tab away: it is its own full page, outside this
+              layout, and a new tab keeps whatever was open here. */}
+          <Link to="/docs" target="_blank" rel="noopener" className={navLinkClass({ isActive: false })}>
+            <DocsIcon />
+            Docs
+          </Link>
           <NavLink to="/account" className={navLinkClass}>
             <SettingsIcon />
             Account
@@ -102,6 +108,9 @@ export default function Layout() {
               <AdminIcon />
             </NavLink>
           )}
+          <Link to="/docs" target="_blank" rel="noopener" className={navLinkClass({ isActive: false })} aria-label="Docs">
+            <DocsIcon />
+          </Link>
           <NavLink to="/account" className={navLinkClass} aria-label="Account">
             <SettingsIcon />
           </NavLink>
@@ -177,6 +186,14 @@ function RepositoriesIcon() {
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5h6m-8 3h10m-12 3h14m-12 3h10m-8 3h6" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.5h14a1 1 0 011 1v15a1 1 0 01-1 1H5a1 1 0 01-1-1v-15a1 1 0 011-1z" />
+    </svg>
+  );
+}
+
+function DocsIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13C10.832 18.477 9.246 18 7.5 18S4.168 18.477 3 19.253v-13C4.168 5.477 5.754 5 7.5 5s3.332.477 4.5 1.253zm0 0C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
     </svg>
   );
 }

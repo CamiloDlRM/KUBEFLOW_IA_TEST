@@ -5,8 +5,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, getRepoBranches, getRepoNotebooks, getRepos } from '../api/client';
 import type { LinkedNotebook, Repository } from '../types';
 import Spinner from '../components/Spinner';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Pencil } from 'lucide-react';
 import MaiaEmptyState from '../components/MaiaEmptyState';
+import NotebookTemplateLink from '../components/NotebookTemplateLink';
 
 const GITHUB_URL_REGEX = /^https:\/\/github\.com\/[\w.\-]+\/[\w.\-]+\/?$/;
 
@@ -49,7 +50,7 @@ export default function AddRepository() {
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-bold text-slate-100">My Repos</h2>
+            <h2 className="font-display text-2xl font-bold text-slate-100">My Repos</h2>
             <div>
               <h3 className="text-lg font-semibold text-slate-200 pt-4">Add a new repository</h3>
               <p className="mt-1 text-sm text-slate-400">
@@ -92,6 +93,8 @@ export default function AddRepository() {
             </div>
           )}
 
+          <NotebookTemplateLink />
+
           {/* GitHub URL */}
           <div>
             <label htmlFor="repo-url" className="mb-1 block text-sm font-medium text-slate-300">
@@ -131,6 +134,8 @@ export default function AddRepository() {
 
       <section className="space-y-3">
         <div>
+          {/* The template link lives in the add-repository form only: it is what
+              you need before registering one, and twice on a page was noise. */}
           <h3 className="text-lg font-semibold text-slate-100">Your repositories</h3>
           <p className="mt-1 text-sm text-slate-400">
             Each repository is registered once per account. Explore its current branches and notebooks here.
@@ -352,10 +357,18 @@ function RepositoryExplorer({
                   href={notebookUrl(repoUrl, branch, path)}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-brand-400 underline-offset-2 hover:text-brand-300 hover:underline"
+                  className="min-w-0 truncate text-brand-400 underline-offset-2 hover:text-brand-300 hover:underline"
                 >
                   {path}
                 </a>
+                <Link
+                  to={`/repos/${repoId}/notebook?${new URLSearchParams({ branch, path })}`}
+                  aria-label={`Edit ${path} on ${branch}`}
+                  title="Edit this notebook"
+                  className="ml-auto shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-slate-800 hover:text-brand-300"
+                >
+                  <Pencil size={14} aria-hidden="true" />
+                </Link>
               </li>
             );
           })}

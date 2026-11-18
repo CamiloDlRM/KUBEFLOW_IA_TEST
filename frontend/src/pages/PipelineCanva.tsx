@@ -10,7 +10,7 @@ import type { Node, NodeOrigin, ReactFlowInstance } from '@xyflow/react';
 import { INPUT_DRAG_TYPE, decodeChoice } from '../components/canvas/phases';
 import RunPipelineModal from '../components/RunPipelineModal';
 import { BACK_BUTTON_CLASS } from '../components/BackLink';
-import NodePanel, { PANEL_MARGIN, PANEL_WIDTH } from '../components/flow/NodePanel';
+import NodePanel, { PANEL_MARGIN, panelWidthFor } from '../components/flow/NodePanel';
 import { renderNodePanelContent } from '../components/flow/NodePanelContent';
 import { MAIA_PANEL, MaiaAvatar, MaiaPanelContent, maiaMoodFor } from '../components/flow/Maia';
 import RunPicker from '../components/flow/RunPicker';
@@ -22,8 +22,6 @@ const FOCUS_ZOOM = 1.8; // React Flow's default maxZoom is 2
 const CAMERA_DURATION = 600;
 /** Extra screen pixels the focused node moves left, so it sits clear of the panel rather than near it. */
 const FOCUS_NUDGE = 60;
-/** How far Maia moves left with a panel open: to the middle of the space the panel leaves. */
-const MAIA_SHIFT = (PANEL_WIDTH + PANEL_MARGIN) / 2;
 /** Matches the move's CSS transition (duration-700) plus a beat to settle. */
 const SWIM_DURATION = 800;
 /** Maia at rest at the bottom, and opened: about the width of a node. */
@@ -154,7 +152,7 @@ export default function PipelineCanva() {
     // From the node's anchor (NODE_ORIGIN) to its middle.
     const centerX = node.position.x + width * (0.5 - NODE_ORIGIN[0]);
     const centerY = node.position.y + height * (0.5 - NODE_ORIGIN[1]);
-    const offset = ((PANEL_WIDTH + PANEL_MARGIN) / 2 + FOCUS_NUDGE) / FOCUS_ZOOM;
+    const offset = (maiaShift + FOCUS_NUDGE) / FOCUS_ZOOM;
     flow.setCenter(centerX + offset, centerY, { zoom: FOCUS_ZOOM, duration: CAMERA_DURATION });
   }
 
@@ -167,6 +165,7 @@ export default function PipelineCanva() {
   // Maia's panel takes the place of a node's: one panel open at a time. The camera
   // stays put, since she talks about the whole run rather than one node.
   const maiaOpen = openNode === MAIA_PANEL;
+  const [autoAnalyze, setAutoAnalyze] = useState(false);
 
   // While she moves out of the panel's way (or back), she swims: leaning into the move,
   // tentacles beating faster. Only on open and close, not when one panel replaces another.
@@ -192,12 +191,18 @@ export default function PipelineCanva() {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const freeWidth = Math.max(canvasSize.width - PANEL_WIDTH - PANEL_MARGIN, 0);
+  // The panel scales with the canvas, so on a small screen it leaves room for the nodes.
+  const panelWidth = panelWidthFor(canvasSize.width);
+  const freeWidth = Math.max(canvasSize.width - panelWidth - PANEL_MARGIN, 0);
+  /** How far Maia moves left with a panel open: to the middle of the space the panel leaves. */
+  const maiaShift = (panelWidth + PANEL_MARGIN) / 2;
 
   // Opened, Maia grows to about a node's size in the middle of the free space, and the
   // nodes move up out of her way to the top of it.
-  function openMaia() {
+  // `analyze`: opened from a failure, so she starts reviewing the run without another click.
+  function openMaia(analyze = false) {
     setOpenNode(MAIA_PANEL);
+    setAutoAnalyze(analyze);
     if (!flow || !canvasSize.width) return;
     const bounds = flow.getNodesBounds(flow.getNodes());
     const zoom = Math.min(1.2, (freeWidth * 0.85) / Math.max(bounds.width, 1));
@@ -213,7 +218,7 @@ export default function PipelineCanva() {
     );
   }
   // From her spot at the bottom to the middle of the free space, a little below centre
-  // so the nodes above have room. The sideways move is already done by MAIA_SHIFT.
+  // so the nodes above have room. The sideways move is already done by maiaShift.
   const maiaRise = MAIA_BOTTOM + MAIA_SIZE / 2 - canvasSize.height * 0.4;
   const maiaExpanded: CSSProperties | undefined = maiaOpen
     ? { transform: `translateY(${maiaRise}px) scale(${MAIA_EXPANDED / MAIA_SIZE})` }
@@ -330,7 +335,7 @@ export default function PipelineCanva() {
               middle of the space that is left, so the panel never covers her. */}
           <div
             className="flex flex-col items-center gap-2 transition-transform duration-700 ease-in-out motion-reduce:transition-none"
-            style={{ transform: openNode ? `translateX(-${MAIA_SHIFT}px)` : undefined }}
+            style={{ transform: openNode ? `translateX(-${maiaShift}px)` : undefined }}
           >
           {project && !view.repo && (
             <p className="rounded-lg border border-slate-700 bg-slate-900/90 px-4 py-2 text-sm text-slate-300">
@@ -342,7 +347,7 @@ export default function PipelineCanva() {
             </p>
           )}
           {view.failure && (
-            <p className="rounded-lg border border-red-800 bg-red-950/90 px-4 py-2 text-sm text-red-300">
+            <p className="max-h-[25vh] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-red-800 bg-red-950/90 px-4 py-2 text-sm text-red-300">
               <span className="font-semibold">Failed at {view.failure.stage}:</span> {view.failure.message}
             </p>
           )}
@@ -355,9 +360,19 @@ export default function PipelineCanva() {
             </p>
           )}
           {view.head.isError && !view.fromRun && (
-            <p className="rounded-lg border border-red-800 bg-red-950/90 px-4 py-2 text-xs text-red-300">
+            <p className="max-h-[25vh] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-red-800 bg-red-950/90 px-4 py-2 text-xs text-red-300">
               {view.head.error.message}
             </p>
+          )}
+          {/* She is sad when the run failed: offer her review of it, right above her. */}
+          {view.shownRun?.status === 'failed' && !maiaOpen && (
+            <button
+              type="button"
+              onClick={() => openMaia(true)}
+              className="rounded-full border border-red-500/40 bg-slate-900/90 px-4 py-1.5 text-xs font-semibold text-red-200 shadow-lg transition hover:bg-red-950/90"
+            >
+              Ask Maia what went wrong
+            </button>
           )}
           {/* Maia floats at the bottom, under any notice; she looks at the cursor and
               closes her eyes when it is on her (`maia-hover`). Opened, she grows and rises
@@ -389,6 +404,7 @@ export default function PipelineCanva() {
             title={openStep.label}
             caption={openStep.caption}
             onClose={closePanel}
+            width={panelWidth}
           >
             {renderNodePanelContent(openStep.id, { projectId: project?.id, chooseInput, view, openMaia })}
           </NodePanel>
@@ -401,8 +417,9 @@ export default function PipelineCanva() {
           titleClassName="bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent"
           caption="Your AI training advisor · reviews this run's code, metrics and history"
           onClose={closePanel}
+          width={panelWidth}
         >
-          <MaiaPanelContent view={view} />
+          <MaiaPanelContent view={view} autoAnalyze={autoAnalyze} />
         </NodePanel>
       )}
     </div>

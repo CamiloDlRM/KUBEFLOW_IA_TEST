@@ -148,6 +148,38 @@ export interface BranchInfo {
   commit_sha: string;
 }
 
+/** A notebook cell in the in-app editor: its text, never its outputs. */
+export interface EditorCell {
+  index: number;
+  cell_type: 'code' | 'markdown' | 'raw';
+  source: string;
+  tags: string[];
+}
+
+export interface EditorNotebook {
+  branch: string;
+  notebook_path: string;
+  /** The file's version on GitHub; a save is refused if it has moved on. */
+  sha: string;
+  cells: EditorCell[];
+  /** Projects a push to this notebook starts a pipeline run in. */
+  linked_projects: string[];
+}
+
+export interface NotebookSavePayload {
+  branch: string;
+  notebook_path: string;
+  sha: string;
+  message: string;
+  cells: { index: number; source: string }[];
+}
+
+export interface NotebookSaved {
+  commit_sha: string;
+  sha: string;
+  changed_cells: number;
+}
+
 export interface TriggerAccepted {
   status: string;
   pipeline_id: string;
@@ -177,6 +209,10 @@ export interface ModelDeployment {
   model_name: string;
   version: string;
   accuracy: number;
+  /** What the model is judged on: its project's deciding metric, as its run logged it. */
+  metric?: string;
+  /** Null when the run logged neither that metric nor accuracy. */
+  metric_value?: number | null;
   endpoint_url: string;
   deployed_at: string;
   is_active: boolean;
@@ -188,6 +224,37 @@ export interface ModelDeployment {
   /** What to send the model and what it answers across that. `{}` when the
    *  notebook wrote no training features. */
   model_card?: ModelCard;
+  /** The model's public link, which answers anyone without signing in. Null when not shared. */
+  share_url?: string | null;
+}
+
+/** How the caller's runs went over the last `window_days`. */
+export interface PipelineStats {
+  window_days: number;
+  finished: number;
+  succeeded: number;
+  /** Null when no run finished in the window. */
+  success_rate: number | null;
+  previous_success_rate: number | null;
+}
+
+/** Prediction requests per deployed model the caller may see. */
+export interface ModelTraffic {
+  /** How far back the counts go, e.g. `30d`. */
+  window: string;
+  /** False when the counts could not be read: unknown, not zero. */
+  available: boolean;
+  requests: Record<string, number>;
+}
+
+/** A model's public link, as its owner sees it. */
+export interface ShareLink {
+  model_name: string;
+  enabled: boolean;
+  url: string | null;
+  per_ip_per_minute: number;
+  per_link_per_minute: number;
+  max_rows: number;
 }
 
 /** One input of a trained model, with the range it saw in training. */
@@ -496,6 +563,20 @@ export interface ProjectRepository {
   notebook_path: string;
 }
 
+/** An uploaded file, and how far it has got through the layers. */
+export interface UploadStatus {
+  dataset_id: number;
+  name: string;
+  size_bytes: number;
+  created_at: string;
+  status: 'queued' | 'running' | 'success' | 'failed';
+  error: string;
+  rows_in: number | null;
+  rows_kept: number | null;
+  source_id: number | null;
+  source_name: string;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -630,6 +711,10 @@ export interface CleaningStep {
   note: string;
   columns: string[];
   changed: boolean;
+  /** Turned off in the source's recipe, so it did not run. */
+  skipped?: boolean;
+  /** One of the source's own rules that could not run, and why. */
+  error?: string;
   /** The first rows before and after this one rule, on aligned columns. Rows
    *  are matched by their place in the data as it arrived, so an earlier
    *  removal does not make everything below it look rewritten. */
@@ -639,11 +724,12 @@ export interface CleaningStep {
 
 /** One column, named on both sides of a single rule. */
 export interface CleaningColumn {
-  /** Its name before the rule; null only on the first step. */
+  /** Its name before the rule; null on the first step and for a column the rule added. */
   before: string | null;
   /** Its name after; null when the rule dropped it. */
   after: string | null;
-  change: 'same' | 'renamed' | 'dropped';
+  /** `added` only for the source's own rules: a split or a computed column. */
+  change: 'same' | 'renamed' | 'dropped' | 'added';
 }
 
 export interface CleaningRow {
@@ -664,6 +750,136 @@ export interface CleaningSteps {
   rows_out: number;
   sample: number;
   steps: CleaningStep[];
+  /** The lossy options of the recipe replayed, in words. */
+  lossy?: string[];
+  /** A draft recipe tried out, not what the run did. */
+  preview?: boolean;
+  /** What normalisation did after the rules (or would do, for a draft). */
+  normalization?: NormalizationResult;
+}
+
+/** What coding the free text of one extraction did. Empty when it did not run. */
+export interface NormalizationResult {
+  rows?: number;
+  already_coded?: number;
+  filled?: number;
+  unresolved?: number;
+  fill_rate?: number;
+  vocabulary_size?: number;
+  by_method?: Record<string, number>;
+  mode?: NormalizeMode;
+  /** The column the codes were written to. */
+  column?: string;
+  min_confidence?: number;
+  error?: string;
+}
+
+export type NormalizeMode = 'off' | 'suggest' | 'fill';
+
+/** Whether and how free text is coded on the way to silver. Mirrors core.cleaning.NormalizeSettings. */
+export interface NormalizeSettings {
+  mode: NormalizeMode;
+  text_column: string;
+  code_column: string;
+  /** Lowest similarity a fuzzy match is accepted at; 1 is exact matches only. */
+  min_confidence: number;
+}
+
+/** The last time a source's silver was cleaned again with its current recipe. */
+export interface RecleanState {
+  status?: 'queued' | 'running' | 'success' | 'failed';
+  queued_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  runs?: number;
+  rows_in?: number;
+  rows_out?: number;
+  gold_version?: number;
+  error?: string;
+}
+
+/** A plausible range for a measurement, by exact column or by name pattern. */
+export interface MeasureRange {
+  unit: string;
+  low: number;
+  high: number;
+  column?: string;
+  pattern?: string;
+}
+
+/** How one source wants the cleaning standard applied. Mirrors core.cleaning.CleaningRecipe. */
+export interface CleaningRecipe {
+  disabled: string[];
+  null_tokens: string[];
+  keep_as_text: string[];
+  /** Lossy: values that do not fit the forced type become null. */
+  force_types: Record<string, string>;
+  /** Lossy when not empty: rows matching on these columns count as duplicates. */
+  dedupe_on: string[];
+  categorical_max_distinct: number;
+  fold_skip: string[];
+  /** null recognises sex columns by their name. */
+  sex_columns: string[] | null;
+  ranges: MeasureRange[];
+  /** null keeps what the source was registered with (`normalize_default`). */
+  normalize: NormalizeSettings | null;
+  /** The source's own rules, run in order after the standard. */
+  steps: CustomStep[];
+}
+
+/** One of a source's own silver rules. Mirrors core.custom_steps. */
+export type CustomStep =
+  | { kind: 'rename'; label: string; column: string; to: string }
+  | { kind: 'drop_columns'; label: string; columns: string[] }
+  | {
+      kind: 'replace_values';
+      label: string;
+      column: string;
+      /** `to: null` empties the value (lossy). */
+      mapping: { from: string; to: string | null }[];
+      ignore_case: boolean;
+    }
+  | { kind: 'fill_nulls'; label: string; column: string; value: string }
+  | {
+      kind: 'convert_units';
+      label: string;
+      column: string;
+      factor: number;
+      offset: number;
+      /** Optional condition (DuckDB SQL); empty converts every row. */
+      when: string;
+      from_unit: string;
+      to_unit: string;
+    }
+  | { kind: 'parse_dates'; label: string; column: string; format: string; as: 'date' | 'timestamp' }
+  | { kind: 'split_column'; label: string; column: string; separator: string; into: string[] }
+  | { kind: 'validate'; label: string; condition: string; action: 'flag' | 'drop' }
+  | { kind: 'compute'; label: string; column: string; expression: string };
+
+export type CustomStepKind = CustomStep['kind'];
+
+export interface CleaningRule {
+  name: string;
+  tier: 'structural' | 'categorical' | 'domain';
+  title: string;
+  summary: string;
+}
+
+export interface CleaningRecipeState {
+  source_id: number;
+  mode: 'standard' | 'custom';
+  recipe: CleaningRecipe;
+  standard: CleaningRecipe;
+  rules: CleaningRule[];
+  forceable_types: string[];
+  lossy: string[];
+  /** The normalisation that applies while the recipe sets none. */
+  normalize_default: NormalizeSettings;
+  normalize_modes: NormalizeMode[];
+  /** Extractions in silver, and how many were cleaned with another recipe. */
+  runs: number;
+  stale_runs: number;
+  reclean: RecleanState;
 }
 
 export interface GoldRelations {

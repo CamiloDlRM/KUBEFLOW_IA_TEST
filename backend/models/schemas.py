@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 from sqlmodel import Column, Field as SQLField, JSON, SQLModel
 
 
@@ -236,6 +236,28 @@ class ModelDeployment(SQLModel, table=True):
     pipeline_id: str | None = SQLField(default=None, foreign_key="pipelines.id")
 
 
+class ModelShareLink(SQLModel, table=True):
+    """The public link to a model: anyone holding it can ask for predictions.
+
+    One per model *name*, so the link survives new versions and rollbacks: it
+    always answers with whichever version is serving. The URL carries a random
+    token rather than the name, because names are short words anyone can guess
+    and walk through; a token can only be had from someone who shared it.
+    """
+
+    __tablename__ = "model_share_links"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    model_name: str = SQLField(index=True, unique=True)
+    #: 32 bytes from ``secrets.token_urlsafe``: unguessable, and URL-safe as is.
+    token: str = SQLField(index=True, unique=True)
+    #: Off stops the link answering without forgetting it; turning it back on
+    #: restores the same URL. Regenerating the token is how a leaked one dies.
+    enabled: bool = SQLField(default=True)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+    created_by: int | None = SQLField(default=None, foreign_key="users.id")
+
+
 class PipelineInsight(SQLModel, table=True):
     """AI-generated feedback report for a pipeline run."""
 
@@ -359,6 +381,15 @@ class DataSource(SQLModel, table=True):
     #: harness also reads.
     normalize_text_column: str = SQLField(default="")
     normalize_code_column: str = SQLField(default="")
+
+    #: How the cleaning standard is applied to this source: rules turned off,
+    #: its own placeholders, forced types, and so on. ``{}`` is the standard.
+    #: See :class:`core.cleaning.CleaningRecipe`.
+    cleaning_recipe: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The last time this source's silver was cleaned again with its current
+    #: recipe: status (queued | running | success | failed), when, how many
+    #: extractions, the gold version it produced, or the error. ``{}`` if never.
+    reclean: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     created_at: datetime = SQLField(default_factory=_utcnow)
     is_active: bool = SQLField(default=True)
@@ -581,15 +612,31 @@ class RepoCreateRequest(BaseModel):
 
 
 class PredictRequest(BaseModel):
-    """Payload for model inference."""
+    """Payload for model inference.
+
+    Shaped here, before any of it reaches a model: numbers only and finite
+    (NaN and Infinity parse as JSON but mean nothing to a model), at least one
+    row, and every row the same length. How many rows, and how long a row must
+    be for *this* model, are checked by the endpoint (core.predict_input).
+    """
 
     model_config = ConfigDict(strict=True)
 
-    data: list[list[float]] = Field(
+    data: list[list[FiniteFloat]] = Field(
         ...,
+        min_length=1,
         description="2-D array of feature vectors.",
         examples=[[[5.1, 3.5, 1.4, 0.2]]],
     )
+
+    @field_validator("data")
+    @classmethod
+    def _rows_are_rectangular(cls, data: list[list[float]]) -> list[list[float]]:
+        if any(len(row) == 0 for row in data):
+            raise ValueError("every row needs at least one number")
+        if len({len(row) for row in data}) > 1:
+            raise ValueError("every row must have the same number of values")
+        return data
 
 
 class LoadModelRequest(BaseModel):
@@ -745,6 +792,19 @@ class PipelineDetailResponse(PipelineResponse):
     model_card: dict[str, Any] = Field(default_factory=dict)
 
 
+class PipelineStatsResponse(BaseModel):
+    """How the caller's runs have gone over the last ``window_days``."""
+
+    window_days: int
+    #: Finished runs (success or failed) started in the window.
+    finished: int
+    succeeded: int
+    #: ``succeeded / finished``; ``None`` when nothing finished in the window.
+    success_rate: float | None
+    #: The same rate for the window before, to say whether it is improving.
+    previous_success_rate: float | None
+
+
 class PipelineListResponse(BaseModel):
     """Paginated list of pipelines."""
 
@@ -825,6 +885,19 @@ class WebhookAccepted(BaseModel):
     pipeline_ids: list[str] = []
 
 
+class ModelTrafficResponse(BaseModel):
+    """Prediction requests per deployed model, over ``window``."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    window: str
+    #: False when Prometheus could not be reached: the counts are then unknown,
+    #: not zero.
+    available: bool
+    #: Every model the caller may see, with 0 for one nobody has called.
+    requests: dict[str, int]
+
+
 class ModelDeploymentResponse(BaseModel):
     """Deployed model read representation."""
 
@@ -833,6 +906,10 @@ class ModelDeploymentResponse(BaseModel):
     model_name: str
     version: str
     accuracy: float
+    #: What the model is judged on — its project's deciding metric, as its run
+    #: logged it — and that value. ``accuracy`` is 0.0 for a model that has none.
+    metric: str = "accuracy"
+    metric_value: float | None = None
     endpoint_url: str
     deployed_at: datetime
     is_active: bool
@@ -844,6 +921,45 @@ class ModelDeploymentResponse(BaseModel):
     #: The card of the run that produced it — what to send it, in what range,
     #: and what it answers across that. Empty for models trained before cards.
     model_card: dict[str, Any] = Field(default_factory=dict)
+    #: The model's public link: where anyone can ask it for predictions without
+    #: signing in. None when it has never been shared or is switched off.
+    share_url: str | None = None
+
+
+class ShareLinkResponse(BaseModel):
+    """A model's public link, as its owner sees it."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_name: str
+    enabled: bool
+    #: The full URL to share. None until the link is first switched on.
+    url: str | None = None
+    #: Requests one client may make per minute, and the link may answer in all.
+    per_ip_per_minute: int
+    per_link_per_minute: int
+    max_rows: int
+
+
+class ShareLinkUpdate(BaseModel):
+    """Switch a model's public link on or off."""
+
+    enabled: bool
+
+
+class PublicModelInfo(BaseModel):
+    """What a public link answers to GET: enough to call it correctly, nothing more."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_name: str
+    version: str
+    #: Each input in the order a row must list them: name and, when known, type.
+    inputs: list[dict[str, Any]] = Field(default_factory=list)
+    #: The classes a classifier answers with, when it says.
+    classes: list[Any] = Field(default_factory=list)
+    max_rows: int
+    per_ip_per_minute: int
 
 
 class PredictResponse(BaseModel):
@@ -977,6 +1093,48 @@ class GithubConfirmNewRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     pending: str
+
+
+class CleaningRuleResponse(BaseModel):
+    """One rule of the standard, for a person choosing a recipe."""
+
+    name: str
+    tier: str
+    title: str
+    summary: str
+
+
+class CleaningRecipeRequest(BaseModel):
+    """A source's recipe, or ``reset`` to go back to the standard."""
+
+    recipe: dict[str, Any] = Field(default_factory=dict)
+    reset: bool = False
+
+
+class CleaningRecipeResponse(BaseModel):
+    """How a source is cleaned, against the standard it departs from."""
+
+    source_id: int
+    #: ``standard`` while the source has not set a recipe, ``custom`` after.
+    mode: str
+    #: The recipe in force, every option spelled out.
+    recipe: dict[str, Any]
+    #: The standard, so an editor can show what each option would be by default.
+    standard: dict[str, Any]
+    rules: list[CleaningRuleResponse]
+    forceable_types: list[str]
+    #: The lossy options this recipe turns on, in words.
+    lossy: list[str] = Field(default_factory=list)
+    #: The normalisation that applies while the recipe sets none: what the
+    #: source was registered with.
+    normalize_default: dict[str, Any] = Field(default_factory=dict)
+    normalize_modes: list[str] = Field(default_factory=list)
+    #: Extractions in silver, and how many of them were cleaned with a recipe
+    #: other than this one — the ones re-cleaning would change.
+    runs: int = 0
+    stale_runs: int = 0
+    #: The last re-clean of this source's silver (see DataSource.reclean).
+    reclean: dict[str, Any] = Field(default_factory=dict)
 
 
 class DataSourceCreateRequest(BaseModel):
@@ -1348,6 +1506,10 @@ class CleaningStepResponse(BaseModel):
     #: reader can see that the rule ran and found nothing to do — which is a
     #: different statement from the rule not existing.
     changed: bool = False
+    #: Turned off in the source's recipe, so it did not run at all.
+    skipped: bool = False
+    #: One of the source's own rules that could not run, and why.
+    error: str = ""
 
     #: The first rows, before and after this one rule, on aligned columns. Rows
     #: are matched by their position in the data as it arrived, so a
@@ -1367,6 +1529,20 @@ class CleaningStepsResponse(BaseModel):
     #: How many rows each preview shows.
     sample: int = 0
     steps: list[CleaningStepResponse] = Field(default_factory=list)
+    #: The lossy options of the recipe replayed, in words.
+    lossy: list[str] = Field(default_factory=list)
+    #: True when this is a draft recipe tried out, not what the run did.
+    preview: bool = False
+    #: What normalisation did after the rules (or would do, for a draft).
+    normalization: dict[str, Any] = Field(default_factory=dict)
+
+
+class CleaningPreviewRequest(BaseModel):
+    """A draft recipe to try on a source's latest extraction, without saving it."""
+
+    source_id: int
+    recipe: dict[str, Any] = Field(default_factory=dict)
+    limit: int = Field(default=8, ge=1, le=50)
 
 
 class GoldDefinitionRequest(BaseModel):
@@ -1488,9 +1664,76 @@ class BranchInfo(BaseModel):
     commit_sha: str
 
 
+class NotebookEditorCell(BaseModel):
+    """A notebook cell as the in-app editor shows it: its text, never its outputs."""
+
+    index: int
+    cell_type: str
+    source: str
+    tags: list[str] = []
+
+
+class NotebookEditorResponse(BaseModel):
+    """A notebook opened for editing."""
+
+    branch: str
+    notebook_path: str
+    #: The file's blob SHA: sent back on save so a newer commit is not overwritten.
+    sha: str
+    cells: list[NotebookEditorCell]
+    #: Active projects that train with this notebook on this branch: a push to
+    #: it starts a pipeline run in each of them.
+    linked_projects: list[str] = []
+
+
+class NotebookCellEdit(BaseModel):
+    index: int
+    source: str
+
+
+class NotebookSaveRequest(BaseModel):
+    """The cells whose text changed, to commit over the version ``sha``."""
+
+    branch: str = Field(min_length=1)
+    notebook_path: str = Field(min_length=1)
+    sha: str = Field(min_length=1)
+    message: str = Field(default="", max_length=200)
+    cells: list[NotebookCellEdit]
+
+
+class NotebookSaveResponse(BaseModel):
+    commit_sha: str
+    #: The file's new blob SHA, for the next save.
+    sha: str
+    changed_cells: int
+
+
 # ---------------------------------------------------------------------------
 # Datasets (MinIO)
 # ---------------------------------------------------------------------------
+
+class UploadStatusResponse(BaseModel):
+    """An uploaded file, and how far it has got through the layers.
+
+    The upload request returns as soon as the file is stored; the worker then
+    carries it through bronze, silver and gold. This is what lets the page say
+    which of those it has reached, instead of "uploaded" and then nothing.
+    """
+
+    dataset_id: int
+    name: str
+    size_bytes: int
+    created_at: datetime
+    #: ``queued`` until the worker picks it up, then ``running``, ``success`` or ``failed``.
+    status: str
+    error: str = ""
+    #: Rows read from the file into bronze, and rows the cleaning kept in silver.
+    rows_in: int | None = None
+    rows_kept: int | None = None
+    #: The stream it landed in — the upload's name in the layers.
+    source_id: int | None = None
+    source_name: str = ""
+
 
 class DatasetResponse(BaseModel):
     """Dataset read representation."""

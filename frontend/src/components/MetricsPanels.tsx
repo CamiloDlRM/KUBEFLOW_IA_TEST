@@ -21,7 +21,6 @@ const LOAD_TIMEOUT_MS = 20_000;
 interface DashboardTab {
   uid: string;
   label: string;
-  blurb: string;
   /** Operational dashboards are only meaningful (and visible) for admins. */
   adminOnly: boolean;
 }
@@ -30,19 +29,16 @@ const DASHBOARD_TABS: DashboardTab[] = [
   {
     uid: 'mlops-ml',
     label: 'My Models',
-    blurb: 'Training runs, accuracy and inference traffic for the models you own.',
     adminOnly: false,
   },
   {
     uid: 'mlops-ops',
     label: 'Platform',
-    blurb: 'Cluster-wide health of the MLOps platform services.',
     adminOnly: true,
   },
   {
     uid: 'mlops-resources',
     label: 'Resources',
-    blurb: 'CPU, memory, disk and network of the server and of every container in the stack.',
     adminOnly: true,
   },
 ];
@@ -237,10 +233,6 @@ export default function MetricsPanels() {
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
             Model metrics
           </h3>
-          <p className="mt-1 max-w-2xl text-sm text-slate-400">
-            Training runs, accuracy over time and inference traffic, rendered straight
-            from Grafana. Refreshes itself every 30 seconds.
-          </p>
         </div>
         <OpenInGrafanaLink url={embedUrl} />
       </div>
@@ -261,9 +253,6 @@ export default function MetricsPanels() {
               {tab.label}
             </button>
           ))}
-          <span className="ml-1 hidden text-xs text-slate-500 sm:inline">
-            {activeTab.blurb}
-          </span>
         </div>
       )}
 

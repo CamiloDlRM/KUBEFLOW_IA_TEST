@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+  ShareLink,
   GithubTokenStatus,
   Repository,
   CreateRepoPayload,
@@ -8,6 +9,8 @@ import type {
   PaginatedPipelines,
   PipelineLogsResponse,
   ModelDeployment,
+  ModelTraffic,
+  PipelineStats,
   PredictionResult,
   HealthResponse,
   ReadyResponse,
@@ -22,6 +25,9 @@ import type {
   ChangeRequestedResponse,
   Insight,
   BranchInfo,
+  EditorNotebook,
+  NotebookSavePayload,
+  NotebookSaved,
   TriggerAccepted,
   Dataset,
   DatasetPreview,
@@ -48,6 +54,9 @@ import type {
   DeployPolicy,
   RunSettings,
   TrainingParameter,
+  UploadStatus,
+  CleaningRecipe,
+  CleaningRecipeState,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -190,6 +199,20 @@ export async function deleteRepo(repoId: number): Promise<void> {
 
 export async function getRepoBranches(repoId: number): Promise<BranchInfo[]> {
   const { data } = await apiClient.get<BranchInfo[]>(`/repos/${repoId}/branches`);
+  return data;
+}
+
+/** A notebook's cells (text only) as the branch has them now, to edit. */
+export async function getRepoNotebook(repoId: number, branch: string, path: string): Promise<EditorNotebook> {
+  const { data } = await apiClient.get<EditorNotebook>(`/repos/${repoId}/notebook`, {
+    params: { branch, path },
+  });
+  return data;
+}
+
+/** Commits the edited cells to the notebook's branch. */
+export async function saveRepoNotebook(repoId: number, payload: NotebookSavePayload): Promise<NotebookSaved> {
+  const { data } = await apiClient.put<NotebookSaved>(`/repos/${repoId}/notebook`, payload);
   return data;
 }
 
@@ -338,6 +361,12 @@ export async function getDatasets(projectId: number): Promise<Dataset[]> {
   return data;
 }
 
+/** The project's latest uploads, each with how far it has got through the layers. */
+export async function getUploads(projectId: number): Promise<UploadStatus[]> {
+  const { data } = await apiClient.get<UploadStatus[]>(`/projects/${projectId}/uploads`);
+  return data;
+}
+
 export async function uploadDataset(
   projectId: number,
   file: File,
@@ -443,6 +472,16 @@ export async function getModels(): Promise<ModelDeployment[]> {
   return data;
 }
 
+export async function getPipelineStats(): Promise<PipelineStats> {
+  const { data } = await apiClient.get<PipelineStats>('/pipelines/stats');
+  return data;
+}
+
+export async function getModelTraffic(): Promise<ModelTraffic> {
+  const { data } = await apiClient.get<ModelTraffic>('/models/traffic');
+  return data;
+}
+
 export async function predict(
   modelName: string,
   payload: unknown,
@@ -476,6 +515,18 @@ export async function serveModelVersion(
 
 export async function deleteModel(modelName: string): Promise<void> {
   await apiClient.delete(`/models/${modelName}`);
+}
+
+/** Switch a model's public link on or off. On the first time, it is created. */
+export async function setModelShare(modelName: string, enabled: boolean): Promise<ShareLink> {
+  const { data } = await apiClient.put<ShareLink>(`/models/${modelName}/share`, { enabled });
+  return data;
+}
+
+/** Replace a model's public link: the old URL stops working at once. */
+export async function rotateModelShare(modelName: string): Promise<ShareLink> {
+  const { data } = await apiClient.post<ShareLink>(`/models/${modelName}/share/rotate`);
+  return data;
 }
 
 /* ------------------------------------------------------------------ */
@@ -634,6 +685,41 @@ export async function getLayerDiff(
 }
 
 /** The standard replayed a rule at a time over one extraction. */
+/** How a source is cleaned: its recipe, the standard, and the rules. */
+export async function getCleaningRecipe(sourceId: number): Promise<CleaningRecipeState> {
+  const { data } = await apiClient.get<CleaningRecipeState>(`/sources/${sourceId}/cleaning-recipe`);
+  return data;
+}
+
+/** Save a source's recipe, or `{ reset: true }` to go back to the standard. */
+export async function saveCleaningRecipe(
+  sourceId: number,
+  body: { recipe: CleaningRecipe } | { reset: true },
+): Promise<CleaningRecipeState> {
+  const { data } = await apiClient.put<CleaningRecipeState>(`/sources/${sourceId}/cleaning-recipe`, body);
+  return data;
+}
+
+/** Clean everything the source has landed again, with its saved recipe, then gold. Queued. */
+export async function recleanSource(sourceId: number): Promise<CleaningRecipeState> {
+  const { data } = await apiClient.post<CleaningRecipeState>(`/sources/${sourceId}/reclean`);
+  return data;
+}
+
+/** Try a draft recipe on the source's latest extraction. Stores nothing. */
+export async function previewCleaning(
+  projectId: number,
+  sourceId: number,
+  recipe: CleaningRecipe,
+): Promise<CleaningSteps> {
+  const { data } = await apiClient.post<CleaningSteps>(
+    `/projects/${projectId}/medallion/steps/preview`,
+    { source_id: sourceId, recipe },
+    { timeout: LAYER_TIMEOUT },
+  );
+  return data;
+}
+
 export async function getCleaningSteps(
   projectId: number,
   options: { sourceId?: number | null; runId?: string; limit?: number } = {},
@@ -731,7 +817,16 @@ export async function askForDashboard(
 
 /** The embedded dashboard's coordinates and a fresh guest token. Also called
  *  by the embedding SDK each time the token is about to expire. */
-export async function getDashboardEmbed(projectId: number): Promise<DashboardEmbed> {
-  const { data } = await apiClient.get<DashboardEmbed>(`/projects/${projectId}/dashboard/embed`);
-  return data;
+/**
+ * Where to frame the KPI maker's dashboard, with a guest token for it; `null`
+ * when the KPI maker has not built one yet (the endpoint's 404).
+ */
+export async function getDashboardEmbed(projectId: number): Promise<DashboardEmbed | null> {
+  const response = await apiClient.get<DashboardEmbed>(`/projects/${projectId}/dashboard/embed`, {
+    // The first call logs in to Superset and may create the dashboard's
+    // embedded configuration; an idle Superset can take longer than 15 s.
+    timeout: 60_000,
+    validateStatus: (status) => (status >= 200 && status < 300) || status === 404,
+  });
+  return response.status === 404 ? null : response.data;
 }

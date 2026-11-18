@@ -50,6 +50,20 @@ export function unframeableReason(
  *
  * `version` is the latest exchange's id. A new exchange may have changed the
  * dashboard, so it is embedded afresh rather than left showing the old one.
+ *
+ * Two things made it go missing on a first visit, and both are guarded here:
+ *
+ * - **The first request is the slow one.** The backend logs in to Superset and
+ *   may create the dashboard's embedded configuration, and a Superset that has
+ *   been idle takes its time. That used to outlast the client's 15 s timeout,
+ *   and the failure was hidden as if nothing had been built. Now the request
+ *   waits longer, is retried, and a real failure is shown with a way to retry —
+ *   only "nothing built yet" (a 404) shows nothing.
+ * - **An embed that is still loading can be replaced.** The SDK resolves only
+ *   once the iframe has loaded, and its `unmount` empties the node it was
+ *   given. Sharing one node, a superseded embed finishing late emptied the node
+ *   under the embed that replaced it, leaving a blank frame. Each embed now gets
+ *   a node of its own, so tearing one down cannot touch another.
  */
 export default function EmbeddedDashboard({
   projectId,
@@ -60,20 +74,30 @@ export default function EmbeddedDashboard({
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [framing, setFraming] = useState(false);
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['dashboard-embed', projectId, version],
     queryFn: () => getDashboardEmbed(projectId),
-    retry: false,
+    // A 404 is not an error here (it comes back as null), so a retry is only
+    // ever spent on a slow or unreachable Superset.
+    retry: 2,
   });
 
   useEffect(() => {
-    if (!data || !mount.current) return;
+    const container = mount.current;
+    if (!data || !container) return;
     // Refused up front rather than handed to the SDK, which would build an
     // iframe the browser then blanks without saying why.
     const refusal = unframeableReason(data.superset_domain);
     setFailure(refusal);
     if (refusal) return;
+
+    // This embed's own node. A superseded embed can only ever empty this one.
+    const host = document.createElement('div');
+    host.className = 'h-full w-full';
+    container.replaceChildren(host);
+    setFraming(true);
 
     // The first token is the one that came with the coordinates, so the page
     // does not ask for a second before it has shown anything. Every token
@@ -86,34 +110,42 @@ export default function EmbeddedDashboard({
     embedDashboard({
       id: data.uuid,
       supersetDomain: data.superset_domain,
-      mountPoint: mount.current,
+      mountPoint: host,
       fetchGuestToken: async () => {
         if (firstToken) {
           const token = firstToken;
           firstToken = null;
           return token;
         }
-        return (await getDashboardEmbed(projectId)).token;
+        const fresh = await getDashboardEmbed(projectId);
+        if (!fresh) throw new Error('The dashboard is no longer there.');
+        return fresh.token;
       },
       dashboardUiConfig: { hideTitle: true, filters: { expanded: false } },
       iframeTitle: 'KPI dashboard',
     })
       .then((dashboard) => {
-        // Unmounted while the SDK was still setting up: tear it down rather
-        // than leave an iframe attached to a node nobody is looking at.
+        // Replaced or unmounted while the SDK was still setting up: tear this
+        // one down. It only empties its own node, never the one now in use.
         if (gone) dashboard.unmount();
         else embedded = dashboard;
       })
-      .catch((error: Error) => setFailure(error.message));
+      .catch((reason: Error) => {
+        if (!gone) setFailure(reason.message);
+      })
+      .finally(() => {
+        if (!gone) setFraming(false);
+      });
 
     return () => {
       gone = true;
       embedded?.unmount();
+      host.remove();
     };
   }, [data, projectId]);
 
-  // Not built yet is the ordinary state before the first prompt, not an error.
-  if (isError) return null;
+  // Nothing built yet is the ordinary state before the first prompt.
+  if (data === null) return null;
 
   return (
     <section className="rounded-lg border border-slate-700 bg-slate-900/40">
@@ -124,9 +156,24 @@ export default function EmbeddedDashboard({
         )}
       </header>
 
-      {isLoading && (
-        <div className="flex h-40 items-center justify-center">
+      {(isLoading || (framing && !failure)) && (
+        <div className="flex h-40 items-center justify-center gap-3 text-sm text-slate-400">
           <Spinner />
+          {isLoading ? 'Asking Superset for the dashboard…' : 'Loading the dashboard…'}
+        </div>
+      )}
+
+      {isError && (
+        <div className="m-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
+          <span>The dashboard could not be loaded: {(error as Error).message}</span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="rounded-lg border border-red-700 px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-900/40 disabled:opacity-50"
+          >
+            {isFetching ? 'Trying…' : 'Try again'}
+          </button>
         </div>
       )}
 
@@ -136,11 +183,12 @@ export default function EmbeddedDashboard({
         </p>
       )}
 
-      {/* The SDK puts its iframe inside this node, and sizes nothing itself. */}
+      {/* Each embed gets a node of its own inside this one; the SDK sizes
+          nothing itself, so the iframe is stretched from here. */}
       <div
         ref={mount}
         data-testid="dashboard-mount"
-        className={`h-[70vh] min-h-[420px] w-full [&>iframe]:h-full [&>iframe]:w-full [&>iframe]:border-0 ${
+        className={`h-[70vh] min-h-[420px] w-full [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0 ${
           data && !failure ? '' : 'hidden'
         }`}
       />

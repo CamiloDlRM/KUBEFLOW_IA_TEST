@@ -363,7 +363,7 @@ Three dashboards are provisioned:
 
 | Dashboard | Who sees it | Contents |
 |-----------|-------------|----------|
-| **My Models** (`mlops-ml`) | everyone | Repositories, deployed models, last accuracy, success rate, accuracy over time and by branch, pipeline outcomes and durations, recent runs |
+| **My Models** (`mlops-ml`) | everyone | Projects, deployed models, success rate, each project's deciding metric (the one it deploys on; accuracy by default) last, over time and by branch, pipeline outcomes and durations |
 | **Platform** (`mlops-ops`) | admins | Service health, request rate, error ratio, latency percentiles, in-flight requests, pipeline throughput and duration across the whole installation |
 | **Resources** (`mlops-resources`) | admins | CPU, memory, disk and load of the server; CPU, memory, memory-limit use and network of every container in the stack |
 

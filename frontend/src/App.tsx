@@ -22,6 +22,7 @@ import SetPassword from './pages/SetPassword';
 import Docs from './pages/Docs';
 import TechDocs from './pages/TechDocs';
 import NotFound from './pages/NotFound';
+import NotebookEditor from './pages/NotebookEditor';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -53,6 +54,8 @@ export default function App() {
       <Route path="/docs" element={<Navigate to="/user-manual" replace />} />
       <Route path="/tech-docs" element={<TechDocs />} />
       <Route path="/tech_docs" element={<Navigate to="/tech-docs" replace />} />
+      {/* Full screen, with its own header and back button: outside the app's Layout. */}
+      <Route path="/repos/:repoId/notebook" element={<RequireAuth><NotebookEditor /></RequireAuth>} />
 
       {/* Protected routes */}
       <Route

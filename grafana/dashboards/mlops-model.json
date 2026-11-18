@@ -666,8 +666,8 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Accuracy by version",
-      "description": "Accuracy of every deployed version. The dashed line is the auto-deploy threshold (0.70).",
+      "title": "Deciding metric by version",
+      "description": "The deciding metric of every deployed version: the one the project deploys on, or accuracy when that version's run did not log it.",
       "datasource": {
         "type": "postgres",
         "uid": "mlops-postgres"
@@ -680,7 +680,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
+          "unit": "none",
           "color": {
             "mode": "palette-classic"
           },
@@ -693,30 +693,33 @@
             "fillOpacity": 8,
             "spanNulls": true,
             "axisPlacement": "auto",
-            "gradientMode": "opacity",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "gradientMode": "opacity"
           },
           "mappings": [],
-          "decimals": 3,
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "decimals": 3
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "accuracy"
+            },
+            "properties": [
               {
-                "color": "red",
-                "value": null
+                "id": "unit",
+                "value": "percentunit"
               },
               {
-                "color": "green",
-                "value": 0.7
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -743,7 +746,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  md.deployed_at AS \"time\",\n  md.accuracy AS \"accuracy\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND $__timeFilter(md.deployed_at)\nORDER BY 1;"
+          "rawSql": "SELECT\n  md.deployed_at AS \"time\",\n  m.name AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(md.deployed_at)\nORDER BY 1;"
         }
       ]
     },
@@ -828,16 +831,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "accuracy"
+              "options": "value"
             },
             "properties": [
               {
-                "id": "unit",
-                "value": "percentunit"
-              },
-              {
                 "id": "decimals",
-                "value": 3
+                "value": 4
               }
             ]
           },
@@ -917,7 +916,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  md.accuracy AS \"accuracy\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
+          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  m.name AS \"metric\",\n  CASE WHEN p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$' THEN (p.metrics->>m.name)::float END AS \"value\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
         }
       ]
     }

@@ -287,6 +287,87 @@ async def list_notebooks(
         )
 
 
+
+async def get_file(repo_url: str, token: str, branch: str, path: str) -> tuple[bytes, str]:
+    """Read ``path`` on ``branch``: its bytes and its blob SHA.
+
+    The SHA identifies this exact version of the file; :func:`put_file` hands
+    it back so GitHub refuses the write if the file changed in between.
+    """
+    import base64
+
+    owner, repo = parse_repo_url(repo_url)
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.get(
+            f"{_GITHUB_API}/repos/{owner}/{repo}/contents/{path.strip('/')}",
+            headers=_headers(token),
+            params={"ref": branch},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        sha: str = data["sha"]
+        content_b64: str = data.get("content") or ""
+        if not content_b64:
+            # Over 1 MB the Contents API leaves the content out; the blob has it.
+            blob = await client.get(
+                f"{_GITHUB_API}/repos/{owner}/{repo}/git/blobs/{sha}",
+                headers=_headers(token),
+            )
+            blob.raise_for_status()
+            content_b64 = blob.json()["content"]
+        return base64.b64decode(content_b64), sha
+
+
+class FileChangedError(Exception):
+    """The file on GitHub is no longer the version the write was based on."""
+
+
+async def put_file(
+    repo_url: str,
+    token: str,
+    branch: str,
+    path: str,
+    content: bytes,
+    message: str,
+    sha: str,
+) -> tuple[str, str]:
+    """Commit ``content`` over the version of ``path`` identified by ``sha``.
+
+    Returns ``(commit_sha, new_blob_sha)``.
+
+    Raises:
+        FileChangedError: someone else committed to the file since ``sha``.
+    """
+    import base64
+
+    owner, repo = parse_repo_url(repo_url)
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.put(
+            f"{_GITHUB_API}/repos/{owner}/{repo}/contents/{path.strip('/')}",
+            headers=_headers(token),
+            json={
+                "message": message,
+                "content": base64.b64encode(content).decode(),
+                "branch": branch,
+                "sha": sha,
+            },
+        )
+        if resp.status_code == 409:
+            raise FileChangedError(path)
+        resp.raise_for_status()
+        data = resp.json()
+        commit_sha: str = data["commit"]["sha"]
+        logger.info(
+            "github.file_committed",
+            owner=owner,
+            repo=repo,
+            branch=branch,
+            path=path,
+            commit_sha=commit_sha,
+        )
+        return commit_sha, data["content"]["sha"]
+
+
 # ---------------------------------------------------------------------------
 # Sync helpers (used from Celery workers)
 # ---------------------------------------------------------------------------

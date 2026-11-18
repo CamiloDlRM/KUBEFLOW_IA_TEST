@@ -102,12 +102,42 @@ class DeployPolicy:
         return value >= self.threshold if self.direction == "higher" else value <= self.threshold
 
 
+def deciding_metric(raw: dict[str, Any] | None) -> str:
+    """The metric a stored policy decides on; the platform's when it names none or is unusable."""
+    fallback = DeployPolicy.defaults(auto_deploy=True, threshold=0.0)
+    try:
+        return DeployPolicy.parse(raw, fallback=fallback).metric
+    except PolicyError:
+        return fallback.metric
+
+
+def judged_on(raw: dict[str, Any] | None, metrics: dict[str, Any] | None) -> tuple[str, float | None]:
+    """The number a model is shown by: the policy's metric as the run logged it, else its accuracy.
+
+    A version that deployed before the metric was chosen logged only the old
+    one, so it keeps its accuracy; a run that logged neither has no number.
+    """
+    wanted = deciding_metric(raw)
+    for name in (wanted, "accuracy"):
+        value = (metrics or {}).get(name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return name, float(value)
+    return wanted, None
+
+
 def decide(
-    policy: DeployPolicy, metrics: dict[str, Any], serving: float | None
+    policy: DeployPolicy,
+    metrics: dict[str, Any],
+    serving: float | None,
+    *,
+    serving_unknown: bool = False,
 ) -> tuple[bool, str]:
     """Whether a run deploys under ``policy``, and the sentence that says why.
 
     ``serving`` is the policy's metric for the version serving now, if any.
+    ``serving_unknown`` says a version *is* serving but logged no such metric
+    (the deciding metric was changed after it deployed): a policy that must
+    beat it then refuses, rather than deploying on a comparison never made.
     The reason is stored on the run: "not deployed" with no reason is how a
     person ends up retraining a model that was fine.
     """
@@ -119,6 +149,11 @@ def decide(
     sign = ">=" if policy.direction == "higher" else "<="
     if not policy.clears(value):
         return False, f"{policy.metric} {value:.4f} missed the bar ({sign} {policy.threshold:g})."
+    if policy.must_beat_serving and serving is None and serving_unknown:
+        return False, (
+            f"{policy.metric} {value:.4f} cleared the bar, but the version serving now logged no "
+            f"'{policy.metric}' to compare it with; deploy it from the model's Versions."
+        )
     if policy.must_beat_serving and serving is not None and not policy.better(value, serving):
         return False, (
             f"{policy.metric} {value:.4f} cleared the bar but did not beat the version "

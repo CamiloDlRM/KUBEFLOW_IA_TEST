@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { render as rtlRender, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { ModelSummary } from '../../src/components/canvas/NodeDetail';
 import type { Pipeline } from '../../src/types';
@@ -25,6 +27,9 @@ function run(overrides: Partial<Pipeline> = {}): Pipeline {
   };
 }
 
+// ModelSummary links to the Models page, so it renders inside a router.
+const render = (ui: ReactElement) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
+
 describe('ModelSummary', () => {
   it('lays out the registration and the deployment instead of their raw log lines', () => {
     render(<ModelSummary run={run()} />);
@@ -34,10 +39,25 @@ describe('ModelSummary', () => {
     expect(screen.getByText('96.67%')).toBeInTheDocument();
     // The MLflow run id means nothing to most users, so it is not shown.
     expect(screen.queryByText('acd8d8c223334cda8d9f4270bb4c2596')).not.toBeInTheDocument();
-    expect(screen.getByText('http://model-server:8001/predict/ejemplo2')).toBeInTheDocument();
+    // The deploy log's model-server address is internal: never shown.
+    expect(screen.queryByText(/model-server:8001/)).not.toBeInTheDocument();
     expect(screen.getByText('Live')).toBeInTheDocument();
     expect(screen.getByText('f1')).toBeInTheDocument();
     expect(screen.queryByText(/Model registered in MLflow run/)).not.toBeInTheDocument();
+  });
+
+  it('shows the public link once the model is shared', () => {
+    render(<ModelSummary run={run()} shareUrl="http://localhost:8000/public/predict/abc123" />);
+
+    expect(screen.getByText('http://localhost:8000/public/predict/abc123')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy public link' })).toBeInTheDocument();
+  });
+
+  it('points to sharing it from Models when it is not shared', () => {
+    render(<ModelSummary run={run()} shareUrl={null} />);
+
+    expect(screen.getByText(/Not shared yet/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Share a public link from Models/ })).toHaveAttribute('href', '/models');
   });
 
   it('says why a run was not deployed', () => {

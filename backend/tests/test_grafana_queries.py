@@ -170,7 +170,7 @@ class TestAllowList:
 
 class TestMemberAuthorisation:
     def test_own_dashboard_panel_is_allowed(self):
-        sql = _panel_sql("mlops-ml.json", "My repositories").replace(
+        sql = _panel_sql("mlops-ml.json", "My projects").replace(
             "${__user.login}", "testuser"
         )
         authorize_query(_payload(sql), MEMBER)
@@ -189,7 +189,7 @@ class TestMemberAuthorisation:
                 authorize_query(_payload(sql), MEMBER)
 
     def test_another_users_name_is_refused(self):
-        sql = _panel_sql("mlops-ml.json", "My repositories").replace(
+        sql = _panel_sql("mlops-ml.json", "My projects").replace(
             "${__user.login}", "otheruser"
         )
         with pytest.raises(QueryNotAllowed):
@@ -201,7 +201,7 @@ class TestMemberAuthorisation:
 
     def test_appending_a_disjunction_to_a_valid_panel_is_refused(self):
         """The attack the allow-list exists for: a real panel, widened."""
-        sql = _panel_sql("mlops-ml.json", "My repositories").replace(
+        sql = _panel_sql("mlops-ml.json", "My projects").replace(
             "${__user.login}", "testuser"
         )
         with pytest.raises(QueryNotAllowed):
@@ -218,7 +218,7 @@ class TestMemberAuthorisation:
             authorize_query(body, MEMBER)
 
     def test_a_batch_mixing_allowed_and_forbidden_is_refused(self):
-        good = _panel_sql("mlops-ml.json", "My repositories").replace(
+        good = _panel_sql("mlops-ml.json", "My projects").replace(
             "${__user.login}", "testuser"
         )
         with pytest.raises(QueryNotAllowed):
@@ -233,7 +233,7 @@ class TestMemberAuthorisation:
             authorize_query(body, MEMBER)
 
     def test_whitespace_differences_are_tolerated(self):
-        sql = _panel_sql("mlops-ml.json", "My repositories").replace(
+        sql = _panel_sql("mlops-ml.json", "My projects").replace(
             "${__user.login}", "testuser"
         )
         authorize_query(_payload("  " + sql.replace("\n", "\n\t") + "  "), MEMBER)

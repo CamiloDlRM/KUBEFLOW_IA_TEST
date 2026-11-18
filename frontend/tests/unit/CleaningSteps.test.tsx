@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import CleaningSteps from '../../src/components/CleaningSteps';
+import CleaningSteps, { StepsView } from '../../src/components/CleaningSteps';
 import type {
   CleaningColumn,
   CleaningRow,
@@ -285,5 +285,45 @@ describe('CleaningSteps', () => {
     );
 
     expect(await screen.findByText(/Run an extraction/)).toBeInTheDocument();
+  });
+});
+
+describe("the source's own rules in the step view", () => {
+  it('marks a new column and shows a rule that could not run', () => {
+    render(
+      <StepsView
+        data={{
+          ...DATA,
+          steps: [
+            DATA.steps[0],
+            step({
+              rule: 'custom_1',
+              title: 'Compute decade = edad // 10',
+              tier: 'custom',
+              cells_changed: 1,
+              changed: true,
+              columns: ['decade'],
+              preview_columns: [...COLUMNS, { before: null, after: 'decade', change: 'added' }],
+              preview_rows: [
+                row({ before: ['p1', 'Hospice care', null], after: ['p1', 'Hospice care', 4], cells: ['same', 'same', 'changed'] }),
+              ],
+            }),
+            step({
+              rule: 'custom_2',
+              title: 'Drop nope',
+              tier: 'custom',
+              changed: true,
+              error: "there is no column called 'nope'",
+              note: "Could not run: there is no column called 'nope'. This rule changed nothing.",
+            }),
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText('your rule')).toHaveLength(2);
+    expect(screen.getByText('new')).toBeInTheDocument();
+    expect(screen.getByText('could not run')).toBeInTheDocument();
+    expect(screen.getByText(/Could not run: there is no column called 'nope'/)).toHaveClass('text-red-300');
   });
 });

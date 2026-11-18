@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import type { ModelDeployment } from '../types';
 import { BACK_BUTTON_CLASS } from './BackLink';
-import { formatDate } from '../utils/format';
+import ShareLinkCell from './models/ShareLinkCell';
+import { formatDate, modelMetric } from '../utils/format';
 import { runLink } from '../utils/links';
 import { GrafanaFrame, OpenInGrafanaLink, buildGrafanaEmbedUrl } from './MetricsPanels';
 
@@ -33,7 +34,7 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
           All models
         </button>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <h2 className="text-2xl font-bold text-slate-100">{model.model_name}</h2>
+          <h2 className="font-display text-2xl font-bold text-slate-100">{model.model_name}</h2>
           <span className="text-sm text-slate-400">v{model.version}</span>
           <ModelStatusBadge active={model.is_active} />
         </div>
@@ -43,8 +44,8 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <InfoCard label="Accuracy">
-          <span className="font-display">{(model.accuracy * 100).toFixed(1)}%</span>
+        <InfoCard label={modelMetric(model).name}>
+          <span className="font-display">{modelMetric(model).value}</span>
         </InfoCard>
         <InfoCard label="Deployed">{formatDate(model.deployed_at)}</InfoCard>
         <InfoCard label="Produced by">
@@ -59,10 +60,10 @@ export default function ModelDashboard({ model, onBack }: ModelDashboardProps) {
             <span className="text-slate-500">--</span>
           )}
         </InfoCard>
-        <InfoCard label="Endpoint">
-          <code className="block truncate text-xs text-slate-400" title={model.endpoint_url}>
-            {model.endpoint_url}
-          </code>
+        {/* The public link, not the model-server's address: that one is internal
+            to the platform's network and answers nobody outside it. */}
+        <InfoCard label="Public link">
+          <ShareLinkCell model={model} />
         </InfoCard>
       </div>
 

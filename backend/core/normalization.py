@@ -717,12 +717,24 @@ def vocabulary_from_rows(
     )
 
 
+def default_matcher(threshold: float = DEFAULT_FUZZY_THRESHOLD) -> Any:
+    """The deterministic pair, exact then fuzzy at ``threshold``.
+
+    A threshold of 1 asks for exact matches only, which the fuzzy stage could
+    never add to: it is left out rather than run for nothing.
+    """
+    if threshold >= 1.0:
+        return lambda v: CascadeMatcher(ExactMatcher(v))
+    return lambda v: CascadeMatcher(ExactMatcher(v), FuzzyMatcher(v, threshold=threshold))
+
+
 def normalize_rows(
     rows: list[dict[str, Any]],
     *,
     text_column: str,
     code_column: str,
     matcher_factory: object | None = None,
+    target_column: str | None = None,
 ) -> NormalizationSummary:
     """Fill in the missing codes of ``rows``, in place.
 
@@ -732,6 +744,12 @@ def normalize_rows(
     decided and how confident that was. They are the audit trail — a row coded
     by a model and a row coded by exact match are not the same claim, and a
     reader downstream must be able to tell them apart.
+
+    ``target_column`` writes the codes somewhere other than the code column:
+    a completed copy beside it — the source's own code where it had one, the
+    match where it did not — so the original stays exactly as it arrived and
+    whoever trains on it chooses which to use. The audit columns follow the
+    target's name.
 
     Rows that cannot be placed keep an empty code. Guessing to raise the fill
     rate would put a wrong code in a patient record silently, which is the one
@@ -753,19 +771,22 @@ def normalize_rows(
         text_column,
         code_column,
     )
-    build = matcher_factory or (lambda v: CascadeMatcher(ExactMatcher(v), FuzzyMatcher(v)))
+    build = matcher_factory or default_matcher()
     matcher = build(vocabulary)  # type: ignore[operator]
 
     already_coded = filled = unresolved = 0
     by_method: dict[str, int] = {}
-    method_column = f"{code_column}_method"
-    confidence_column = f"{code_column}_confidence"
+    target = target_column or code_column
+    method_column = f"{target}_method"
+    confidence_column = f"{target}_confidence"
 
     for row in rows:
         raw_code = row.get(code_column)
         code = "" if raw_code is None else str(raw_code).strip()
         if code:
             already_coded += 1
+            if target != code_column:
+                row[target] = code
             row[method_column] = "source"
             row[confidence_column] = 1.0
             continue
@@ -774,12 +795,14 @@ def normalize_rows(
         result = matcher.match("" if raw_text is None else str(raw_text).strip())
         if result.matched:
             filled += 1
-            row[code_column] = result.code or ""
+            row[target] = result.code or ""
             row[method_column] = result.method
             row[confidence_column] = round(result.confidence, 3)
             by_method[result.method] = by_method.get(result.method, 0) + 1
         else:
             unresolved += 1
+            if target != code_column:
+                row[target] = None
             row[method_column] = None
             row[confidence_column] = None
 

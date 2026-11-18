@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import EmbeddedDashboard, { unframeableReason } from '../../src/components/EmbeddedDashboard';
@@ -63,7 +64,8 @@ describe('EmbeddedDashboard', () => {
     renderEmbed();
     await waitFor(() => expect(embedDashboard).toHaveBeenCalled());
 
-    expect(lastOptions().mountPoint).toBe(screen.getByTestId('dashboard-mount'));
+    // A node of its own inside the mount, so tearing it down touches nothing else.
+    expect(lastOptions().mountPoint.parentElement).toBe(screen.getByTestId('dashboard-mount'));
   });
 
   it('uses the token it already has before asking for another', async () => {
@@ -88,7 +90,7 @@ describe('EmbeddedDashboard', () => {
 
   it('shows nothing before a dashboard has been built', async () => {
     // Not built yet is the ordinary state before the first prompt.
-    getDashboardEmbed.mockRejectedValue(new Error('404'));
+    getDashboardEmbed.mockResolvedValue(null); // the endpoint's 404
     const { container } = renderEmbed();
 
     await waitFor(() => expect(getDashboardEmbed).toHaveBeenCalled());
@@ -118,6 +120,73 @@ describe('EmbeddedDashboard', () => {
 
     expect(await screen.findByText(/address is not a URL/)).toBeInTheDocument();
     expect(embedDashboard).not.toHaveBeenCalled();
+  });
+
+  it('a superseded embed finishing late does not blank the one that replaced it', async () => {
+    // The SDK resolves once its iframe has loaded, and its unmount empties the
+    // node it was given. The first embed here finishes after the second began.
+    const finishFirst: Array<() => void> = [];
+    embedDashboard.mockImplementation(async (options: { mountPoint: HTMLElement }) => {
+      const iframe = document.createElement('iframe');
+      options.mountPoint.replaceChildren(iframe);
+      const handle = { unmount: () => options.mountPoint.replaceChildren() };
+      if (embedDashboard.mock.calls.length === 1) {
+        await new Promise<void>((resolve) => finishFirst.push(resolve));
+      }
+      return handle;
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <EmbeddedDashboard projectId={4} version={1} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(embedDashboard).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <EmbeddedDashboard projectId={4} version={2} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(embedDashboard).toHaveBeenCalledTimes(2));
+    finishFirst[0]();
+    await Promise.resolve();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('dashboard-mount').querySelectorAll('iframe')).toHaveLength(1),
+    );
+  });
+
+  it('shows a real failure with a way to try again, instead of hiding it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getDashboardEmbed.mockRejectedValue(new Error('Could not sign in to Superset'));
+      renderEmbed();
+
+      await vi.advanceTimersByTimeAsync(10_000); // past the retries
+      expect(await screen.findByText(/could not be loaded: Could not sign in to Superset/)).toBeInTheDocument();
+
+      getDashboardEmbed.mockResolvedValue(EMBED);
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(embedDashboard).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a slow first answer before giving up', async () => {
+    // An idle Superset is the usual reason a first visit failed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getDashboardEmbed.mockRejectedValueOnce(new Error('timeout of 60000ms exceeded')).mockResolvedValue(EMBED);
+      renderEmbed();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await waitFor(() => expect(embedDashboard).toHaveBeenCalled());
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('embeds afresh when a later exchange may have changed it', async () => {

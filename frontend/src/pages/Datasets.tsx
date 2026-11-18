@@ -64,7 +64,7 @@ export default function Datasets() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <BackLink to="/">Back to Dashboard</BackLink>
-          <h2 className="mt-4 truncate text-2xl font-bold text-slate-100">Data</h2>
+          <h2 className="font-display mt-4 truncate text-2xl font-bold text-slate-100">Data</h2>
           <p className="mt-1 text-sm text-slate-400">
             Training data for <span className="text-slate-200">{repoName}</span>.
             Connect the system that holds it, or upload a file directly. The

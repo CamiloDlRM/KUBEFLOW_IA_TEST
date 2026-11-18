@@ -11,6 +11,7 @@ import UploadPanel from '../components/UploadPanel';
 import SourcePreviews from '../components/SourcePreviews';
 import LayerStage from '../components/LayerStage';
 import CleaningSteps from '../components/CleaningSteps';
+import CleaningRecipeEditor from '../components/cleaning/CleaningRecipeEditor';
 import KpiMaker from '../components/KpiMaker';
 import GoldDefinition from '../components/GoldDefinition';
 
@@ -87,7 +88,7 @@ export default function DataFactory() {
     <div className="space-y-6">
       <div>
         <BackLink to={`/projects/${id}`}>{project?.name ?? 'Project'}</BackLink>
-        <h2 className="mt-4 text-2xl font-bold text-slate-100">Data Factory</h2>
+        <h2 className="font-display mt-4 text-2xl font-bold text-slate-100">Data Factory</h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           Where the data comes in, gets cleaned, becomes the table this project trains on,
           and finally answers something. Pick any stage you have reached.
@@ -104,7 +105,7 @@ export default function DataFactory() {
         {current === 'connect' && (
           <>
             <SourcesPanel projectId={id} mode="connect" />
-            <UploadPanel projectId={id} />
+            <UploadPanel projectId={id} onOpenStage={(stage) => setSelected(stage)} />
           </>
         )}
 
@@ -123,6 +124,7 @@ export default function DataFactory() {
                 used to sit below this as its own section; it is the same claim
                 at a coarser grain, and it now lives inside each step, where
                 the highlight can say which rule did it. */}
+            <CleaningRecipeEditor projectId={id} streams={medallion.silver.streams} />
             <CleaningSteps projectId={id} streams={medallion.silver.streams} />
           </>
         )}

@@ -12,6 +12,7 @@ from typing import AsyncIterator
 import structlog
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -139,6 +140,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Shared links are called from anywhere: open CORS under /public/ only, without
+# credentials. Added after the app's CORS so it wraps it (see core.public_cors).
+from core.public_cors import PublicCorsMiddleware  # noqa: E402
+
+app.add_middleware(PublicCorsMiddleware)
 
 # Prometheus instrumentation: request middleware + the GET /metrics scrape
 # endpoint. Registered here, before startup, because middleware cannot be added
@@ -163,6 +169,24 @@ async def unhandled_exception_handler(
         status_code=500,
         content={"detail": "Internal server error."},
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """422 with where and why, but not the value that was sent.
+
+    FastAPI's default echoes each bad value back. A NaN cannot be written as
+    JSON, so a body holding one turned a 422 into a 500; and repeating input
+    back to the caller is never needed to say what is wrong with it.
+    """
+    errors = [
+        {key: value for key, value in error.items() if key in ("type", "loc", "msg")}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +261,7 @@ from routers.sources import router as sources_router
 from routers.medallion import router as medallion_router
 from routers.projects import router as projects_router
 from routers.grafana import router as grafana_router
+from routers.public import router as public_router
 
 app.include_router(auth_router)
 app.include_router(repos_router)
@@ -249,6 +274,7 @@ app.include_router(sources_router)
 app.include_router(medallion_router)
 app.include_router(projects_router)
 app.include_router(grafana_router)
+app.include_router(public_router)
 
 
 # ---------------------------------------------------------------------------

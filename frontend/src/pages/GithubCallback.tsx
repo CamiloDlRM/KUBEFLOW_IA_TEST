@@ -41,7 +41,7 @@ export default function GithubCallback() {
       <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
         {conflict ? (
           <div className="space-y-4">
-            <h1 className="text-lg font-semibold text-slate-100">You already have an account</h1>
+            <h1 className="font-display text-lg font-semibold text-slate-100">You already have an account</h1>
             <p className="text-sm text-slate-400">
               An account with <strong className="text-slate-200">{conflict}</strong> already exists.
               Sign in with it, or create a separate account for your GitHub user.

@@ -23,6 +23,7 @@ vi.mock('../../src/api/client', () => ({
   previewLayer: (...a: unknown[]) => previewLayer(...a),
   previewSource: (...a: unknown[]) => previewSource(...a),
   getCleaningSteps: (...a: unknown[]) => getCleaningSteps(...a),
+  getCleaningRecipe: () => Promise.reject(new Error('not in this test')),
   getDashboardConversation: (...a: unknown[]) => getDashboardConversation(...a),
   askForDashboard: vi.fn(),
   getGoldRelations: (...a: unknown[]) => getGoldRelations(...a),

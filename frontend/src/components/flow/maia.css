@@ -185,7 +185,7 @@
   }
 }
 
-/* Happy: eyes closed in a smile, and every so often a little spin with a hop. */
+/* Happy: eyes closed in a smile, swaying from side to side, leaning into each move. */
 .maia.maia-happy .maia-eyes {
   opacity: 0;
 }
@@ -197,16 +197,15 @@
   transform-origin: 200px 200px;
 }
 .maia.maia-happy .maia-spin {
-  animation: maia-spin 2.6s ease-in-out infinite;
+  animation: maia-happy-sway 2.4s ease-in-out infinite;
 }
 .maia.maia-happy .maia-tentacles {
   animation-duration: 1.2s;
 }
 
-@keyframes maia-spin {
-  0%, 45% { transform: translateY(0) rotate(0deg); }
-  60% { transform: translateY(-10px) rotate(180deg); }
-  75%, 100% { transform: translateY(0) rotate(360deg); }
+@keyframes maia-happy-sway {
+  0%, 100% { transform: translateX(-24px) rotate(-5deg); }
+  50% { transform: translateX(24px) rotate(5deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
