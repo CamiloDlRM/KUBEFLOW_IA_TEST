@@ -14,6 +14,9 @@ export default function Admin() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
+  // The profile loads after the page does: until it arrives nobody is an admin
+  // yet, and redirecting then would bounce a real admin who opened /admin directly.
+  if (!currentUser) return null;
   if (!isAdmin) return <Navigate to="/" replace />;
 
   const inviteUrl = result
@@ -143,11 +146,12 @@ export default function Admin() {
 
             {/* Invite link */}
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-400">
+              <label htmlFor="invite-link" className="mb-1 block text-xs font-medium text-slate-400">
                 Invite link (share as fallback or if email fails)
               </label>
               <div className="flex gap-2">
                 <input
+                  id="invite-link"
                   readOnly
                   value={inviteUrl}
                   className="flex-1 truncate rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-300 outline-none"

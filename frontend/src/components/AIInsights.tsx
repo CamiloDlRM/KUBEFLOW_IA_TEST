@@ -66,7 +66,7 @@ export default function AIInsights({ pipelineId, pipelineStatus, hideTitle = fal
   }, [autoAnalyze, pipelineFinished, insights, pipelineId, generateMutation]);
 
   return (
-    <section>
+    <section aria-label="AI Training Advisor">
       <div className="mb-4 flex items-center justify-between">
         {hideTitle ? (
           <span />

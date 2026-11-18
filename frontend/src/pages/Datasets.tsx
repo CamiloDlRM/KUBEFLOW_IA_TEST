@@ -335,9 +335,14 @@ function PreviewModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg border border-slate-700 bg-slate-800 shadow-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dataset-preview-title"
+        className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg border border-slate-700 bg-slate-800 shadow-xl"
+      >
         <div className="flex items-center justify-between border-b border-slate-700 px-5 py-3">
-          <h3 className="truncate text-sm font-semibold text-slate-100">
+          <h3 id="dataset-preview-title" className="truncate text-sm font-semibold text-slate-100">
             Preview: {dataset.name}
           </h3>
           <button

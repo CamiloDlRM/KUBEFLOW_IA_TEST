@@ -131,8 +131,9 @@ function PasswordForm() {
   return (
     <form onSubmit={handle} className="space-y-4">
       <div>
-        <label className="mb-1 block text-xs font-medium text-slate-400">Current password</label>
+        <label htmlFor="current-password" className="mb-1 block text-xs font-medium text-slate-400">Current password</label>
         <input
+          id="current-password"
           type="password"
           required
           value={current}
@@ -141,8 +142,9 @@ function PasswordForm() {
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs font-medium text-slate-400">New password</label>
+        <label htmlFor="new-password" className="mb-1 block text-xs font-medium text-slate-400">New password</label>
         <input
+          id="new-password"
           type="password"
           required
           minLength={8}
@@ -195,8 +197,9 @@ function EmailForm() {
         No email on this account. Set one to enable password change confirmations. It cannot be changed afterwards.
       </div>
       <div>
-        <label className="mb-1 block text-xs font-medium text-slate-400">Email address</label>
+        <label htmlFor="account-email" className="mb-1 block text-xs font-medium text-slate-400">Email address</label>
         <input
+          id="account-email"
           type="email"
           required
           value={email}
@@ -290,7 +293,11 @@ export default function Account() {
     'password',
     ...(currentUser?.auth_provider === 'github' ? [] : ['github' as const]),
   ];
-  const [tab, setTab] = useState<Tab>(() => (currentUser?.email ? 'password' : 'email'));
+  const [chosen, setChosen] = useState<Tab | null>(null);
+  // The profile arrives after the first render, so the default is worked out
+  // from the tabs on every render rather than frozen in the initial state:
+  // frozen, it opened the email form for accounts that already had an email.
+  const tab: Tab = chosen && tabs.includes(chosen) ? chosen : tabs[0];
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -313,7 +320,8 @@ export default function Account() {
             <button
               key={t}
               type="button"
-              onClick={() => setTab(t)}
+              onClick={() => setChosen(t)}
+              aria-pressed={tab === t}
               className={`flex-1 rounded-md py-1.5 text-sm font-medium transition ${
                 tab === t
                   ? 'bg-slate-700 text-slate-100 shadow'

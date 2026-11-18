@@ -146,14 +146,14 @@ export default function PipelineDetail() {
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
           Pipeline Phases
         </h3>
-        <div className="flex items-center gap-0">
+        <div className="flex items-center gap-0" data-testid="pipeline-phases">
           {PHASE_ORDER.map((phaseName, idx) => {
             const phase = pipeline.phases.find((p) => p.name === phaseName);
             const status: PhaseStatus = phase?.status ?? 'pending';
             const styles = phaseStatusStyles[status];
 
             return (
-              <div key={phaseName} className="flex items-center">
+              <div key={phaseName} className="flex items-center" data-phase={phaseName} data-status={status}>
                 <div className="flex flex-col items-center">
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full ring-2 ${styles.bg} ${styles.ring}`}

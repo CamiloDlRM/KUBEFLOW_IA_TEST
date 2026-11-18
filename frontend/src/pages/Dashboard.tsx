@@ -174,8 +174,10 @@ export default function Dashboard() {
 
 function HealthDot({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" data-testid="service-health" data-ok={ok}>
       <span
+        role="img"
+        aria-label={ok ? 'up' : 'down'}
         className={`h-2.5 w-2.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`}
       />
       <span className="text-sm text-slate-300">{label}</span>
