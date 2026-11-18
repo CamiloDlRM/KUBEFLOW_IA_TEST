@@ -20,6 +20,7 @@ import ConfirmChange from './pages/ConfirmChange';
 import GithubCallback from './pages/GithubCallback';
 import SetPassword from './pages/SetPassword';
 import Docs from './pages/Docs';
+import TechDocs from './pages/TechDocs';
 import NotFound from './pages/NotFound';
 import NotebookEditor from './pages/NotebookEditor';
 
@@ -48,7 +49,11 @@ export default function App() {
       <Route path="/confirm-change" element={<ConfirmChange />} />
       <Route path="/auth/github" element={<GithubCallback />} />
       <Route path="/set-password" element={<RequireAuth><SetPassword /></RequireAuth>} />
-      <Route path="/docs" element={<Docs />} />
+      <Route path="/user-manual" element={<Docs />} />
+      <Route path="/user_manual" element={<Navigate to="/user-manual" replace />} />
+      <Route path="/docs" element={<Navigate to="/user-manual" replace />} />
+      <Route path="/tech-docs" element={<TechDocs />} />
+      <Route path="/tech_docs" element={<Navigate to="/tech-docs" replace />} />
       {/* Full screen, with its own header and back button: outside the app's Layout. */}
       <Route path="/repos/:repoId/notebook" element={<RequireAuth><NotebookEditor /></RequireAuth>} />
 
