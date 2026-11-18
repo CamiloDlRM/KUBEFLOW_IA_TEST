@@ -4,47 +4,6 @@ import { Pin, WfFrame, WfLabel, WfLines, WfStatus } from './Wireframe';
    the product; everything else is rules and boxes, because the point is to
    locate a control, not to reproduce a screenshot. */
 
-export function LoginScreen() {
-  return (
-    <WfFrame path="maia / sign in">
-      <div className="mx-auto w-full max-w-[250px] space-y-2 py-1">
-        <div className="text-center">
-          <p className="font-display text-[15px] font-semibold leading-tight">Sign in to Maia</p>
-          <p className="wf-text">From code to deployment</p>
-        </div>
-
-        <div className="space-y-2 rounded border border-[var(--rule)] bg-white p-3">
-          <div className="relative">
-            <WfLabel>Username</WfLabel>
-            <div className="wf-box mt-1">
-              <WfLines count={1} />
-            </div>
-            <Pin n={1} />
-          </div>
-
-          <div className="relative">
-            <WfLabel>Password</WfLabel>
-            <div className="wf-box mt-1">
-              <WfLines count={1} />
-            </div>
-            <Pin n={2} />
-          </div>
-
-          <div className="relative">
-            <span className="wf-btn w-full">Sign in</span>
-            <Pin n={3} />
-          </div>
-
-          <p className="relative text-center wf-text">
-            Don&rsquo;t have an account? Ask an administrator.
-            <Pin n={4} className="-left-2 -top-2" />
-          </p>
-        </div>
-      </div>
-    </WfFrame>
-  );
-}
-
 export function ShellScreen() {
   const nav = [
     { label: 'Dashboard', pin: 1, active: true },
@@ -512,7 +471,7 @@ export function StagesScreen() {
               key={stage.label}
               className={`relative flex-1 rounded border p-1.5 ${
                 stage.on
-                  ? 'border-[var(--rule-strong)] bg-white'
+                  ? 'border-[var(--rule-strong)] bg-[var(--paper-soft)]'
                   : 'border-dashed border-[var(--rule)] bg-transparent'
               }`}
             >
@@ -612,7 +571,7 @@ export function KpiScreen() {
           </div>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
             {[0, 1, 2].map((index) => (
-              <div key={index} className="border border-[var(--rule)] bg-white p-1">
+              <div key={index} className="border border-[var(--rule)] bg-[var(--paper-soft)] p-1">
                 <div className="h-[26px] w-full bg-[var(--paper-deep)]" />
                 <WfLabel>chart {index + 1}</WfLabel>
               </div>
@@ -891,42 +850,6 @@ export function SettingsScreen() {
             <p className="wf-text">Check your email. Click the link to apply the change.</p>
             <Pin n={4} />
           </div>
-        </div>
-      </div>
-    </WfFrame>
-  );
-}
-
-export function AdvisorScreen() {
-  return (
-    <WfFrame path="maia / pipelines / 4f2a9c1b / advisor">
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-1">
-          <p className="wf-strong">✦ AI Training Advisor</p>
-          <span className="relative wf-pill">
-            Analyze this run
-            <Pin n={1} />
-          </span>
-        </div>
-
-        <div className="relative wf-box wf-box--deep">
-          <WfLabel>Report</WfLabel>
-          <WfLines count={4} className="mt-1" />
-          <div className="mt-2 border-t border-[var(--rule)] pt-1.5">
-            <div className="flex flex-wrap items-center justify-between gap-1">
-              <span className="wf-text">Pushes to testing-ia-agent</span>
-              <span className="relative wf-btn">
-                Apply &amp; push
-                <Pin n={3} />
-              </span>
-            </div>
-          </div>
-          <Pin n={2} className="-left-2 -top-2" />
-        </div>
-
-        <div className="relative wf-box wf-box--dashed">
-          <p className="wf-text">Pushed to branch testing-ia-agent (commit 9c1a2f). Review the diff on GitHub, then run the pipeline from that branch.</p>
-          <Pin n={4} className="-left-2 -top-2" />
         </div>
       </div>
     </WfFrame>

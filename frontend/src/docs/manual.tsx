@@ -1,18 +1,7 @@
 import type { ReactNode } from 'react';
 import {
-  AdvisorScreen,
-  CanvasScreen,
   ConnectScreen,
-  DashboardScreen,
   KpiScreen,
-  LinkRepoScreen,
-  LoginScreen,
-  MetricsScreen,
-  ModelsScreen,
-  ProjectScreen,
-  ProjectsScreen,
-  RecentRunsScreen,
-  RunScreen,
   SettingsScreen,
   ShellScreen,
   StagesScreen,
@@ -21,7 +10,34 @@ import {
   IssuesTable,
   LayersBlock,
   NotebookBlock,
+  ScreenshotFrame,
 } from '../components/docs/ManualBlocks';
+import loginImg from '../assets/UI_PF/Login.png';
+import signUpImg from '../assets/UI_PF/sing in.png';
+import dashboardRecentImg from '../assets/UI_PF/Dashboard_recentPipelines.png';
+import dashboardMyModelsImg from '../assets/UI_PF/Dashboard_My_models.png';
+import dashboardPlatformImg from '../assets/UI_PF/Dashboard_Platform.png';
+import dashboardResourcesImg from '../assets/UI_PF/Dashboard_Resources.png';
+import projectsImg from '../assets/UI_PF/Projects.png';
+import projectDetailImg from '../assets/UI_PF/Projects_new.png';
+import linkRepoProjectImg from '../assets/UI_PF/Create_project.png';
+import myReposImg from '../assets/UI_PF/Link_repo.png';
+import pipelinesImg from '../assets/UI_PF/Pipelines.png';
+import runPipelineImg from '../assets/UI_PF/Run_pipeline.png';
+import modelsImg from '../assets/UI_PF/Models.png';
+import runtimePipelineImg from '../assets/UI_PF/Runtime_Pipeline.png';
+import medallionsImg from '../assets/UI_PF/Medallons.png';
+import pipelineSetupImg from '../assets/UI_PF/Pipeline_Setup.png';
+import pipelineConfigImg from '../assets/UI_PF/Pipeline_Config.png';
+import pipelineDataImg from '../assets/UI_PF/Pipeline_Data.png';
+import pipelinePreprocessingImg from '../assets/UI_PF/Pipeline_Preprocessing.png';
+import pipelineTrainingImg from '../assets/UI_PF/Pipeline_Training.png';
+import pipelineEvaluationImg from '../assets/UI_PF/Pipeline_Evaluation.png';
+import pipelineExportImg from '../assets/UI_PF/Pipeline_export.png';
+import pipelineModel1Img from '../assets/UI_PF/Pipeline_Model1.png';
+import pipelineModel2Img from '../assets/UI_PF/pipeline_model2.png';
+import pipelineFailedImg from '../assets/UI_PF/Pipeline_failed.png';
+import pipelineAdvisorImg from '../assets/UI_PF/Pipeline-IA_Advisor.png';
 
 /**
  * The manual, as data.
@@ -192,15 +208,22 @@ export const SECTIONS: ManualSection[] = [
     id: 'sign-in',
     chapter: 'start',
     nav: 'Signing in',
-    title: 'Signing in, and getting an account',
-    keywords: ['login', 'log in', 'password', 'invite', 'register', 'account', 'access', 'sign out'],
-    lede: 'Sign in with the username and password you were given. Maia has no public sign-up: every account begins with an invitation from an administrator.',
-    wireframe: <LoginScreen />,
+    title: 'Signing in to Maia',
+    keywords: ['login', 'log in', 'password', 'github', 'account', 'access', 'sign out'],
+    lede: 'Sign in with your username and password, or continue directly with GitHub. Your session stays open until you explicitly sign out.',
+    wireframe: (
+      <ScreenshotFrame
+        src={loginImg}
+        path="maia / login"
+        alt="Maia sign-in screen with Username, Password, Sign in button, and Continue with GitHub"
+        caption="The sign-in screen: credentials or GitHub OAuth."
+      />
+    ),
     anatomy: [
       {
         n: 1,
         label: 'Username',
-        text: 'The one your administrator set up. It is not necessarily your email address.',
+        text: 'Your Maia account username. It is not necessarily your email address.',
       },
       {
         n: 2,
@@ -210,44 +233,30 @@ export const SECTIONS: ManualSection[] = [
       {
         n: 3,
         label: 'Sign in',
-        text: 'Opens the Dashboard. A wrong password says so without saying which field was wrong.',
+        text: 'Opens the Dashboard. A wrong password says so without revealing which field was wrong.',
       },
       {
         n: 4,
-        label: 'Registration',
-        text: (
-          <>
-            If you have an invite link, it opens the register page with a token already in
-            the address. Without the token, registration refuses to start.
-          </>
-        ),
+        label: 'Continue with GitHub',
+        text: 'Signs in using GitHub OAuth and links your GitHub identity for repository access.',
+      },
+      {
+        n: 5,
+        label: 'Sign up link',
+        text: 'Switches to the account creation form if you do not have an account yet.',
       },
     ],
     steps: [
       {
         title: 'Open Maia and choose Sign in',
-        body: 'The landing page links to the form. Your session stays open until you sign out.',
+        body: 'The landing page links to the form, and the top-right Home button returns you to it.',
       },
       {
-        title: 'Accept your invitation, if this is the first time',
-        body: (
-          <>
-            The email from your administrator contains a link to the register page. Choose a
-            username and a password there. The link works once.
-          </>
-        ),
-      },
-      {
-        title: 'If the link has expired',
-        body: 'The page will say the token is invalid, used, or expired. Ask for a fresh invitation; there is no self-service reset.',
+        title: 'Enter credentials or use GitHub',
+        body: 'Use your username and password, or click Continue with GitHub to authenticate via OAuth.',
       },
     ],
     notes: [
-      {
-        tone: 'watch',
-        title: 'Invitations expire',
-        body: 'An administrator chooses 24 hours to 7 days when sending one. A link that sat in an inbox over a weekend may already be dead.',
-      },
       {
         tone: 'tip',
         title: 'Signing out',
@@ -257,6 +266,57 @@ export const SECTIONS: ManualSection[] = [
             the top bar on a phone.
           </>
         ),
+      },
+    ],
+  },
+
+  {
+    id: 'sign-up',
+    chapter: 'start',
+    nav: 'Creating an account',
+    title: 'Creating an account',
+    keywords: ['sign up', 'register', 'create account', 'github token', 'ghp', 'invite', 'new account'],
+    lede: 'Create a Maia account from the Sign up form (or via an administrator invite link). Connecting a GitHub personal access token lets Maia list your repositories and trigger webhooks.',
+    wireframe: (
+      <ScreenshotFrame
+        src={signUpImg}
+        path="maia / sign up"
+        alt="Maia create account form with Username, Email, GitHub token, Password, and Continue with GitHub"
+        caption="Create account screen: local credentials plus optional GitHub personal access token."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Username & Email',
+        text: 'Your unique handle in Maia and the email address used for notifications and credential confirmations.',
+      },
+      {
+        n: 2,
+        label: 'GitHub token (ghp_...)',
+        text: 'A GitHub personal access token so Maia can browse branches, read notebooks, and register webhooks on your behalf.',
+      },
+      {
+        n: 3,
+        label: 'Password',
+        text: 'Choose a password between 8 and 72 characters.',
+      },
+      {
+        n: 4,
+        label: 'Create account',
+        text: 'Registers the account and signs you into the Dashboard.',
+      },
+      {
+        n: 5,
+        label: 'Continue with GitHub',
+        text: 'Creates or links your account directly through GitHub OAuth without filling the form manually.',
+      },
+    ],
+    notes: [
+      {
+        tone: 'watch',
+        title: 'Invitations expire',
+        body: 'If your administrator sent an invitation link, it works once and expires after 24 hours to 7 days. Ask for a fresh one if it says the token is invalid or expired.',
       },
     ],
   },
@@ -317,7 +377,7 @@ export const SECTIONS: ManualSection[] = [
         title: 'This manual is not in the sidebar',
         body: (
           <>
-            It lives at <code>/docs</code>, linked from the landing page, so it is not in the
+            It lives at <code>/user-manual</code>, linked from the landing page, so it is not in the
             way while you work. Keep it in a second tab.
           </>
         ),
@@ -335,7 +395,14 @@ export const SECTIONS: ManualSection[] = [
     title: 'What the Dashboard is for',
     keywords: ['dashboard', 'home', 'overview', 'recent runs', 'health', 'metrics', 'first screen'],
     lede: 'The Dashboard answers two questions before you click anything: what has run, and is the platform healthy. It is a reading screen — no run is started here.',
-    wireframe: <DashboardScreen />,
+    wireframe: (
+      <ScreenshotFrame
+        src={dashboardRecentImg}
+        path="maia / dashboard"
+        alt="Maia Dashboard showing sidebar navigation, Service Health indicators, and Recent Pipelines table"
+        caption="Top of the Dashboard: sidebar navigation, Service Health status dots, and Recent Pipelines."
+      />
+    ),
     anatomy: [
       {
         n: 1,
@@ -344,18 +411,18 @@ export const SECTIONS: ManualSection[] = [
       },
       {
         n: 2,
-        label: 'Projects',
-        text: 'The only action in the header. Takes you to the list where new work begins.',
+        label: 'Sidebar navigation',
+        text: 'Always visible on the left: Dashboard, Projects, Pipelines, Models, My Repos, and Admin.',
       },
       {
         n: 3,
         label: 'Recent pipelines',
-        text: 'The five newest runs across every project. The short id opens the run.',
+        text: 'The five newest runs across every project, showing Pipeline ID, Repository, User, Commit, Status, Started, and Duration.',
       },
       {
         n: 4,
-        label: 'Model metrics',
-        text: 'Embedded Grafana panels, below the fold. Training and traffic rather than individual runs.',
+        label: 'Model, Platform & Resource metrics',
+        text: 'Embedded Grafana panels below the fold, split across three tabs: My Models, Platform, and Resources.',
       },
     ],
     steps: [
@@ -369,7 +436,7 @@ export const SECTIONS: ManualSection[] = [
       },
       {
         title: 'Drop into metrics only when the question is a trend',
-        body: '“Is accuracy drifting?” belongs here. “What did run 4f2a do?” belongs on the run page.',
+        body: '“Is accuracy drifting?” belongs here. “What did run 028715c2 do?” belongs on the run page.',
       },
     ],
     notes: [
@@ -378,7 +445,7 @@ export const SECTIONS: ManualSection[] = [
         title: 'Runs start in Projects',
         body: (
           <>
-            Open a project, then its pipeline, then <Ui>Run pipeline</Ui>. The Dashboard is
+            Open a project, then click <Ui>Run pipeline</Ui>. The Dashboard is
             deliberately read-only so a stray click cannot start compute.
           </>
         ),
@@ -386,7 +453,7 @@ export const SECTIONS: ManualSection[] = [
       {
         tone: 'watch',
         title: '“Recent” means five',
-        body: 'Older runs are not hidden, just elsewhere: the pipeline canvas lists the last fifteen for its repository.',
+        body: 'Older runs are not hidden, just elsewhere: open Pipelines in the sidebar to search every run, or open the pipeline canvas for the last fifteen of a repository.',
       },
     ],
   },
@@ -449,19 +516,26 @@ export const SECTIONS: ManualSection[] = [
     chapter: 'home',
     nav: 'Recent pipelines',
     title: 'The last five runs',
-    keywords: ['runs', 'recent', 'pipelines', 'status', 'success', 'failed', 'queued', 'duration', 'commit'],
-    lede: 'One row per run, newest first. Every row is a link to the record; the table is a doorway, not a report.',
-    wireframe: <RecentRunsScreen />,
+    keywords: ['runs', 'recent', 'pipelines', 'status', 'success', 'failed', 'queued', 'duration', 'commit', 'user'],
+    lede: 'One row per run, newest first. Every row links directly to the run record; the table is a quick doorway into your latest executions.',
+    wireframe: (
+      <ScreenshotFrame
+        src={dashboardRecentImg}
+        path="maia / dashboard · recent pipelines"
+        alt="Recent Pipelines table on the Dashboard showing Pipeline ID, Repository, User, Commit, Status, Started, and Duration"
+        caption="Recent Pipelines table: the five most recent notebook executions and their status badges."
+      />
+    ),
     anatomy: [
       {
         n: 1,
         label: 'Pipeline',
-        text: 'The run’s short id. Click it to open phases, logs, the advisor, and metrics.',
+        text: 'The run’s short ID (e.g. 028715c2). Click it to open phases, logs, the advisor, and metrics.',
       },
       {
         n: 2,
-        label: 'Repository',
-        text: 'The repository the notebook came from — the name half of its GitHub URL.',
+        label: 'Repository & User',
+        text: 'The GitHub repository owner/name that supplied the notebook and the user who triggered the run.',
       },
       {
         n: 3,
@@ -476,7 +550,7 @@ export const SECTIONS: ManualSection[] = [
       {
         n: 5,
         label: 'Started',
-        text: 'Local time, to the minute. Runs are ordered by this, not by when they finished.',
+        text: 'Local date and time, to the minute. Runs are ordered by this, not by when they finished.',
       },
       {
         n: 6,
@@ -511,7 +585,7 @@ export const SECTIONS: ManualSection[] = [
       {
         tone: 'watch',
         title: 'The table is not the archive',
-        body: 'It shows five. Use the run list on the pipeline canvas for the last fifteen of a repository, or the run URL if someone shared it.',
+        body: 'It shows five. Use the Pipelines page in the sidebar for the full searchable history, or the pipeline canvas for the last fifteen of a repository.',
       },
     ],
   },
@@ -520,56 +594,137 @@ export const SECTIONS: ManualSection[] = [
     id: 'metrics',
     chapter: 'home',
     nav: 'Model metrics',
-    title: 'Metrics that move over time',
-    keywords: ['grafana', 'metrics', 'charts', 'accuracy', 'drift', 'traffic', 'platform', 'my models', 'refresh'],
-    lede: 'Two embedded dashboards sit below the runs. Use them for trends and traffic; use a run page for one run’s numbers.',
-    wireframe: <MetricsScreen />,
+    title: 'Metrics that move over time: My Models',
+    keywords: ['grafana', 'metrics', 'charts', 'accuracy', 'drift', 'traffic', 'my models', 'success rate', 'refresh'],
+    lede: 'Below the recent runs sit three embedded Grafana dashboards that refresh every 30 seconds. The default tab, My Models, tracks training runs, accuracy over time, and deployment counts for the repositories you own.',
+    wireframe: (
+      <ScreenshotFrame
+        src={dashboardMyModelsImg}
+        path="maia / dashboard · my models"
+        alt="Dashboard My Models tab showing My repositories, Deployed models, Last accuracy, Pipeline success rate, and Accuracy over time chart"
+        caption="My Models tab: KPI counters and accuracy trends per repository and branch."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'My Models / Platform',
-        text: 'Two tabs. Platform is for administrators only; if you do not see it, that is why.',
+        label: 'Dashboard tabs',
+        text: 'Switch between My Models (your training & inference metrics), Platform (API & service telemetry), and Resources (host & container usage).',
       },
       {
         n: 2,
-        label: 'The panels',
-        text: 'Accuracy over time, training runs, and inference traffic. The range is the last 30 days.',
+        label: 'Summary counters',
+        text: 'Four headline numbers: My repositories, Deployed models, Last accuracy (%), and Pipeline success rate (%).',
       },
       {
         n: 3,
-        label: 'Automatic refresh',
-        text: 'The panels refresh every 30 seconds. You do not need to reload the page.',
+        label: 'Accuracy over time (per repository)',
+        text: 'Plots validation accuracy across runs over the selected window (Last 30 days by default) so you can spot regressions or drift.',
       },
       {
         n: 4,
-        label: 'Open in Grafana',
-        text: 'Opens the same dashboard in a new tab, full screen, where it can be shared or inspected.',
+        label: 'Branch comparison & Pipeline outcomes',
+        text: 'Compares accuracy between main and testing-ia-agent branches alongside run outcome breakdowns.',
       },
     ],
     fields: [
       {
         term: 'My Models',
-        text: 'Training and inference for the models you own. The default tab, and the one to use day to day.',
+        text: 'Training and inference metrics scoped to the models and repositories you own. The default tab for day-to-day work.',
       },
       {
-        term: 'Platform',
-        text: 'Cluster-wide health of the platform services. Administrative view; not about a single model.',
-      },
-      {
-        term: 'Last 30 days',
-        text: 'The default window. Changing it inside the embed is temporary; the app always opens on 30 days.',
+        term: 'Last 30 days & 30s refresh',
+        text: 'The default time window and auto-refresh interval inside the Grafana embed.',
       },
     ],
     notes: [
       {
         tone: 'watch',
         title: 'A blank panel is a session problem',
-        body: 'If the frame says it could not load the dashboard, the embedded Grafana session has expired. Reload the Dashboard or use Open in Grafana. Your run data is unaffected.',
+        body: 'If the frame says it could not load the dashboard, the embedded Grafana session has expired. Reload the Dashboard; your run data is unaffected.',
       },
       {
         tone: 'tip',
         title: 'Panels are not live per-run',
         body: 'They read the platform’s records on a 30-second cycle. A run that finished seconds ago may take one refresh to appear.',
+      },
+    ],
+  },
+
+  {
+    id: 'platform-metrics',
+    chapter: 'home',
+    nav: 'Platform metrics',
+    title: 'Cluster-wide service telemetry: Platform',
+    keywords: ['platform', 'grafana', 'scrape targets', 'requests', 'latency', '5xx', 'errors', 'endpoints', 'telemetry'],
+    lede: 'The Platform tab shows cluster-wide HTTP traffic, latency percentiles, and scrape health across Maia’s backend and model-serving services.',
+    wireframe: (
+      <ScreenshotFrame
+        src={dashboardPlatformImg}
+        path="maia / dashboard · platform"
+        alt="Dashboard Platform tab showing Scrape targets up, Requests/s, 5xx error ratio, p95 latency, Request rate by endpoint, and Latency percentiles"
+        caption="Platform tab: Prometheus scrape targets, request throughput, error ratio, and p50/p90/p99 latency."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Scrape targets up',
+        text: 'How many Prometheus targets in the MLOps stack are currently reachable and reporting metrics.',
+      },
+      {
+        n: 2,
+        label: 'Requests / s & 5xx error ratio',
+        text: 'Real-time request throughput and the percentage of server-side (5xx) errors across the platform.',
+      },
+      {
+        n: 3,
+        label: 'p95 latency',
+        text: '95th-percentile response time in milliseconds, useful for spotting slow API or inference calls.',
+      },
+      {
+        n: 4,
+        label: 'Request rate by endpoint & Latency percentiles',
+        text: 'Time-series charts breaking down traffic per route and plotting p50, p90, and p99 response times.',
+      },
+    ],
+  },
+
+  {
+    id: 'resource-metrics',
+    chapter: 'home',
+    nav: 'Resource metrics',
+    title: 'Server and container usage: Resources',
+    keywords: ['resources', 'cpu', 'memory', 'disk', 'containers', 'docker', 'network', 'grafana', 'host'],
+    lede: 'The Resources tab monitors the physical or virtual host alongside every container in the stack (backend, worker, postgres, mlflow, minio, model-server, grafana).',
+    wireframe: (
+      <ScreenshotFrame
+        src={dashboardResourcesImg}
+        path="maia / dashboard · resources"
+        alt="Dashboard Resources tab showing Host CPU used, Host memory used, Disk used, Containers running, CPU by container, and Memory by container"
+        caption="Resources tab: host utilization gauges and per-container CPU, memory, and network time series."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Host CPU, Memory & Disk used',
+        text: 'Overall server utilization percentages. High disk usage (above 80%) is a cue to prune old artifacts or container images.',
+      },
+      {
+        n: 2,
+        label: 'Containers running',
+        text: 'Count of active containers in the Maia stack.',
+      },
+      {
+        n: 3,
+        label: 'CPU & Memory by container',
+        text: 'Per-service breakdown (e.g. mlops-backend, mlops-mlflow, mlops-minio, mlops-model-server) showing Last and Max consumption.',
+      },
+      {
+        n: 4,
+        label: 'Host CPU/memory & Network by container',
+        text: 'Historical host load and container network I/O over the selected window.',
       },
     ],
   },
@@ -584,7 +739,14 @@ export const SECTIONS: ManualSection[] = [
     title: 'Projects, the unit of work',
     keywords: ['projects', 'new project', 'create', 'name', 'cards', 'sources', 'gold rows', 'repository'],
     lede: 'A project holds one line of work: its data, the notebook that trains on it, and the models that come out. Everything else in Maia hangs off a project.',
-    wireframe: <ProjectsScreen />,
+    wireframe: (
+      <ScreenshotFrame
+        src={projectsImg}
+        path="maia / projects"
+        alt="Maia Projects page showing the Name your project field, New project button, and project cards"
+        caption="Projects screen: create a project at the top or open any existing project card below."
+      />
+    ),
     anatomy: [
       {
         n: 1,
@@ -599,7 +761,7 @@ export const SECTIONS: ManualSection[] = [
       {
         n: 3,
         label: 'Project card',
-        text: 'Opens the project. The repository line says “No repository linked yet” until code is attached — not an error.',
+        text: 'Opens the project. Shows creation timestamp, Sources, Rows in gold, and the linked repository (or “No repository linked yet”).',
       },
       {
         n: 4,
@@ -609,7 +771,7 @@ export const SECTIONS: ManualSection[] = [
       {
         n: 5,
         label: 'Rows in gold',
-        text: 'The size of the table training will read. Zero until the first gold build exists.',
+        text: 'The size of the table training will read, highlighted in gold. Zero until the first gold build exists.',
       },
       {
         n: 6,
@@ -649,51 +811,106 @@ export const SECTIONS: ManualSection[] = [
     id: 'project-page',
     chapter: 'data',
     nav: 'Inside a project',
-    title: 'Two halves: data, then code',
-    keywords: ['project', 'detail', 'data factory', 'repository', 'link', 'overview'],
-    lede: 'The project page is a table of contents with two entries. Data comes first because it comes first in the work — and because a project can have all of it without a repository.',
-    wireframe: <ProjectScreen />,
+    title: 'Data, code, and deployment rules',
+    keywords: ['project', 'detail', 'data factory', 'repository', 'link', 'deployment rules', 'accuracy', 'bar', 'run pipeline', 'overview'],
+    lede: 'The project page brings together the three parts of a project: Data Factory (your data), Repository (your notebook), and Deployment rules (the quality gate a run must pass to deploy automatically).',
+    wireframe: (
+      <ScreenshotFrame
+        src={projectDetailImg}
+        path="maia / projects · prueba production"
+        alt="Inside a project showing Run pipeline button, Data Factory card, linked Repository card, and Deployment rules card"
+        caption="Inside a project: Data Factory, linked Repository, and Deployment rules."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'Data Factory',
-        text: 'The large card. Opens the seven-stage path from connection to dashboard.',
+        label: 'Run pipeline',
+        text: 'Top-right action. Opens the launch dialog to execute the linked notebook on the project’s gold table or dataset.',
       },
       {
         n: 2,
-        label: 'Sources',
-        text: 'A live count. Zero is a valid starting point, not a warning.',
+        label: 'Data Factory',
+        text: 'Opens the stage-by-stage path from data connection and cleaning to the gold table, while showing live counts of Sources and Rows in gold.',
       },
       {
         n: 3,
-        label: 'Rows in gold',
-        text: 'The one number that says whether there is something to train on.',
+        label: 'Repository',
+        text: 'The code card. Shows the linked GitHub repository, branch, and .ipynb file, with buttons to Open pipeline or Unlink.',
       },
       {
         n: 4,
-        label: 'Repository',
-        text: 'The code half. “Link a repository” opens the picker; once linked, the card shows the branch, the notebook, and Open pipeline.',
+        label: 'Deployment rules',
+        text: 'Configures automatic model promotion: toggle auto-deploy, choose the evaluation Metric (e.g. accuracy), comparison direction (higher ≥ or lower ≤), threshold Bar (e.g. 0.7), and whether the run must also beat the currently serving version.',
       },
     ],
     fields: [
       {
-        term: 'Link a repository',
-        text: 'Attaches code to the project. Optional, reversible, and unrelated to the data already collected.',
+        term: 'Link a repository / Unlink',
+        text: 'Attaches or removes the GitHub notebook connection. Unlinking leaves all data, gold builds, and past runs untouched.',
       },
       {
         term: 'Open pipeline',
-        text: 'Appears only when a repository is linked. Goes to the canvas where runs are started.',
+        text: 'Appears when a repository is linked. Opens the visual pipeline canvas for that repository.',
       },
       {
-        term: 'Unlink',
-        text: 'Removes the code connection. The data, gold builds, and past runs stay exactly where they are.',
+        term: 'Deploy automatically when a run meets the bar',
+        text: 'When checked, any successful run whose metric clears the configured bar is deployed to the model server without manual intervention.',
+      },
+      {
+        term: '...and beat the version serving now',
+        text: 'Optional stricter gate: requires the new run to outperform the currently active model version in addition to clearing the static bar.',
       },
     ],
     notes: [
       {
         tone: 'tip',
         title: 'Work top to bottom on a first visit',
-        body: 'Open the Data Factory, connect something, run an extraction. Then come back for the repository once there is a table worth training on.',
+        body: 'Open the Data Factory, connect something, run an extraction. Then come back for the repository and deployment rules once there is a table worth training on.',
+      },
+    ],
+  },
+
+  {
+    id: 'my-repos',
+    chapter: 'data',
+    nav: 'My Repos',
+    title: 'My Repos: registering a GitHub repository',
+    keywords: ['my repos', 'register repository', 'github', 'webhook', 'notebook template', 'add repository', 'url'],
+    lede: 'Before a project can link to a notebook, its GitHub repository must be registered in My Repos. Registering connects the repository and sets up a webhook to trigger pipelines automatically on push events.',
+    wireframe: (
+      <ScreenshotFrame
+        src={myReposImg}
+        path="maia / my repos · add a new repository"
+        alt="My Repos screen showing Add a new repository form, notebook template download button, and GitHub Repository URL input"
+        caption="My Repos: download the starter notebook template and register a GitHub repository URL."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Click to download the notebook template',
+        text: 'Downloads a ready-to-use .ipynb file with the required MLOps cell tags (mlops:config, mlops:preprocessing, mlops:training, mlops:export) already configured.',
+      },
+      {
+        n: 2,
+        label: 'GitHub Repository URL',
+        text: 'The full HTTPS address of the repository (e.g. https://github.com/user/repo) containing your training notebooks.',
+      },
+      {
+        n: 3,
+        label: 'Register Repository',
+        text: 'Validates access using your GitHub token, adds the repository to your list, and creates the push webhook on GitHub.',
+      },
+    ],
+    steps: [
+      {
+        title: 'Download the template if starting fresh',
+        body: 'Use the template button so you do not have to create the cell metadata tags by hand.',
+      },
+      {
+        title: 'Paste the GitHub URL and register',
+        body: 'Enter https://github.com/owner/repo and click Register Repository. Once registered, the repository is available to link inside any project.',
       },
     ],
   },
@@ -703,29 +920,36 @@ export const SECTIONS: ManualSection[] = [
     chapter: 'data',
     nav: 'Linking a repository',
     title: 'Repository, branch, notebook — in that order',
-    keywords: ['repository', 'repo', 'github', 'link', 'branch', 'notebook', 'ipynb', 'choose'],
-    lede: 'Linking code is three choices, not a form. Maia reads GitHub directly, so it asks for the repository, the branch, and the one notebook that trains.',
-    wireframe: <LinkRepoScreen />,
+    keywords: ['repository', 'repo', 'github', 'link', 'branch', 'notebook', 'ipynb', 'choose', 'explore', 'template'],
+    lede: 'Inside a project, linking code is three choices: pick a registered repository, choose its branch, and select the .ipynb notebook that trains on the project’s data.',
+    wireframe: (
+      <ScreenshotFrame
+        src={linkRepoProjectImg}
+        path="maia / projects · link repository"
+        alt="Project page with the Repository picker expanded, showing the notebook template download link and registered repositories with Explore buttons"
+        caption="Linking a repository inside a project: click Explore on a registered repository to pick its branch and notebook."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'Repository',
-        text: 'Pick one from the registered list. “Explore” becomes “Selected”; the panel below opens.',
+        label: 'Click to download the notebook template',
+        text: 'Also available directly inside the project picker if your repository still needs a compliant notebook.',
       },
       {
         n: 2,
-        label: 'Branch',
-        text: 'Loaded from GitHub. This is the branch whose notebook is fetched for every run.',
+        label: 'Registered repositories & Explore',
+        text: 'Pick a repository from your registered list and click Explore to load its branches and .ipynb files from GitHub.',
       },
       {
         n: 3,
-        label: 'Notebook',
-        text: 'Only .ipynb files in that branch. The list reloads when the branch changes.',
+        label: 'Branch & Notebook selection',
+        text: 'Choose the branch to track and the specific .ipynb file that Maia will execute on each run.',
       },
       {
         n: 4,
-        label: 'Link selected notebook',
-        text: 'Disabled until a notebook is chosen. Linking replaces any previous selection.',
+        label: 'Cancel',
+        text: 'Closes the repository picker without changing the project’s current link.',
       },
     ],
     steps: [
@@ -1037,43 +1261,89 @@ export const SECTIONS: ManualSection[] = [
   /*  04 — Pipelines                                                   */
   /* ---------------------------------------------------------------- */
   {
-    id: 'pipeline-canvas',
+    id: 'pipelines-list',
     chapter: 'pipelines',
-    nav: 'The pipeline canvas',
-    title: 'One row: input, phases, model',
-    keywords: ['pipeline', 'canvas', 'input', 'phases', 'nodes', 'notebook', 'drag', 'data', 'runs'],
-    lede: 'The canvas answers the question a log cannot: which data went into which code. The input is chosen by hand; every phase opens to the code it ran.',
-    wireframe: <CanvasScreen />,
+    nav: 'All pipelines',
+    title: 'Pipelines: every run of your notebooks',
+    keywords: ['pipelines', 'runs', 'search', 'filter', 'history', 'commit', 'branch', 'duration', 'cards'],
+    lede: 'The Pipelines page in the sidebar is the full archive of notebook runs across your projects and repositories. Search by notebook, project, or repository and click any card to inspect its phases and logs.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelinesImg}
+        path="maia / pipelines"
+        alt="Pipelines page showing the search bar, filter button, and grid of pipeline run cards"
+        caption="Pipelines screen: search and filter across every notebook execution."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'Run pipeline',
-        text: 'Starts the notebook on the input shown. Disabled while any run of this repository is queued or running.',
+        label: 'Search & filter bar',
+        text: 'Filter runs instantaneously by notebook filename, project name, or repository, or use the filter button on the right to narrow by status.',
       },
       {
         n: 2,
-        label: 'Input',
-        text: 'The data this run will mount: the active dataset, or a bronze, silver, or gold build.',
+        label: 'Run card header & status',
+        text: 'Displays the executed .ipynb filename, its associated project (or “No project”), and a status pill (success, failed, running, or queued).',
       },
       {
         n: 3,
-        label: 'Phase cards',
-        text: 'One per tagged cell. Each shows whether it ran, failed, or never ran in the selected run.',
+        label: 'Commit, Branch, Started & Duration',
+        text: 'Records the exact 7-character Git commit SHA, branch name, start timestamp, and wall-clock duration of the run.',
       },
       {
         n: 4,
-        label: 'Model',
-        text: 'Accuracy and deployment for the run. A model can be registered without being deployed.',
+        label: 'User & Repository',
+        text: 'Shows who triggered the run and the full GitHub owner/repository path at the bottom of the card.',
+      },
+    ],
+  },
+
+  {
+    id: 'pipeline-canvas',
+    chapter: 'pipelines',
+    nav: 'The pipeline canvas',
+    title: 'Nine connected nodes: from Input to Model',
+    keywords: ['pipeline', 'canvas', 'input', 'phases', 'nodes', 'notebook', 'drag', 'data', 'runs', 'runtime'],
+    lede: 'The pipeline canvas maps every stage of a notebook run left to right: Input → Setup → Config → Data → Preprocessing → Training → Evaluation → Export → Model. Click any node on the canvas to inspect its code, logs, or data.',
+    wireframe: (
+      <ScreenshotFrame
+        src={runtimePipelineImg}
+        path="maia / pipelines · canvas"
+        alt="Pipeline canvas showing Run pipeline button, run selector, repository selector, and the 9 connected nodes from Input to Model"
+        caption="The pipeline canvas: top toolbar and the nine sequential stages of a notebook execution."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Run pipeline & Run selector',
+        text: 'Top-left controls: Run pipeline launches a new execution; the adjacent dropdown (e.g. 028715c2 · success) switches between historical runs of this repository.',
+      },
+      {
+        n: 2,
+        label: 'Project / Repository switcher & Back',
+        text: 'Center dropdown switches between linked projects/repositories; Back returns to the project or pipelines list.',
+      },
+      {
+        n: 3,
+        label: 'Input node',
+        text: 'Shows the mounted data layer (e.g. gold v2) and its status. Clicking it opens the Medallion & dataset selector.',
+      },
+      {
+        n: 4,
+        label: 'Execution phase nodes (Setup → Export)',
+        text: 'Seven notebook stage nodes (Setup, Config, Data, Preprocessing, Training, Evaluation, Export), each displaying how many cells ran and its status badge (COMPLETED, FAILED, or PENDING).',
       },
       {
         n: 5,
-        label: 'Data',
-        text: 'Every input you can mount. Click to preview rows; drag onto Input to use.',
+        label: 'Model node',
+        text: 'Final node on the right showing the resulting accuracy and deployment state (e.g. accuracy 0.9462 · deployed).',
       },
       {
         n: 6,
-        label: 'Runs',
-        text: 'The last fifteen runs of this repository, newest first. Selecting one redraws the cards.',
+        label: 'Zoom controls & Maia assistant',
+        text: 'Bottom-left buttons zoom in (+), zoom out (−), or fit the canvas to screen; the Maia mascot at the bottom center reflects pipeline mood and status.',
       },
     ],
     fields: [
@@ -1087,33 +1357,337 @@ export const SECTIONS: ManualSection[] = [
       },
       {
         term: 'Branch run',
-        text: 'The entry at the top of the Runs list. It is not a run: it is the notebook currently on the branch, shown before a first run or when selecting the branch itself.',
+        text: 'The entry at the top of the run selector. It shows the notebook currently on the branch before a run is selected.',
       },
     ],
     steps: [
       {
         title: 'Choose the input',
-        body: 'Click a row in Data to preview it, then choose “Use this” in the preview — or drag it onto the Input card.',
+        body: 'Click the Input node to open the layer drawer, then pick a Gold, Silver, or Bronze build — or drag it onto the Input card.',
       },
       {
-        title: 'Click a card to inspect it',
-        body: 'Every phase opens to its code and its printed output. The input and model cards open to their own detail.',
+        title: 'Click any stage node to inspect it',
+        body: 'Every stage from Setup to Export opens a side drawer with the exact Python cell executed and its step logs.',
       },
       {
-        title: 'Select an older run in Runs',
-        body: 'The row redraws as that run: its commit, its phases, its model. The input card also shows what that run mounted.',
+        title: 'Select an older run in the top dropdown',
+        body: 'The canvas redraws as that run: its commit, its phase statuses, its logs, and the model metrics it produced.',
       },
     ],
     notes: [
       {
         tone: 'tip',
         title: 'The canvas is per repository',
-        body: 'A project has one linked repository, so it has one canvas. Selecting a run does not change the input for future runs.',
+        body: 'A project has one linked repository, so it has one canvas. Selecting an older run to inspect does not change the input configured for future runs.',
       },
       {
         tone: 'watch',
         title: 'One run at a time',
-        body: 'The button reads Running. while this repository has a queued or running pipeline. Other projects are unaffected.',
+        body: 'The button is disabled while this repository has a queued or running pipeline. Other projects are unaffected.',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-input',
+    chapter: 'pipelines',
+    nav: 'Stage 1 · Input',
+    title: 'Stage 1 — Input: choosing a Medallion layer or dataset',
+    keywords: ['input', 'medallion', 'gold', 'silver', 'bronze', 'parquet', 'dataset_path', 'active dataset', 'stage 1'],
+    lede: 'Clicking the Input node opens the data drawer, where you choose which table Maia mounts into the notebook as DATASET_PATH on the next run.',
+    wireframe: (
+      <ScreenshotFrame
+        src={medallionsImg}
+        path="maia / pipelines · stage 1: input"
+        alt="Pipeline Input drawer showing IN USE NEXT RUN gold v2, GOLD builds, SILVER tables, BRONZE tables, and Use the active dataset instead"
+        caption="Stage 1 (Input): pick or drag a Gold, Silver, or Bronze build, or fall back to the active uploaded dataset."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'IN USE · NEXT RUN',
+        text: 'Displays the layer currently mounted as DATASET_PATH (e.g. gold v2) and its underlying MinIO Parquet URI (s3://gold/project-4/gold/v0002.parquet).',
+      },
+      {
+        n: 2,
+        label: 'GOLD builds',
+        text: 'Choose gold · newest (automatically follows every new Gold build) or pin a specific version such as gold v2 or gold v1.',
+      },
+      {
+        n: 3,
+        label: 'SILVER & BRONZE · UNCLEANED',
+        text: 'Allows mounting cleaned Silver tables or raw Bronze extractions per source when a notebook needs to do its own feature aggregation.',
+      },
+      {
+        n: 4,
+        label: 'Use the active dataset instead',
+        text: 'Clears the medallion selection and reverts DATASET_PATH to the project’s active uploaded file.',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-setup',
+    chapter: 'pipelines',
+    nav: 'Stage 2 · Setup',
+    title: 'Stage 2 — Setup: imports and Papermill parameters',
+    keywords: ['setup', 'parameters', 'papermill', 'imports', 'dataset_path', 'model_output_path', 'pipeline_id', 'mlflow_tracking_uri', 'stage 2'],
+    lede: 'The Setup node groups untagged cells and the parameters cell at the top of the notebook, where Papermill injects runtime variables before training begins.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineSetupImg}
+        path="maia / pipelines · stage 2: setup"
+        alt="Setup stage drawer showing the parameters cell with DATASET_PATH, MODEL_OUTPUT_PATH, PIPELINE_ID, MLFLOW_TRACKING_URI, and step logs"
+        caption="Stage 2 (Setup): the parameters cell injected by Papermill at runtime."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Notebook header & breadcrumb',
+        text: 'Shows the notebook filename (e.g. encounters_layer_notebook.ipynb › Setup) and the cell tag badge (parameters).',
+      },
+      {
+        n: 2,
+        label: 'Injected runtime variables',
+        text: 'Declares DATASET_PATH, MODEL_OUTPUT_PATH, PIPELINE_ID, and MLFLOW_TRACKING_URI, which Maia overwrites automatically when executing the run.',
+      },
+      {
+        n: 3,
+        label: 'Execution status bar',
+        text: 'Blue footer bar confirming the branch (main), cell execution status (completed · the code this run executed), cell/line count, and language.',
+      },
+      {
+        n: 4,
+        label: 'LOGS (this step)',
+        text: 'Displays stdout/stderr captured specifically from the Setup cells during this run.',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-config',
+    chapter: 'pipelines',
+    nav: 'Stage 3 · Config',
+    title: 'Stage 3 — Config: model identity and local fallbacks',
+    keywords: ['config', 'mlops:config', 'model_name', 'version', 'fallback', 'stage 3'],
+    lede: 'The Config node runs the cell tagged mlops:config, which names the model, sets its version string, and provides safe local defaults when running outside Maia.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineConfigImg}
+        path="maia / pipelines · stage 3: config"
+        alt="Config stage drawer showing mlops:config cell defining MODEL_NAME, VERSION, fallback paths, and printed step logs"
+        caption="Stage 3 (Config): defines MODEL_NAME and VERSION and logs the resolved dataset path."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'MODEL_NAME and VERSION',
+        text: 'Required variables read by Maia to register and version the trained artifact in MLflow (e.g. encounter-class-classifier, v1).',
+      },
+      {
+        n: 2,
+        label: 'Environment fallbacks',
+        text: 'Uses "or" expressions (e.g. MODEL_OUTPUT_PATH or "./model.joblib") so the same cell runs locally on a laptop without errors.',
+      },
+      {
+        n: 3,
+        label: 'Step output in LOGS',
+        text: 'Prints the resolved model identifier and temporary Parquet path mounted by the worker (/tmp/.../dataset/gold-v0002.parquet).',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-data',
+    chapter: 'pipelines',
+    nav: 'Stage 4 · Data',
+    title: 'Stage 4 — Data: loading and inspecting the dataset',
+    keywords: ['data', 'mlops:data', 'read_parquet', 'target_column', 'dataframe', 'schema', 'stage 4'],
+    lede: 'The Data node executes the optional mlops:data cell, which loads the Parquet or CSV file from DATASET_PATH into a DataFrame and verifies the target column.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineDataImg}
+        path="maia / pipelines · stage 4: data"
+        alt="Data stage drawer showing code that checks DATASET_PATH and loads the dataset, with column types printed in the step logs"
+        caption="Stage 4 (Data): reads DATASET_PATH and logs the loaded DataFrame schema."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'TARGET_COLUMN & DATASET_PATH check',
+        text: 'Sets the label column to predict (e.g. encounter_class) and raises a clear error if DATASET_PATH is empty or missing.',
+      },
+      {
+        n: 2,
+        label: 'DataFrame schema in LOGS',
+        text: 'Prints the loaded columns and data types (e.g. recorded_at, id, procedure_code, procedure_text) so you can verify what entered the pipeline.',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-preprocessing',
+    chapter: 'pipelines',
+    nav: 'Stage 5 · Preprocessing',
+    title: 'Stage 5 — Preprocessing: feature engineering and splits',
+    keywords: ['preprocessing', 'mlops:preprocessing', 'train_test_split', 'features', 'classes', 'stage 5'],
+    lede: 'The Preprocessing node runs the required mlops:preprocessing cell, transforming raw columns into model features and splitting rows into training and test sets.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelinePreprocessingImg}
+        path="maia / pipelines · stage 5: preprocessing"
+        alt="Preprocessing stage drawer showing train_test_split code and step logs with class distribution and Train/Test row counts"
+        caption="Stage 5 (Preprocessing): validates the target column, encodes features, and logs the Train / Test split sizes."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Target validation & cleaning',
+        text: 'Verifies TARGET_COLUMN exists in df.columns and drops rows where the target label is null.',
+      },
+      {
+        n: 2,
+        label: 'Class balance & split logs',
+        text: 'Step logs display per-class counts (e.g. home, inpatient, snf, hospice, virtual) and the final sample split (Train: 4,456 | Test: 1,115).',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-training',
+    chapter: 'pipelines',
+    nav: 'Stage 6 · Training',
+    title: 'Stage 6 — Training: fitting the model',
+    keywords: ['training', 'mlops:training', 'fit', 'randomforest', 'feature importance', 'stage 6'],
+    lede: 'The Training node runs the required mlops:training cell, instantiating the estimator, fitting it on X_train and y_train, and printing training diagnostics.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineTrainingImg}
+        path="maia / pipelines · stage 6: training"
+        alt="Training stage drawer showing RandomForestClassifier model.fit code and feature importance values in the step logs"
+        caption="Stage 6 (Training): fits the estimator and logs feature importances."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Estimator configuration & model.fit',
+        text: 'Defines hyperparameters (such as n_estimators, max_depth, class_weight="balanced") and fits the model on the training split.',
+      },
+      {
+        n: 2,
+        label: 'Feature importance logs',
+        text: 'Prints the top predictive features (e.g. base_cost, duration_minutes, total_claim_cost, payer_coverage) directly in the step log panel.',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-evaluation',
+    chapter: 'pipelines',
+    nav: 'Stage 7 · Evaluation',
+    title: 'Stage 7 — Evaluation: logging metrics to MLflow',
+    keywords: ['evaluation', 'mlops:evaluation', 'mlflow', 'accuracy', 'f1_score', 'classification_report', 'metrics', 'stage 7'],
+    lede: 'The Evaluation node runs the mlops:evaluation cell, scoring the model on X_test and recording metrics in MLflow so Maia can evaluate the project’s deployment rules.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineEvaluationImg}
+        path="maia / pipelines · stage 7: evaluation"
+        alt="Evaluation stage drawer showing mlflow tracking code, accuracy/F1 calculation, and classification report in the step logs"
+        caption="Stage 7 (Evaluation): computes test metrics and logs them to MLflow."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'MLflow tracking & metric calculation',
+        text: 'Connects to MLFLOW_TRACKING_URI, predicts on X_test, computes accuracy and weighted F1, and logs metrics via mlflow.log_metric().',
+      },
+      {
+        n: 2,
+        label: 'Classification report & summary log',
+        text: 'Outputs precision/recall/F1 averages and the final summary line (Accuracy: 0.9462 | F1 (weighted): 0.9465 | layer: gold).',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-export',
+    chapter: 'pipelines',
+    nav: 'Stage 8 · Export',
+    title: 'Stage 8 — Export: saving the model artifact to disk',
+    keywords: ['export', 'mlops:export', 'joblib', 'dump', 'model_output_path', 'artifact', 'stage 8'],
+    lede: 'The Export node runs the required mlops:export cell, serializing the trained model to MODEL_OUTPUT_PATH so the worker can register and deploy it.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineExportImg}
+        path="maia / pipelines · stage 8: export"
+        alt="Export stage drawer showing joblib.dump(model, MODEL_OUTPUT_PATH) and the saved artifact path in step logs"
+        caption="Stage 8 (Export): serializes the trained model with joblib.dump."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'joblib.dump(model, MODEL_OUTPUT_PATH)',
+        text: 'Writes the fitted model object to the exact path injected by Maia. Without this call, no artifact is produced for registration.',
+      },
+      {
+        n: 2,
+        label: 'Artifact confirmation log',
+        text: 'Confirms the file was written (Model saved to /tmp/.../model.joblib) before handing off to the Model registration and deployment step.',
+      },
+    ],
+  },
+
+  {
+    id: 'stage-model',
+    chapter: 'pipelines',
+    nav: 'Stage 9 · Model',
+    title: 'Stage 9 — Model: MLflow registration, metrics, and deployment logs',
+    keywords: ['model node', 'registered in mlflow', 'deployment', 'live', 'metrics across runs', 'register', 'deploy', 'endpoint', 'stage 9'],
+    lede: 'Clicking the final Model node on the canvas opens the outcome drawer: whether the artifact was registered in MLflow, whether it cleared the deployment gate to go Live, its full metric table, and the [register] and [deploy] worker logs.',
+    wireframe: (
+      <div className="space-y-4">
+        <ScreenshotFrame
+          src={pipelineModel1Img}
+          path="maia / pipelines · stage 9: model (status & metrics)"
+          alt="Model stage drawer top half showing Registered in MLflow Done, Accuracy 94.62%, Deployment Live, and Metrics across runs"
+          caption="Model drawer (top): MLflow registration status, Live deployment badge, summary cards, and Metrics across runs."
+        />
+        <ScreenshotFrame
+          src={pipelineModel2Img}
+          path="maia / pipelines · stage 9: model (register & deploy logs)"
+          alt="Model stage drawer bottom half showing the Metrics table and [register] and [deploy] step logs with the model server endpoint"
+          caption="Model drawer (bottom): full metric values and the [register] and [deploy] worker logs."
+        />
+      </div>
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Registered in MLflow & Accuracy',
+        text: 'Confirms the artifact is stored in MLflow (Done) and highlights the primary evaluation metric (94.62%).',
+      },
+      {
+        n: 2,
+        label: 'Deployment card',
+        text: 'Shows Live when the run cleared the project’s deployment bar, with a direct link to share a public endpoint from Models.',
+      },
+      {
+        n: 3,
+        label: 'Metrics across runs',
+        text: 'Lists every logged metric for the run (accuracy, f1_weighted, missing_rate, n_samples, deployed).',
+      },
+      {
+        n: 4,
+        label: '[register] & [deploy] logs',
+        text: 'Shows the exact MLflow run hash created during registration and the model-server prediction endpoint where the model was deployed.',
       },
     ],
   },
@@ -1123,31 +1697,61 @@ export const SECTIONS: ManualSection[] = [
     chapter: 'pipelines',
     nav: 'Running a pipeline',
     title: 'Starting a run, and what happens next',
-    keywords: ['run pipeline', 'start', 'trigger', 'push', 'webhook', 'queued', 'running', 'wait', 'queue'],
-    lede: 'A run executes the notebook as it exists on GitHub, on the input shown. It takes minutes rather than seconds, and it is safe to leave the page.',
+    keywords: ['run pipeline', 'start', 'trigger', 'modal', 'parameters', 'model name', 'dataset_path', 'push', 'webhook', 'queued', 'running'],
+    lede: 'Clicking Run pipeline opens a launch dialog that summarizes the repository, branch, notebook, and mounted gold table, lets you name the output model, and injects optional training parameters into the notebook.',
+    wireframe: (
+      <ScreenshotFrame
+        src={runPipelineImg}
+        path="maia / run pipeline modal"
+        alt="Run pipeline modal showing Model name input, Repository/Branch/Notebook/Data summary, Training parameters, and deployment rule note"
+        caption="The Run pipeline dialog: confirm the model name, mounted data, and optional parameters before starting the run."
+      />
+    ),
+    anatomy: [
+      {
+        n: 1,
+        label: 'Model name',
+        text: 'The identifier under which this notebook’s trained model will be registered and served (letters, digits, _, ., -). Later runs deploy new versions of this same model.',
+      },
+      {
+        n: 2,
+        label: 'Execution summary (Repository, Branch, Notebook, Data)',
+        text: 'Read-only confirmation of which GitHub repository, branch, and .ipynb file will run, plus the exact Parquet build or dataset file mounted as input.',
+      },
+      {
+        n: 3,
+        label: 'Training parameters (+ Add a parameter)',
+        text: 'Optional key-value overrides injected by Papermill right after the notebook’s parameters cell (numbers, booleans, or text).',
+      },
+      {
+        n: 4,
+        label: 'Deployment gate & DATASET_PATH notice',
+        text: 'Reminds you of the project’s active deployment threshold (e.g. Deploys when accuracy ≥ 0.7) and notes that versions are assigned automatically.',
+      },
+    ],
     steps: [
       {
-        title: 'Check the input card',
-        body: 'It names exactly what will be mounted: “gold v4”, the active dataset, and so on. If it is wrong, change it before running.',
+        title: 'Verify the summary card',
+        body: 'Confirm that Repository, Branch, Notebook, and Data (for example, gold-v2-...parquet) match what you intend to train on.',
       },
       {
-        title: 'Choose Run pipeline',
-        body: 'The run is accepted immediately and shows as queued. A worker picks it up; then the status becomes running.',
+        title: 'Set the model name and optional parameters',
+        body: 'Keep the default model name to add a new version to an existing model, or add Papermill parameters with + Add a parameter.',
       },
       {
-        title: 'Follow it on the run page',
-        body: 'Phases turn as the worker moves through them, and logs stream while the run is active. The browser can be closed.',
+        title: 'Choose Run',
+        body: 'The run is queued immediately. A worker picks it up, executes the notebook cells, and streams logs to the run detail page.',
       },
       {
         title: 'Read the result',
-        body: 'Success or failure, with metrics and (if allowed) a deployment. The run also appears at the top of Runs and on the Dashboard.',
+        body: 'Success or failure, with metrics and (if allowed by the project’s deployment rules) an automatic deployment.',
       },
     ],
     notes: [
       {
         tone: 'tip',
         title: 'Pushing can start a run too',
-        body: 'A push that changes the notebook on the linked branch triggers a run through the repository’s webhook. Use Run pipeline to repeat the same commit without an empty commit.',
+        body: 'A push that changes the notebook on the linked branch triggers a run through the repository’s webhook. Use Run pipeline to repeat the same commit or test new parameters.',
       },
       {
         tone: 'watch',
@@ -1161,83 +1765,75 @@ export const SECTIONS: ManualSection[] = [
     id: 'run-detail',
     chapter: 'pipelines',
     nav: 'Reading a run',
-    title: 'The record of one run',
-    keywords: ['run', 'detail', 'logs', 'phases', 'download', 'validate', 'execute', 'register', 'deploy', 'failed', 'metrics'],
-    lede: 'The run page is the evidence: which commit ran, what each phase did, what was printed, and what the advisor made of it.',
-    wireframe: <RunScreen />,
+    title: 'The record of one run: phases and live logs',
+    keywords: ['run', 'detail', 'logs', 'phases', 'download', 'validate', 'execute', 'register', 'deploy', 'failed', 'metrics', 'disconnected'],
+    lede: 'The run detail page is the system-level record of an execution: which commit and branch ran, which worker phase succeeded or stopped, and the console log stream.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineFailedImg}
+        path="maia / pipelines · run detail"
+        alt="Pipeline run detail screen showing Pipeline ID, Repo, User, Branch, Commit, failed badge, PIPELINE PHASES stepper, and Pipeline Logs panel"
+        caption="Run detail screen: run metadata header, five worker phases (download to deploy), and the Pipeline Logs console."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'Header',
-        text: 'Run id, repository, branch, and commit. Branch testing-ia-agent is highlighted — it means the code came from the advisor.',
+        label: 'Run header & status badge',
+        text: 'Displays the Pipeline ID (e.g. 35d7eb4c-cc3), Repo, User, Branch, 7-character Commit SHA, start timestamp, duration, and overall status pill (success, failed, running, or queued).',
       },
       {
         n: 2,
-        label: 'Pipeline phases',
-        text: 'Download, validate, execute, register, deploy. A phase is pending, running, successful, or failed.',
+        label: 'PIPELINE PHASES (download → deploy)',
+        text: 'Tracks the five worker lifecycle steps: download, validate, execute, register, and deploy, with completion timestamps beneath each reached step.',
       },
       {
         n: 3,
-        label: 'Logs',
-        text: 'Live over a WebSocket while the run is active; read from storage once it finishes.',
-      },
-      {
-        n: 4,
-        label: 'AI Training Advisor',
-        text: 'The report for this run. Analyze this run asks for a new one; Apply & push rewrites the notebook.',
-      },
-      {
-        n: 5,
-        label: 'Metrics',
-        text: 'The run’s numbers compared with earlier runs of the same repository.',
-      },
-      {
-        n: 6,
-        label: 'Deployed model',
-        text: 'Only present when the run deployed. Contains a ready-to-run prediction request.',
+        label: 'Pipeline Logs & connection badge',
+        text: 'Streams stdout/stderr over WebSocket while the run is active and shows Disconnected once the stream closes after completion.',
       },
     ],
     fields: [
       {
-        term: 'Download',
+        term: 'download',
         text: 'Fetches the notebook at the commit and mounts the chosen data. Fails on missing repository access or a missing file.',
       },
       {
-        term: 'Validate',
+        term: 'validate',
         text: 'Checks the four required tags. This is where “missing MLOps tags” stops the run.',
       },
       {
-        term: 'Execute',
+        term: 'execute',
         text: 'Papermill runs the notebook with DATASET_PATH and MODEL_OUTPUT_PATH injected. A Python error surfaces here.',
       },
       {
-        term: 'Register',
+        term: 'register',
         text: 'Records the exported artifact and metrics in MLflow. A success without a model means export did not write the file.',
       },
       {
-        term: 'Deploy',
+        term: 'deploy',
         text: 'Runs only if auto-deploy is on and accuracy meets the threshold. Skipping is reported as a reason, not a failure.',
       },
     ],
     steps: [
       {
-        title: 'Find the first red phase',
-        body: 'Read it from left to right. Later phases are usually pending, not additional failures.',
+        title: 'Find the last reached phase',
+        body: 'Read the phase stepper from left to right. If register and deploy are greyed out, the run stopped during execute or earlier.',
       },
       {
-        title: 'Open that phase’s logs',
-        body: 'The phase timestamp tells you when it broke. The last lines of its output usually name the cause.',
+        title: 'Inspect the logs or open the canvas',
+        body: 'Read the Pipeline Logs panel here, or open the pipeline canvas to see the exact notebook cell where execution stopped.',
       },
       {
         title: 'Fix, push, run again',
-        body: 'Commit the notebook change, then run from the canvas. A new run gets a new id; the old one stays as the record.',
+        body: 'Commit the notebook change, then run again. A new run gets a new ID; the old one remains in the history.',
       },
     ],
     notes: [
       {
         tone: 'watch',
         title: 'A run can fail before the notebook',
-        body: 'If every card says “never ran”, the failure was in download or validate. The reason is a banner above the phase row instead.',
+        body: 'If the run stops at download or validate, no notebook cells were executed. Check that the repository is accessible and all four required MLOps tags exist.',
       },
       {
         tone: 'tip',
@@ -1248,77 +1844,50 @@ export const SECTIONS: ManualSection[] = [
   },
 
   {
-    id: 'notebook',
-    chapter: 'pipelines',
-    nav: 'Notebook requirements',
-    title: 'The four tags that make a notebook runnable',
-    keywords: ['notebook', 'tags', 'mlops', 'config', 'preprocessing', 'training', 'export', 'joblib', 'papermill', 'contract'],
-    lede: 'Maia does not read a notebook like a person. It looks for four tags and runs exactly those cells, in a fixed order. Everything else is ignored.',
-    extra: <NotebookBlock />,
-    notes: [
-      {
-        tone: 'tip',
-        title: 'Keep the fallbacks',
-        body: (
-          <>
-            A cell that reads <code>DATASET_PATH</code> should still work when the variable is
-            missing, so the notebook remains runnable on a laptop. Maia never asks you to
-            remove that fallback.
-          </>
-        ),
-      },
-      {
-        tone: 'watch',
-        title: 'The model must reach disk',
-        body: (
-          <>
-            The export cell has to call <code>joblib.dump(model, MODEL_OUTPUT_PATH)</code>. A
-            model that exists only in memory cannot be registered, and the run will look
-            successful while deploying nothing.
-          </>
-        ),
-      },
-    ],
-  },
-
-  {
     id: 'advisor',
     chapter: 'pipelines',
     nav: 'AI Training Advisor',
-    title: 'A second reader for every run',
-    keywords: ['advisor', 'ai', 'insights', 'analyze', 'suggestions', 'apply', 'push', 'testing-ia-agent', 'improve'],
-    lede: 'After a run, the advisor reads the notebook and its metrics and writes what to change next, in plain language. It can also make the change — on a branch, never on yours.',
-    wireframe: <AdvisorScreen />,
+    title: 'AI Training Advisor and run metrics',
+    keywords: ['advisor', 'ai', 'insights', 'analyze', 'regenerate', 'metrics', 'suggestions', 'apply', 'push', 'testing-ia-agent', 'improve'],
+    lede: 'Below the logs on the run detail page sit the AI Training Advisor and the run’s Metrics table. The advisor inspects the notebook and its metrics to suggest improvements and can push an updated notebook to the testing-ia-agent branch.',
+    wireframe: (
+      <ScreenshotFrame
+        src={pipelineAdvisorImg}
+        path="maia / pipelines · ai training advisor & metrics"
+        alt="AI Training Advisor section with Regenerate analysis button and Metrics table showing accuracy, f1_weighted, n_features, n_samples, and deployed"
+        caption="Bottom of the run detail page: AI Training Advisor with Regenerate analysis and the run's Metrics table."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'Analyze this run',
-        text: 'Asks for a report. If one exists, the button reads Regenerate analysis and replaces it.',
+        label: 'AI TRAINING ADVISOR & Regenerate analysis',
+        text: 'Displays the AI analysis for this run. Click Regenerate analysis to request a fresh report at any time (for example, if the upstream LLM provider returned a temporary 503 error).',
       },
       {
         n: 2,
-        label: 'The report',
-        text: 'Findings about the code, the data, and the numbers, written for a person who owns the notebook.',
+        label: 'Advisor status / report panel',
+        text: 'Shows the generated recommendations (or a clear provider error message if the external AI service was temporarily unavailable when the run ended).',
       },
       {
         n: 3,
-        label: 'Apply & push',
-        text: 'Rewrites the notebook with the report’s recommendations and pushes it to testing-ia-agent.',
+        label: 'Apply & push (when a report is present)',
+        text: 'Rewrites the notebook with the advisor’s recommendations while preserving required MLOps tags, and pushes the result to branch testing-ia-agent.',
       },
       {
         n: 4,
-        label: 'Confirmation',
-        text: 'Branch name and commit, once the push lands. Review the diff on GitHub before training on it.',
+        label: 'METRICS table',
+        text: 'Lists every metric recorded by the run (accuracy, f1_weighted, n_features, n_samples, and whether deployed is true or false).',
       },
     ],
     steps: [
       {
-        title: 'Let it run on its own',
-        body: 'When the platform is configured for it, the first analysis starts as soon as the pipeline finishes. Nothing to click.',
+        title: 'Let it run automatically or click Regenerate analysis',
+        body: 'The first analysis triggers automatically when a run finishes. If the AI provider was busy (e.g. 503 Service Unavailable), click Regenerate analysis to retry without re-running the pipeline.',
       },
       {
-        title: 'Ask again after a change',
-        body: 'Regenerate after fixing a run or changing data. The advisor reads the current record, not the old one.',
+        title: 'Review the metrics table alongside the report',
+        body: 'Check accuracy, f1_weighted, n_features, n_samples, and deployed status right below the advisor box.',
       },
       {
         title: 'Apply, then review in GitHub',
@@ -1349,6 +1918,40 @@ export const SECTIONS: ManualSection[] = [
     ],
   },
 
+  {
+    id: 'notebook',
+    chapter: 'pipelines',
+    nav: 'Notebook requirements',
+    title: 'The four tags that make a notebook runnable',
+    keywords: ['notebook', 'tags', 'mlops', 'config', 'preprocessing', 'training', 'export', 'joblib', 'papermill', 'contract'],
+    lede: 'Maia does not read a notebook like a person. It looks for four required tags (plus optional data and evaluation tags) and runs those cells in a fixed order. Use this quick reference when tagging a notebook from scratch.',
+    extra: <NotebookBlock />,
+    notes: [
+      {
+        tone: 'tip',
+        title: 'Keep the fallbacks',
+        body: (
+          <>
+            A cell that reads <code>DATASET_PATH</code> should still work when the variable is
+            missing, so the notebook remains runnable on a laptop. Maia never asks you to
+            remove that fallback.
+          </>
+        ),
+      },
+      {
+        tone: 'watch',
+        title: 'The model must reach disk',
+        body: (
+          <>
+            The export cell has to call <code>joblib.dump(model, MODEL_OUTPUT_PATH)</code>. A
+            model that exists only in memory cannot be registered, and the run will look
+            successful while deploying nothing.
+          </>
+        ),
+      },
+    ],
+  },
+
   /* ---------------------------------------------------------------- */
   /*  05 — Models and account                                          */
   /* ---------------------------------------------------------------- */
@@ -1356,44 +1959,51 @@ export const SECTIONS: ManualSection[] = [
     id: 'models',
     chapter: 'account',
     nav: 'Models',
-    title: 'What is deployed, and how to test it',
-    keywords: ['models', 'deploy', 'endpoint', 'predict', 'test', 'rollback', 'delete', 'version', 'accuracy', 'inference'],
-    lede: 'Models is the deployment register. A row appears only after a successful run deploys; from here you can call it, roll it back, or remove it.',
-    wireframe: <ModelsScreen />,
+    title: 'What is deployed, and how to test or share it',
+    keywords: ['models', 'deploy', 'endpoint', 'public link', 'share', 'predict', 'test', 'versions', 'rollback', 'delete', 'accuracy', 'inference'],
+    lede: 'Models is the deployment register. A row appears after a successful run deploys; from here you can test inference payloads, generate a shareable public link, inspect or switch versions, or delete the deployment.',
+    wireframe: (
+      <ScreenshotFrame
+        src={modelsImg}
+        path="maia / models"
+        alt="Models page table showing Model, User, Version, Accuracy, Deployed date, Status, Public Link, and Actions (Test, Versions, Delete)"
+        caption="Models screen: active deployments, accuracy, shareable public links, and Test / Versions / Delete actions."
+      />
+    ),
     anatomy: [
       {
         n: 1,
-        label: 'The table',
-        text: 'Every model the platform is serving, newest deployments first. Refreshes every 15 seconds.',
+        label: 'Model, User, Version & Accuracy',
+        text: 'Identifies the served model name, owner, active version (e.g. v1), and validation accuracy recorded at registration.',
       },
       {
         n: 2,
-        label: 'Status',
-        text: 'Active means this version is the one answering. A model being rolled back is briefly inactive.',
+        label: 'Deployed & Status',
+        text: 'Timestamp of when the version was promoted and its live status badge (active means currently answering requests).',
       },
       {
         n: 3,
-        label: 'Endpoint',
-        text: 'The path predictions are sent to. The copy button copies the full URL.',
+        label: 'Public link (Share / New link / Stop)',
+        text: 'Click Share to generate an external URL for inference without requiring a Maia login. Once shared, copy the URL, rotate it with New link, or revoke it with Stop.',
       },
       {
         n: 4,
-        label: 'Actions',
-        text: 'Test, Rollback, Delete. The first is read-safe; the other two ask for confirmation.',
+        label: 'Actions (Test, Versions, Delete)',
+        text: 'Test opens an interactive JSON predictor; Versions lists all registered versions to compare or roll back; Delete unloads the model.',
       },
     ],
     fields: [
       {
-        term: 'Version',
-        text: 'Comes from the config cell. Deploying the same name again adds a version and makes it active.',
+        term: 'Version & Versions button',
+        text: 'Deploying the same model name again registers a new version. Open Versions to inspect historical versions and switch which one is active.',
       },
       {
         term: 'Metric',
         text: 'What the model is judged on: the metric its project deploys on, as the run logged it. Accuracy reads as a percentage; any other metric as its number.',
       },
       {
-        term: 'Rollback',
-        text: 'Makes the previous version active again. The newer version remains in the record; it is not deleted.',
+        term: 'Share / Public link',
+        text: 'Creates a tokenized public endpoint so external apps or teammates can call the model. Rotating (New link) or stopping (Stop) invalidates the previous public URL immediately.',
       },
       {
         term: 'Delete',
