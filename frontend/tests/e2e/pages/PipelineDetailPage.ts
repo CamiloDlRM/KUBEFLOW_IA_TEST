@@ -1,19 +1,22 @@
 import type { Page, Locator } from '@playwright/test';
 
+/** /pipelines/:id — phases, logs, the AI advisor and metrics of one run. */
 export class PipelineDetailPage {
   readonly page: Page;
-  readonly statusBadge: Locator;
+  readonly heading: Locator;
+  readonly phases: Locator;
   readonly logViewer: Locator;
-  readonly phaseTimeline: Locator;
+  readonly advisor: Locator;
 
   constructor(page: Page) {
     this.page = page;
-    this.statusBadge = page.locator('[class*="rounded-full"][class*="px-2.5"]').first();
+    this.heading = page.getByRole('heading', { name: /^Pipeline / , level: 2 });
+    this.phases = page.getByTestId('pipeline-phases');
     this.logViewer = page.getByTestId('log-viewer');
-    this.phaseTimeline = page.locator('text=download, text=validate, text=execute');
+    this.advisor = page.getByRole('region', { name: 'AI Training Advisor' });
   }
 
-  async navigate(pipelineId: string) {
-    await this.page.goto(`/pipelines/${pipelineId}`);
+  async navigate(id: string) {
+    await this.page.goto(`/pipelines/${id}`);
   }
 }

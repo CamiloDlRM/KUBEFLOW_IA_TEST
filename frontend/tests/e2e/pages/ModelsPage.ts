@@ -1,50 +1,32 @@
 import type { Page, Locator } from '@playwright/test';
 
+/** /models — deployed models, their test dialog, versions and public links. */
 export class ModelsPage {
   readonly page: Page;
   readonly heading: Locator;
-  readonly modelTable: Locator;
-  readonly modelRows: Locator;
-  readonly testButtons: Locator;
-  readonly rollbackButtons: Locator;
-  readonly deleteButtons: Locator;
+  readonly rows: Locator;
 
   constructor(page: Page) {
     this.page = page;
-    this.heading = page.getByRole('heading', { name: /Models/i });
-    this.modelTable = page.locator('table');
-    this.modelRows = page.locator('table tbody tr');
-    this.testButtons = page.getByRole('button', { name: 'Test' });
-    this.rollbackButtons = page.getByRole('button', { name: 'Rollback' });
-    this.deleteButtons = page.getByRole('button', { name: 'Delete' });
+    this.heading = page.getByRole('heading', { name: 'Models', level: 2 });
+    this.rows = page.getByRole('table').getByRole('row').filter({ has: page.getByRole('cell') });
   }
 
   async navigate() {
     await this.page.goto('/models');
   }
 
-  async getModelCount(): Promise<number> {
-    return this.modelRows.count();
+  row(modelName: string): Locator {
+    return this.rows.filter({ has: this.page.getByRole('button', { name: modelName, exact: true }) });
   }
 
-  async clickTestOnFirst() {
-    await this.testButtons.first().click();
+  async openTest(modelName: string): Promise<Locator> {
+    await this.row(modelName).getByRole('button', { name: 'Test', exact: true }).click();
+    return this.page.getByRole('dialog', { name: `Test ${modelName}` });
   }
 
-  async getTestModal() {
-    return this.page.locator('[class*="fixed inset-0"]');
-  }
-
-  async fillPayloadAndSubmit(payload: string) {
-    const textarea = this.page.locator('textarea');
-    await textarea.clear();
-    await textarea.fill(payload);
-    await this.page.getByRole('button', { name: /Send Request/i }).click();
-  }
-
-  async closeModal() {
-    // Click the close button (X) in the modal header
-    const closeBtn = this.page.locator('[class*="fixed inset-0"] button').first();
-    await closeBtn.click();
+  async openVersions(modelName: string): Promise<Locator> {
+    await this.row(modelName).getByRole('button', { name: 'Versions', exact: true }).click();
+    return this.page.getByRole('dialog', { name: `Versions of ${modelName}` });
   }
 }

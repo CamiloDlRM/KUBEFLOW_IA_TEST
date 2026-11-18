@@ -32,6 +32,11 @@ node_modules/
 dist/
 .vite/
 *.tsbuildinfo
+# Playwright: reports, traces, and the smoke suite's saved sign-in (a live JWT).
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.auth/
 
 # ── MLflow ───────────────────────────────────────────────────────────────────
 # Ignore the local MLflow data (mlflow.db, artifacts) but keep the Dockerfile

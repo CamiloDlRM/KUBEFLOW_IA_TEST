@@ -622,8 +622,40 @@ docker compose run --rm backend pytest tests/ -q
 cd frontend
 npm install
 npm run test          # unit tests (vitest)
-npm run test:e2e      # end-to-end (playwright)
+npm run test:e2e      # end-to-end, every page against a fake API (playwright)
 
 # End-to-end pipeline smoke test
 GITHUB_WEBHOOK_SECRET=your_secret ./scripts/test_pipeline.sh
 ```
+
+### End-to-end tests (Playwright)
+
+Two suites live in `frontend/tests/e2e/`, both Chromium only:
+
+- **mock** (`tests/e2e/mock/`) — every page of the UI against a fake backend.
+  `npm run test:e2e` starts its own Vite server on port 3100; nothing else has to
+  run. The fake API is `tests/e2e/fixtures/api.ts`: one default answer per
+  endpoint, overridden per test with `mockApi.on('GET /path/:id', ...)`. A test
+  fails if the page calls an endpoint with no handler or throws an uncaught error.
+- **smoke** (`tests/e2e/smoke/`) — a few flows against the real stack: sign-in,
+  projects, uploading a dataset to MinIO and previewing it, invites. It never
+  touches GitHub or an AI provider.
+
+```bash
+cd frontend
+npx playwright install chromium   # once
+npm run test:e2e                  # mock suite
+npm run test:e2e:ui               # same, in Playwright's UI mode
+npm run typecheck:e2e             # type-check the suites against src/types
+
+# smoke suite: a minimal stack under its own project name (stop the dev stack first: same ports)
+cd ..
+docker compose -p mlops-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build backend
+cd frontend
+VITE_API_URL=http://localhost:8000 npm run build && npx vite preview --port 3000 &
+npm run test:e2e:smoke
+docker compose -p mlops-e2e -f ../docker-compose.yml -f ../docker-compose.e2e.yml down -v
+```
+
+Both suites run in CI on every pull request to `dev` (`.github/workflows/main.yml`);
+on failure the Playwright report, traces and the stack's logs are uploaded as artifacts.

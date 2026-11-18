@@ -1,53 +1,40 @@
 import type { Page, Locator } from '@playwright/test';
 
+/** "My Repos" (/repos/new): register a repository, explore its branches and notebooks. */
 export class AddRepositoryPage {
   readonly page: Page;
   readonly heading: Locator;
+  readonly expandForm: Locator;
   readonly urlInput: Locator;
-  readonly tokenInput: Locator;
-  readonly branchInput: Locator;
-  readonly notebookInput: Locator;
   readonly submitButton: Locator;
   readonly cancelButton: Locator;
   readonly successMessage: Locator;
-  readonly errorMessage: Locator;
+  readonly formError: Locator;
+  readonly repoCards: Locator;
 
   constructor(page: Page) {
     this.page = page;
-    this.heading = page.getByRole('heading', { name: /Add Repository/i });
-    this.urlInput = page.locator('#repo-url');
-    this.tokenInput = page.locator('#token');
-    this.branchInput = page.locator('#branch');
-    this.notebookInput = page.locator('#notebook');
-    this.submitButton = page.getByRole('button', { name: /Register Repository/i });
-    this.cancelButton = page.getByRole('button', { name: /Cancel/i });
-    this.successMessage = page.getByText(/Repository registered successfully/i);
-    this.errorMessage = page.locator('[class*="border-red"]');
+    this.heading = page.getByRole('heading', { name: 'My Repos' });
+    this.expandForm = page.getByRole('button', { name: 'Expand repository form' });
+    this.urlInput = page.getByLabel('GitHub Repository URL');
+    this.submitButton = page.getByRole('button', { name: 'Register Repository' });
+    this.cancelButton = page.getByRole('button', { name: 'Cancel' });
+    this.successMessage = page.getByText('Repository registered. Explore its branches and notebooks below.');
+    this.formError = page.locator('#add-repository-form').locator('.border-red-800');
+    this.repoCards = page.getByRole('main').getByRole('article');
   }
 
   async navigate() {
     await this.page.goto('/repos/new');
   }
 
-  async fillForm(options: {
-    url: string;
-    token: string;
-    branch?: string;
-    notebook?: string;
-  }) {
-    await this.urlInput.fill(options.url);
-    await this.tokenInput.fill(options.token);
-    if (options.branch) {
-      await this.branchInput.clear();
-      await this.branchInput.fill(options.branch);
-    }
-    if (options.notebook) {
-      await this.notebookInput.clear();
-      await this.notebookInput.fill(options.notebook);
-    }
+  async register(url: string) {
+    if (await this.expandForm.isVisible()) await this.expandForm.click();
+    await this.urlInput.fill(url);
+    await this.submitButton.click();
   }
 
-  async submit() {
-    await this.submitButton.click();
+  repoCard(name: string): Locator {
+    return this.repoCards.filter({ has: this.page.getByRole('heading', { name, exact: true }) });
   }
 }

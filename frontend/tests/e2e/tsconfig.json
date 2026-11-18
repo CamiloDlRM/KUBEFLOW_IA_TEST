@@ -1,0 +1,10 @@
+{
+  // The e2e suite runs in Node (Playwright), not in the browser bundle, so it
+  // gets its own config: Node types, and `src/types` reachable for the builders.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["./**/*.ts", "../../src/types/**/*.ts", "../../playwright.config.ts"]
+}

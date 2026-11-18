@@ -1,0 +1,63 @@
+# The stack the e2e smoke suite runs against (frontend/tests/e2e/smoke).
+#
+# An override of docker-compose.yml, started under its own project name so its
+# volumes — and so its database — are not the ones a developer works in:
+#
+#   docker compose -p mlops-e2e -f docker-compose.yml -f docker-compose.e2e.yml \
+#     up -d --build backend
+#
+# Naming `backend` starts only it and what it depends on: postgres, redis,
+# minio (+ minio-init) and mlflow. No worker, model server, Grafana, Superset or
+# hospital source: the smoke suite covers what works without them, and the mock
+# suite covers the rest. Nothing here reaches GitHub or an AI provider.
+#
+# It publishes the same ports as the dev stack (8000, 9000, ...), so stop that
+# one first when running both on one machine.
+#
+#   docker compose -p mlops-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v
+#
+# removes it, data included.
+
+services:
+  postgres:
+    container_name: mlops-e2e-postgres
+    restart: "no"
+
+  redis:
+    container_name: mlops-e2e-redis
+    restart: "no"
+
+  minio:
+    container_name: mlops-e2e-minio
+    restart: "no"
+
+  minio-init:
+    container_name: mlops-e2e-minio-init
+
+  mlflow:
+    container_name: mlops-e2e-mlflow
+    restart: "no"
+
+  backend:
+    container_name: mlops-e2e-backend
+    restart: "no"
+    environment:
+      # The admin the smoke suite signs in as. Seeded on first boot, when the
+      # (fresh, project-scoped) database has no users.
+      - FIRST_ADMIN_USERNAME=${E2E_ADMIN_USERNAME:-e2e-admin}
+      - FIRST_ADMIN_PASSWORD=${E2E_ADMIN_PASSWORD:-e2e-admin-password}
+      - JWT_SECRET_KEY=e2e-jwt-secret-not-for-production
+      - FRONTEND_URL=${E2E_FRONTEND_URL:-http://localhost:3000}
+      # Off: each would reach a service this stack does not start.
+      - AI_ADVISOR_ENABLED=false
+      - GRAFANA_ENABLED=false
+      - GRAFANA_DB_ROLE_ENABLED=false
+      - PROMETHEUS_ENABLED=false
+      - SMTP_ENABLED=false
+    healthcheck:
+      # Same probe as the base file, checked every few seconds instead of every
+      # 30, so `docker compose ps` reports "healthy" as soon as the API is up.
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
