@@ -166,6 +166,25 @@ describe('HealthDataPanel', () => {
     expect(calls).toHaveTextContent('withheld: 1 cell outputs, 2 e-mails');
   });
 
+  it('lists who viewed the data and marks an administrator who is not the owner', async () => {
+    getProjectPrivacy.mockResolvedValue(
+      privacy({
+        ...HEALTH,
+        access_total: 2,
+        access: [
+          { username: 'root', as_admin: true, action: 'layer_preview', resource: 'silver source=1', rows: 50, at: null },
+          { username: 'camilo', as_admin: false, action: 'cleaning_steps', resource: 'source=1', rows: 8, at: null },
+        ],
+      }),
+    );
+    renderPanel();
+
+    const log = await screen.findByRole('list', { name: 'Data access log' });
+    expect(log).toHaveTextContent('rootadmin, not ownerViewed a layer');
+    expect(log).toHaveTextContent('camiloViewed the cleaning steps');
+    expect(log).toHaveTextContent('50 rows shown');
+  });
+
   it('shows no call log for a general project', async () => {
     getProjectPrivacy.mockResolvedValue(privacy());
     renderPanel();

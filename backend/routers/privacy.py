@@ -137,6 +137,18 @@ def _response(session: Session, project: Project) -> ProjectPrivacyResponse:
         select(func.count()).select_from(LlmEgress).where(LlmEgress.project_id == project.id)
     ).one()
 
+    from models.schemas import DataAccess
+
+    views = session.exec(
+        select(DataAccess)
+        .where(DataAccess.project_id == project.id)
+        .order_by(DataAccess.id.desc())  # type: ignore[union-attr]
+        .limit(20)
+    ).all()
+    views_total = session.exec(
+        select(func.count()).select_from(DataAccess).where(DataAccess.project_id == project.id)
+    ).one()
+
     return ProjectPrivacyResponse(
         project_id=project.id,  # type: ignore[arg-type]
         classification=privacy.classification,
@@ -159,6 +171,18 @@ def _response(session: Session, project: Project) -> ProjectPrivacyResponse:
             for call in calls
         ],
         egress_total=int(total or 0),
+        access=[
+            {
+                "username": view.username,
+                "as_admin": view.as_admin,
+                "action": view.action,
+                "resource": view.resource,
+                "rows": view.rows,
+                "at": view.created_at.isoformat() if view.created_at else None,
+            }
+            for view in views
+        ],
+        access_total=int(views_total or 0),
     )
 
 

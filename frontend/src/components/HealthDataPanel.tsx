@@ -259,6 +259,8 @@ export default function HealthDataPanel({ projectId }: { projectId: number }) {
 
         {health && <ExternalCalls data={data} />}
 
+        {health && <AccessLog data={data} />}
+
         {data.sources.some((source) => source.columns.length > 0) && (
           <div>
             <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -405,6 +407,57 @@ function ExternalCalls({ data }: { data: ProjectPrivacy }) {
       {(data.egress_total ?? 0) > calls.length && (
         <p className="mt-1 text-xs text-slate-500">
           Showing the latest {calls.length} of {data.egress_total?.toLocaleString()}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const VIEW_LABEL: Record<string, string> = {
+  layer_preview: 'Viewed a layer',
+  bronze_silver_diff: 'Compared bronze and silver',
+  cleaning_steps: 'Viewed the cleaning steps',
+  cleaning_preview: 'Tried a cleaning recipe',
+  gold_preview: 'Ran a gold query',
+  dataset_preview: 'Viewed a dataset',
+  source_preview: 'Previewed the source',
+};
+
+/**
+ * Who has seen this project's rows. Only the owner and administrators can,
+ * and an administrator looking at someone else's project is marked.
+ */
+function AccessLog({ data }: { data: ProjectPrivacy }) {
+  const views = data.access ?? [];
+  return (
+    <div>
+      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Who viewed the data</h3>
+      <p className="mb-2 text-xs text-slate-400">
+        Every screen that shows this project's rows is recorded. Only its owner and administrators can open them.
+      </p>
+      {views.length === 0 ? (
+        <p className="text-xs text-slate-500">Nobody has viewed rows yet.</p>
+      ) : (
+        <ul aria-label="Data access log" className="divide-y divide-slate-800 rounded-lg border border-slate-800 text-xs">
+          {views.map((view, index) => (
+            <li key={index} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
+              <span className="text-slate-200">{view.username || 'unknown'}</span>
+              {view.as_admin && (
+                <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">
+                  admin, not owner
+                </span>
+              )}
+              <span className="text-slate-400">{VIEW_LABEL[view.action] ?? view.action}</span>
+              {view.resource && <span className="truncate font-display text-slate-500">{view.resource}</span>}
+              <span className="text-slate-500">{view.rows.toLocaleString()} rows shown</span>
+              {view.at && <span className="ml-auto text-slate-600">{new Date(view.at).toLocaleString()}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {(data.access_total ?? 0) > views.length && (
+        <p className="mt-1 text-xs text-slate-500">
+          Showing the latest {views.length} of {data.access_total?.toLocaleString()}.
         </p>
       )}
     </div>

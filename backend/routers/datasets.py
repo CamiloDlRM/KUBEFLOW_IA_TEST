@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.concurrency import run_in_threadpool
 from sqlmodel import Session, select
 
+from core.access_log import audited, describe
 from core.config import AppSettings, get_settings
 from core.ownership import can_access_project, get_visible_project_or_404
 from core.security import get_current_user
@@ -594,6 +595,11 @@ async def delete_dataset(
     "/datasets/{dataset_id}/preview",
     response_model=DatasetPreviewResponse,
     summary="Preview the first rows of a dataset",
+)
+@audited(
+    "dataset_preview",
+    project=lambda kw, session: getattr(session.get(Dataset, kw["dataset_id"]), "project_id", None),
+    resource=lambda kw: describe(dataset=kw["dataset_id"]),
 )
 async def preview_dataset(
     dataset_id: int,

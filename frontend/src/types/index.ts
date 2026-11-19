@@ -1012,6 +1012,19 @@ export interface ProjectPrivacy {
   /** Latest calls to language models from this project, newest first (health projects only). */
   egress?: LlmCall[];
   egress_total?: number;
+  /** Latest views of this project's rows, newest first (health projects only). */
+  access?: DataView[];
+  access_total?: number;
+}
+
+export interface DataView {
+  username: string;
+  /** An administrator looking at a project that is not theirs. */
+  as_admin: boolean;
+  action: string;
+  resource: string;
+  rows: number;
+  at: string | null;
 }
 
 export interface LlmCall {

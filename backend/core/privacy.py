@@ -460,3 +460,25 @@ def project_key(session: Any, project: Any, settings: Any) -> str:
     session.commit()
     session.refresh(project)
     return key
+
+
+def protect_rows(
+    columns: list[str], rows: list[list[Any]], key: str, policy: PrivacyPolicy = PrivacyPolicy()
+) -> tuple[list[str], list[list[Any]], dict[str, str]]:
+    """Rows on their way to a screen, with identity suppressed as at landing.
+
+    For the preview of an external source: nothing is stored, but the rows
+    are shown to a person, and in a health project nobody sees identifiers
+    through the platform — not even while writing the extraction query.
+    """
+    actions = plan(columns, policy)
+    keep = [index for index, column in enumerate(columns) if actions.get(column) != "suppress"]
+    protected_rows = []
+    for row in rows:
+        protected_rows.append(
+            [
+                _apply(actions[columns[index]], row[index], key) if columns[index] in actions else row[index]
+                for index in keep
+            ]
+        )
+    return [columns[index] for index in keep], protected_rows, actions

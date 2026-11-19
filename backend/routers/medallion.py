@@ -29,6 +29,7 @@ from sqlmodel import Session, select
 from core import gold as gold_module
 from core import medallion
 from core.cleaning import STANDARD, CleaningRecipe, RecipeError, Table, clean
+from core.access_log import audited, describe
 from core.config import get_settings
 from core.ownership import get_visible_project_or_404
 from core.security import get_current_user
@@ -285,6 +286,7 @@ def get_pipeline_inputs(
     response_model=LayerPreviewResponse,
     summary="Read the first rows of one layer",
 )
+@audited("layer_preview", resource=lambda kw: describe(kw.get("layer"), source=kw.get("source_id"), version=kw.get("version")))
 async def preview_layer(
     project_id: int,
     layer: str,
@@ -377,6 +379,7 @@ def _jsonable(value: Any) -> Any:
     response_model=LayerDiffResponse,
     summary="Bronze and silver side by side, for one extraction",
 )
+@audited("bronze_silver_diff", resource=lambda kw: describe(source=kw.get("source_id"), run=kw.get("run_id")))
 async def diff_layers(
     project_id: int,
     session: Annotated[Session, Depends(get_session)],
@@ -468,6 +471,7 @@ async def diff_layers(
     response_model=CleaningStepsResponse,
     summary="Every step of the cleaning standard, with the table after each",
 )
+@audited("cleaning_steps", resource=lambda kw: describe(source=kw.get("source_id"), run=kw.get("run_id")))
 async def cleaning_steps(
     project_id: int,
     session: Annotated[Session, Depends(get_session)],
@@ -516,6 +520,7 @@ async def cleaning_steps(
     response_model=CleaningStepsResponse,
     summary="Try a draft cleaning recipe on a source's latest extraction",
 )
+@audited("cleaning_preview", resource=lambda kw: describe(source=kw["body"].source_id))
 def preview_cleaning(
     project_id: int,
     body: CleaningPreviewRequest,
@@ -999,6 +1004,7 @@ async def gold_relations(
     response_model=GoldPreviewResponse,
     summary="Run a candidate gold definition without saving it",
 )
+@audited("gold_preview", resource=lambda kw: (kw["body"].sql or "")[:300])
 async def preview_gold(
     project_id: int,
     body: GoldPreviewRequest,

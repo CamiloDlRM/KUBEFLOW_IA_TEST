@@ -496,6 +496,27 @@ class LlmEgress(SQLModel, table=True):
     created_at: datetime = SQLField(default_factory=_utcnow)
 
 
+class DataAccess(SQLModel, table=True):
+    """One view of the rows of a project that holds health data.
+
+    Who saw what, how many rows, and whether as an administrator of a
+    project that is not theirs. Append-only: nothing in the API changes or
+    removes it. General projects are not recorded.
+    """
+
+    __tablename__ = "data_access_log"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
+    user_id: int | None = SQLField(default=None, foreign_key="users.id")
+    username: str = SQLField(default="")
+    as_admin: bool = SQLField(default=False)
+    action: str = SQLField(default="")
+    resource: str = SQLField(default="")
+    rows: int = SQLField(default=0)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+
+
 class GoldTable(SQLModel, table=True):
     """The modelled table a project publishes, defined by a query over silver.
 
@@ -1227,6 +1248,9 @@ class ProjectPrivacyResponse(BaseModel):
     #: The latest calls to language models, newest first (health projects only).
     egress: list[dict[str, Any]] = Field(default_factory=list)
     egress_total: int = 0
+    #: The latest views of this project's rows, newest first (health projects only).
+    access: list[dict[str, Any]] = Field(default_factory=list)
+    access_total: int = 0
 
 
 class DataSourceCreateRequest(BaseModel):
