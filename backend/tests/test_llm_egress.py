@@ -15,7 +15,16 @@ import pytest
 from sqlmodel import select
 
 from core.config import AppSettings
-from core.llm_egress import WITHHELD_OUTPUTS, Egress, egress_for, record, scrub
+from core.llm_egress import (
+    WITHHELD_OUTPUTS,
+    Egress,
+    advisor_recipient,
+    dashboard_recipient,
+    egress_for,
+    recipient,
+    record,
+    scrub,
+)
 from core.mcp import MCPTool
 from core.superset_agent import build_dashboard
 from models.schemas import GoldTable, LlmEgress, Pipeline
@@ -136,6 +145,25 @@ class TestAHealthProject:
         egress, columns = _advisor_egress(db_engine, pipeline.id, "advisor.analysis")
 
         assert egress.health and columns == ["age", "target"]
+
+
+class TestTheRecordSaysWhoReceivedTheCall:
+    def test_a_named_provider_is_enough(self):
+        assert advisor_recipient(AppSettings(ai_advisor_provider="anthropic")) == "anthropic"
+        assert dashboard_recipient(AppSettings(dashboard_agent_provider="gemini")) == "gemini"
+
+    def test_an_openai_compatible_endpoint_is_named_by_its_host(self):
+        settings = AppSettings(dashboard_agent_provider="openai", dashboard_agent_base_url="https://api.groq.com/openai/v1")
+
+        assert dashboard_recipient(settings) == "openai (api.groq.com)"
+
+    def test_a_local_model_is_named_by_its_host(self):
+        settings = AppSettings(ai_advisor_provider="ollama", ollama_base_url="http://host.docker.internal:11434")
+
+        assert advisor_recipient(settings) == "ollama (host.docker.internal)"
+
+    def test_without_a_url_the_provider_stands_alone(self):
+        assert recipient("openai") == "openai"
 
 
 class TestTheDashboardAgent:

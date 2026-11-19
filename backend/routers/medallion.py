@@ -1138,16 +1138,16 @@ async def suggest_gold(
 
     from core.ai_advisor import resolve_model
     from core.ai_gold import GoldSuggestionError, suggest_definition
-    from core.llm_egress import egress_for, record
+    from core.llm_egress import advisor_recipient, egress_for, record
 
     egress = egress_for(session, project_id, "gold.suggest")
     try:
         suggestion = suggest_definition(described, body.question, egress=egress)
     except GoldSuggestionError as exc:
         if egress.sent_chars:
-            record(session, egress, get_settings().ai_advisor_provider, resolve_model(), ok=False)
+            record(session, egress, advisor_recipient(get_settings()), resolve_model(), ok=False)
         return GoldSuggestResponse(error=str(exc))
-    record(session, egress, get_settings().ai_advisor_provider, resolve_model())
+    record(session, egress, advisor_recipient(get_settings()), resolve_model())
 
     return GoldSuggestResponse(sql=suggestion.sql, explanation=suggestion.explanation)
 
@@ -1278,7 +1278,7 @@ def build_dashboard(
 
     earlier = _conversation(session, project_id)
 
-    from core.llm_egress import egress_for, record
+    from core.llm_egress import dashboard_recipient, egress_for, record
     from core.superset_agent import DashboardRequestError, build_dashboard as run_agent
 
     egress = egress_for(session, project_id, "dashboard")
@@ -1299,11 +1299,11 @@ def build_dashboard(
         )
     except DashboardRequestError as exc:
         if egress.sent_chars:
-            record(session, egress, settings.dashboard_agent_provider, settings.dashboard_agent_model, ok=False)
+            record(session, egress, dashboard_recipient(settings), settings.dashboard_agent_model, ok=False)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
-    record(session, egress, settings.dashboard_agent_provider, settings.dashboard_agent_model)
+    record(session, egress, dashboard_recipient(settings), settings.dashboard_agent_model)
 
     # Recorded even when the loop was cut off. Whatever it managed to do is in
     # Superset either way, and a turn that vanished because it did not finish

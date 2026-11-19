@@ -314,11 +314,11 @@ def _record_egress(engine: Any, egress: Any) -> None:
 
     from core.ai_advisor import resolve_model
     from core.config import get_settings
-    from core.llm_egress import record
+    from core.llm_egress import advisor_recipient, record
 
     current = get_settings()
     with Session(engine) as session:
-        record(session, egress, current.ai_advisor_provider, resolve_model(current))
+        record(session, egress, advisor_recipient(current), resolve_model(current))
 
 
 def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:

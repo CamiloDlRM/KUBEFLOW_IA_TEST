@@ -28,6 +28,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Final
+from urllib.parse import urlparse
 
 #: Patterns scrubbed from text sent from a health project, in order. Kept
 #: narrow on purpose: a metric like 0.912345678 or a run id must survive, or
@@ -132,6 +133,30 @@ class Egress:
 
     def summary(self) -> dict[str, Any]:
         return {"sent_chars": self.sent_chars, "withheld": dict(self.withheld)}
+
+
+def recipient(provider: str, base_url: str = "") -> str:
+    """Who a call went to: the provider, and the host when a URL decides it.
+
+    ``openai`` names an API shape, not a company: the same setting sends to
+    Groq, OpenRouter or a local server depending on the base URL. A record
+    that says "openai" when the call went to api.groq.com does not say who
+    received it, which is the one thing the record exists to say.
+    """
+    host = urlparse(base_url).hostname if base_url else None
+    return f"{provider} ({host})" if host else provider
+
+
+def advisor_recipient(settings: Any) -> str:
+    """Where the advisor's calls go (also the gold suggestion's)."""
+    provider = settings.ai_advisor_provider
+    return recipient(provider, settings.ollama_base_url if provider == "ollama" else "")
+
+
+def dashboard_recipient(settings: Any) -> str:
+    """Where the dashboard agent's calls go."""
+    provider = settings.dashboard_agent_provider
+    return recipient(provider, settings.dashboard_agent_base_url if provider == "openai" else "")
 
 
 def egress_for(session: Any, project_id: int | None, agent: str) -> Egress:
