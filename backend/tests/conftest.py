@@ -251,6 +251,9 @@ def no_broker():
     with (
         patch.object(celery_tasks.ingest_upload, "apply_async", MagicMock()),
         patch.object(celery_tasks.rebuild_gold, "apply_async", MagicMock()),
+        patch.object(celery_tasks.protect_project, "apply_async", MagicMock()),
+        patch.object(celery_tasks.encrypt_project, "apply_async", MagicMock()),
+        patch.object(celery_tasks.purge_source, "apply_async", MagicMock()),
     ):
         yield
 

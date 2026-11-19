@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.concurrency import run_in_threadpool
 from sqlmodel import Session, select
 
+from core.access_log import audited, describe
 from core.config import AppSettings, get_settings
 from core.ownership import can_access_project, get_visible_project_or_404
 from core.security import get_current_user
@@ -228,7 +229,7 @@ async def upload_dataset(
         HTTPException: 404 unknown or non-visible project, 413 too large,
             415 bad extension, 422 empty file, 502 if MinIO rejects the upload.
     """
-    _get_project_or_404(session, project_id, current_user)
+    project = _get_project_or_404(session, project_id, current_user)
 
     filename = file.filename or ""
     extension = _file_extension(filename)
@@ -279,6 +280,21 @@ async def upload_dataset(
                 detail="The uploaded dataset is empty.",
             )
 
+        # Health data is protected here, before anything is stored: what goes
+        # to object storage is the bronze file with identity suppressed, never
+        # the original — not even while it waits for the worker.
+        privacy: dict[str, Any] = {}
+        profile_extension = os.path.splitext(filename)[1].lower()
+        from core.privacy import ProjectPrivacy
+
+        if ProjectPrivacy.from_stored(project.privacy).health:
+            buffer, privacy, digest, size_bytes = await run_in_threadpool(
+                _protect_upload, session, project, settings, buffer, extension
+            )
+            object_key = build_dataset_key(project_id, os.path.splitext(os.path.basename(filename))[0] + ".parquet")
+            content_type = "application/vnd.apache.parquet"
+            profile_extension = ".parquet"
+
         # Profile before uploading, while the bytes are still to hand. An
         # uploaded dataset and an extracted one have to describe themselves the
         # same way: the UI offers both as ways of getting data in, and anything
@@ -286,8 +302,12 @@ async def upload_dataset(
         # dataset came through.
         buffer.seek(0)
         profile, profiled_rows = await run_in_threadpool(
-            _profile_upload, buffer, os.path.splitext(filename)[1].lower()
+            _profile_upload, buffer, profile_extension
         )
+        if privacy:
+            from core.privacy import actions_of, redact_profile
+
+            profile = redact_profile(profile, actions_of(privacy))
 
         buffer.seek(0)
         try:
@@ -318,6 +338,7 @@ async def upload_dataset(
         origin="upload",
         profile=profile,
         profiled_rows=profiled_rows,
+        privacy=privacy,
     )
     _deactivate_others(session, project_id, keep_id=None)
     session.add(dataset)
@@ -353,6 +374,57 @@ async def upload_dataset(
         size_bytes=size_bytes,
     )
     return DatasetResponse.model_validate(dataset)
+
+
+def _protect_upload(
+    session: Session, project: Project, settings: AppSettings, buffer: Any, extension: str
+) -> tuple[Any, dict[str, Any], Any, int]:
+    """Replace an upload with its protected bronze form.
+
+    Returns the protected file (open, for the caller to profile and store),
+    what was done, and its digest and size — the stored object is this file,
+    so its checksum is this file's.
+    """
+    from pathlib import Path
+
+    from core.privacy import ProjectPrivacy, project_key, protect_file
+    from core.tabular import TabularError
+
+    settings_ = ProjectPrivacy.from_stored(project.privacy)
+    key = project_key(session, project, settings)
+    workdir = Path(tempfile.mkdtemp(prefix="protect-"))
+    try:
+        original = workdir / f"upload{extension}"
+        buffer.seek(0)
+        with original.open("wb") as handle:
+            for chunk in iter(lambda: buffer.read(_CHUNK_SIZE), b""):
+                handle.write(chunk)
+        buffer.close()
+        protected = workdir / "protected.parquet"
+        try:
+            report = protect_file(original, extension, protected, key, settings_.policy)
+        except TabularError as exc:
+            # A health file the platform cannot read cannot be protected, and
+            # an unprotected one cannot be stored.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"This project holds health data, so the file must be readable to protect it: {exc}",
+            )
+        original.unlink()
+
+        digest = hashlib.sha256()
+        stored = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MAX_BYTES)
+        with protected.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(_CHUNK_SIZE), b""):
+                digest.update(chunk)
+                stored.write(chunk)
+        size = stored.tell()
+        stored.seek(0)
+        return stored, {**report.summary(), "original_format": extension}, digest, size
+    finally:
+        for leftover in workdir.glob("*"):
+            leftover.unlink(missing_ok=True)
+        workdir.rmdir()
 
 
 def _layering_run(session: Session, upload: Dataset) -> IngestionRun | None:
@@ -523,6 +595,11 @@ async def delete_dataset(
     "/datasets/{dataset_id}/preview",
     response_model=DatasetPreviewResponse,
     summary="Preview the first rows of a dataset",
+)
+@audited(
+    "dataset_preview",
+    project=lambda kw, session: getattr(session.get(Dataset, kw["dataset_id"]), "project_id", None),
+    resource=lambda kw: describe(dataset=kw["dataset_id"]),
 )
 async def preview_dataset(
     dataset_id: int,

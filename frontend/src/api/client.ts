@@ -57,6 +57,10 @@ import type {
   UploadStatus,
   CleaningRecipe,
   CleaningRecipeState,
+  EncryptionStatus,
+  LegalBasis,
+  PrivacyPolicy,
+  ProjectPrivacy,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -697,6 +701,52 @@ export async function saveCleaningRecipe(
   body: { recipe: CleaningRecipe } | { reset: true },
 ): Promise<CleaningRecipeState> {
   const { data } = await apiClient.put<CleaningRecipeState>(`/sources/${sourceId}/cleaning-recipe`, body);
+  return data;
+}
+
+/** Whether the project holds health data, on what basis, and what is protected. */
+export async function getProjectPrivacy(projectId: number): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.get<ProjectPrivacy>(`/projects/${projectId}/privacy`);
+  return data;
+}
+
+/** Classify the project and record the legal basis for holding health data. */
+export async function setProjectPrivacy(
+  projectId: number,
+  body: { classification: 'general' | 'health'; legal_basis: LegalBasis | null; policy: PrivacyPolicy },
+): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.put<ProjectPrivacy>(`/projects/${projectId}/privacy`, body);
+  return data;
+}
+
+/** Encryption at rest of the project's stored objects, as MinIO reports it. */
+export async function getProjectEncryption(projectId: number): Promise<EncryptionStatus> {
+  const { data } = await apiClient.get<EncryptionStatus>(`/projects/${projectId}/privacy/encryption`);
+  return data;
+}
+
+/** Encrypt what the project stored before encryption was on. Queued. */
+export async function encryptProjectData(projectId: number): Promise<EncryptionStatus> {
+  const { data } = await apiClient.post<EncryptionStatus>(`/projects/${projectId}/privacy/encrypt`);
+  return data;
+}
+
+/** Delete a source's data in every layer. Irreversible; the name is typed to confirm. */
+export async function purgeSourceData(
+  projectId: number,
+  sourceId: number,
+  body: { reason: string; confirm: string },
+): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.post<ProjectPrivacy>(
+    `/projects/${projectId}/privacy/sources/${sourceId}/purge`,
+    body,
+  );
+  return data;
+}
+
+/** Protect everything the project landed before it was marked. Queued. */
+export async function protectProjectData(projectId: number): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.post<ProjectPrivacy>(`/projects/${projectId}/privacy/protect`);
   return data;
 }
 

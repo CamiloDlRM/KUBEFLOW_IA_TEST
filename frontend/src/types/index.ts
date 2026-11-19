@@ -966,3 +966,109 @@ export interface DashboardEmbed {
   superset_domain: string;
   token: string;
 }
+
+// ---------------------------------------------------------------------------
+// Health data (Ley 1581 de 2012, Resolución 8430 de 1993)
+// ---------------------------------------------------------------------------
+
+export type LegalBasisKind = 'authorization' | 'scientific' | 'synthetic';
+
+export interface LegalBasis {
+  kind: LegalBasisKind;
+  purpose: string;
+  reference: string;
+  responsible: string;
+  recorded_by?: string;
+  recorded_at?: string;
+}
+
+export interface PrivacyPolicy {
+  pseudonymize: string[];
+  suppress: string[];
+  keep: string[];
+}
+
+export type PrivacyAction = 'pseudonymize' | 'suppress' | 'year' | 'zip3';
+
+export interface ProjectPrivacy {
+  project_id: number;
+  classification: 'general' | 'health';
+  legal_basis: LegalBasis | null;
+  policy: PrivacyPolicy;
+  /** Protection of what landed before the project was marked. */
+  protection: {
+    status?: 'queued' | 'running' | 'success' | 'failed';
+    queued_at?: string;
+    started_at?: string;
+    finished_at?: string;
+    runs?: number;
+    purged?: number;
+    gold_version?: number | null;
+    error?: string;
+  };
+  unprotected_runs: number;
+  sources: {
+    source_id: number;
+    source_name: string;
+    columns: { column: string; action: PrivacyAction }[];
+    active?: boolean;
+    /** Whether anything it extracted is stored. */
+    landed?: boolean;
+  }[];
+  legal_bases: { kind: LegalBasisKind; title: string; law: string; reference_hint: string }[];
+  /** Latest calls to language models from this project, newest first (health projects only). */
+  egress?: LlmCall[];
+  egress_total?: number;
+  /** Latest views of this project's rows, newest first (health projects only). */
+  access?: DataView[];
+  access_total?: number;
+  /** Deletions of a source's data, newest first. */
+  purges?: SourcePurge[];
+}
+
+export interface SourcePurge {
+  id: string;
+  source_id: number;
+  source_name: string;
+  reason: string;
+  requested_by: string;
+  requested_at: string;
+  status: 'queued' | 'running' | 'success' | 'failed';
+  finished_at?: string;
+  deleted_objects?: number;
+  gold_version?: number | null;
+  warning?: string;
+  error?: string;
+}
+
+export interface EncryptionStatus {
+  /** Whether the deployment asks MinIO to encrypt (STORAGE_ENCRYPTION). */
+  enabled: boolean;
+  /** Each platform bucket's default: AES256, none or unknown. */
+  buckets: Record<string, string>;
+  objects: number;
+  encrypted: number;
+  unknown: number;
+  job: { status?: 'queued' | 'running' | 'success' | 'failed'; encrypted?: number; objects?: number; error?: string };
+}
+
+export interface DataView {
+  username: string;
+  /** An administrator looking at a project that is not theirs. */
+  as_admin: boolean;
+  action: string;
+  resource: string;
+  rows: number;
+  at: string | null;
+}
+
+export interface LlmCall {
+  agent: string;
+  provider: string;
+  model: string;
+  sent_chars: number;
+  /** What was kept from leaving: cell_outputs, tool_data, email, phone, ssn, document, pseudonym. */
+  withheld: Record<string, number>;
+  ok: boolean;
+  at: string | null;
+}

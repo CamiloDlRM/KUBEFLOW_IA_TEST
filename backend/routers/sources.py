@@ -20,6 +20,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from core.access_log import audited, describe
 from core.config import get_settings
 from core.github_credentials import encrypt_token
 from core.ingestion import (
@@ -165,6 +166,11 @@ async def create_source(
     response_model=DataSourcePreviewResponse,
     summary="See what an extraction would return, without running one",
 )
+@audited(
+    "source_preview",
+    project=lambda kw, session: kw["body"].project_id,
+    resource=lambda kw: describe(source=kw["body"].source_id, host=kw["body"].host),
+)
 async def preview_source(
     body: DataSourcePreviewRequest,
     session: Annotated[Session, Depends(get_session)],
@@ -185,7 +191,7 @@ async def preview_source(
     credential an operator provisioned — so this grants no authority that
     registering a source and running it did not already grant.
     """
-    get_visible_project_or_404(session, body.project_id, current_user)
+    project = get_visible_project_or_404(session, body.project_id, current_user)
     _check_password_env(body.password_env)
 
     candidate = DataSource(
@@ -220,10 +226,20 @@ async def preview_source(
         rows=len(result.rows),
         columns=len(result.columns),
     )
+    columns, rows, profile = result.columns, result.rows, result.profile
+    from core.privacy import ProjectPrivacy, project_key, protect_rows, redact_profile
+
+    privacy = ProjectPrivacy.from_stored(project.privacy)
+    if privacy.health:
+        # Nothing is stored, but a person sees these rows: in a health project
+        # they see them the way they will land, never with identifiers.
+        key = project_key(session, project, get_settings())
+        columns, rows, actions = protect_rows(list(columns), [list(row) for row in rows], key, privacy.policy)
+        profile = redact_profile(profile, actions)
     return DataSourcePreviewResponse(
-        columns=result.columns,
-        rows=result.rows,
-        profile=result.profile,
+        columns=columns,
+        rows=rows,
+        profile=profile,
         truncated=result.truncated,
     )
 

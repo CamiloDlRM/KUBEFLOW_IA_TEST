@@ -14,7 +14,7 @@ import os
 import re
 import uuid
 from functools import lru_cache
-from typing import IO, Any
+from typing import IO, Any, Final
 
 import structlog
 
@@ -138,6 +138,8 @@ def ensure_bucket(bucket: str) -> None:
     try:
         client.create_bucket(Bucket=bucket)
         logger.info("storage.bucket_created", bucket=bucket)
+        if _encrypting():
+            enable_bucket_encryption(bucket)
     except ClientError as exc:
         # Another worker may have created it in the meantime — that is fine.
         if _error_code(exc) in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
@@ -179,7 +181,7 @@ def upload_fileobj(
             fileobj,
             bucket,
             key,
-            ExtraArgs={"ContentType": content_type},
+            ExtraArgs={"ContentType": content_type, **_encryption_args()},
         )
     except (BotoCoreError, ClientError) as exc:
         logger.error(
@@ -192,6 +194,102 @@ def upload_fileobj(
     logger.info(
         "storage.uploaded", bucket=bucket, key=key, content_type=content_type
     )
+
+
+# ---------------------------------------------------------------------------
+# Encryption at rest
+# ---------------------------------------------------------------------------
+#
+# Server-side, by MinIO (SSE-S3), so everything that reads the objects —
+# DuckDB building gold, Superset, MLflow, the model server — reads them as
+# before. Encrypting in the application instead would hand every reader a
+# blob it cannot open. Off unless the deployment turns it on, because MinIO
+# refuses SSE requests until it has a KMS key.
+
+_SSE: Final[str] = "AES256"
+
+
+def _encrypting() -> bool:
+    from core.config import get_settings
+
+    return bool(get_settings().storage_encryption)
+
+
+def _encryption_args() -> dict[str, str]:
+    return {"ServerSideEncryption": _SSE} if _encrypting() else {}
+
+
+def enable_bucket_encryption(bucket: str) -> None:
+    """Make SSE-S3 the bucket's default, so objects written by anyone are encrypted."""
+    get_s3_client().put_bucket_encryption(
+        Bucket=bucket,
+        ServerSideEncryptionConfiguration={
+            "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": _SSE}}]
+        },
+    )
+    logger.info("storage.bucket_encryption_enabled", bucket=bucket)
+
+
+def bucket_encryption(bucket: str) -> str:
+    """``AES256`` when the bucket encrypts by default, ``none`` when not, else ``unknown``."""
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    try:
+        config = get_s3_client().get_bucket_encryption(Bucket=bucket)
+    except ClientError as exc:
+        code = _error_code(exc)
+        if code in {"ServerSideEncryptionConfigurationNotFoundError", "NoSuchBucket"} or _is_not_found(exc):
+            return "none"
+        return "unknown"
+    except BotoCoreError:
+        return "unknown"
+    rules = config.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+    for rule in rules:
+        algorithm = rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
+        if algorithm:
+            return algorithm
+    return "none"
+
+
+def object_encrypted(bucket: str, key: str) -> bool | None:
+    """Whether MinIO holds ``bucket/key`` encrypted; ``None`` when it cannot say."""
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    try:
+        head = get_s3_client().head_object(Bucket=bucket, Key=key)
+    except (BotoCoreError, ClientError):
+        return None
+    return bool(head.get("ServerSideEncryption"))
+
+
+def encrypt_object(bucket: str, key: str) -> None:
+    """Rewrite an object in place, encrypted. A server-side copy: nothing is downloaded."""
+    get_s3_client().copy_object(
+        Bucket=bucket,
+        Key=key,
+        CopySource={"Bucket": bucket, "Key": key},
+        ServerSideEncryption=_SSE,
+        MetadataDirective="COPY",
+    )
+
+
+def encrypt_platform_buckets(buckets: list[str]) -> dict[str, str]:
+    """Ensure each bucket exists and encrypts by default. Never raises.
+
+    Run at start-up when encryption is on, so buckets made before it was
+    turned on get it too. A failure is reported per bucket, because a MinIO
+    without a KMS key should stop nobody from booting — it should be visible.
+    """
+    outcome: dict[str, str] = {}
+    for bucket in buckets:
+        try:
+            ensure_bucket(bucket)
+            enable_bucket_encryption(bucket)
+            outcome[bucket] = "encrypted"
+        except Exception as exc:  # noqa: BLE001 — reported, never fatal
+            logger.error("storage.bucket_encryption_failed", bucket=bucket, error=str(exc))
+            outcome[bucket] = f"failed: {exc}"
+    return outcome
 
 
 def download_to_path(bucket: str, key: str, dest_path: str) -> str:

@@ -275,8 +275,15 @@ def generate_insight(
     phases: list[dict[str, Any]],
     history: list[dict[str, Any]],
     commit_sha: str,
+    egress: Any = None,
+    data_columns: list[str] | None = None,
 ) -> str:
     """Call the configured provider and return the feedback report as Markdown.
+
+    ``egress`` (a :class:`core.llm_egress.Egress`) guards what leaves in a
+    project that holds health data: cell outputs withheld, identifiers
+    scrubbed. ``data_columns`` then stands in for the printed rows the model
+    no longer sees — the names it can reason about, without the values.
 
     Raises:
         RuntimeError: if the configured provider is missing credentials/config.
@@ -295,10 +302,22 @@ def generate_insight(
         notebook=notebook,
         status=status,
         metrics=metrics,
-        phases=phases,
+        phases=egress.phases(phases) if egress else phases,
         history=history,
         commit_sha=commit_sha,
     )
+    if egress is not None and egress.health:
+        prompt += (
+            "\n\n## Datos\nEste proyecto contiene datos de salud: las salidas de las celdas "
+            "no se envian. Diagnostica con el codigo, las metricas y los errores."
+            + (
+                "\nColumnas de los datos de entrenamiento (sin valores): " + ", ".join(data_columns)
+                if data_columns
+                else ""
+            )
+        )
+    if egress is not None:
+        prompt = egress.outgoing(prompt)
 
     log = logger.bind(provider=settings.ai_advisor_provider, model=model)
     log.info("ai_advisor.request.start", prompt_chars=len(prompt))
@@ -380,6 +399,7 @@ def generate_improved_notebook(
     *,
     notebook: dict[str, Any],
     report: str,
+    egress: Any = None,
 ) -> tuple[dict[str, Any], str]:
     """Ask the configured provider to apply the report's suggestions.
 
@@ -404,6 +424,8 @@ def generate_improved_notebook(
         f"## Informe de revision\n{report}\n\n"
         f"## Codigo actual del notebook\n```python\n{_extract_code_cells(notebook)}\n```"
     )
+    if egress is not None:
+        prompt = egress.outgoing(prompt)
 
     log = logger.bind(provider=settings.ai_advisor_provider, model=model)
     log.info("ai_advisor.apply.start", prompt_chars=len(prompt))

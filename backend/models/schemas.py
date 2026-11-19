@@ -145,6 +145,14 @@ class Project(SQLModel, table=True):
     #: its bar and direction, whether it must beat the version serving. Empty
     #: means the platform's defaults. See :mod:`core.deploy_policy`.
     deploy_policy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: Whether this project holds health data, the legal basis for holding it,
+    #: the adjustments to identity suppression, and the state of protecting
+    #: what landed before it was marked. ``{}`` is a general project. See
+    #: :mod:`core.privacy`.
+    privacy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The project's pseudonymisation key, Fernet-encrypted. Never returned by
+    #: the API: with it, a pseudonym can be matched back to a known identifier.
+    pseudonym_key: str = SQLField(default="")
 
 
 class Repository(SQLModel, table=True):
@@ -317,6 +325,9 @@ class Dataset(SQLModel, table=True):
     #: rather than leaving a reader to assume it describes the whole file.
     profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
     profiled_rows: int = SQLField(default=0)
+    #: For an upload to a health project: what was suppressed before the file
+    #: was stored (the original is never kept), or that it was purged later.
+    privacy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class DataSource(SQLModel, table=True):
@@ -455,10 +466,55 @@ class IngestionRun(SQLModel, table=True):
     #: vocabulary grows: an early extraction has fewer coded rows to learn
     #: from, so it places less. That trend is worth being able to see.
     normalization: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: Identity suppression applied before this run's bronze object was
+    #: written, in a health project. Empty in a general one.
+    privacy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
     error: str = SQLField(default="")
+
+
+class LlmEgress(SQLModel, table=True):
+    """One call to a language model from a project that holds health data.
+
+    Kept so the rule "structure leaves, data does not" can be shown to have
+    held: which agent called which provider, how much it sent, and what was
+    withheld on the way. General projects are not recorded.
+    """
+
+    __tablename__ = "llm_egress"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    project_id: int | None = SQLField(default=None, foreign_key="projects.id", index=True)
+    agent: str = SQLField(default="")
+    provider: str = SQLField(default="")
+    model: str = SQLField(default="")
+    sent_chars: int = SQLField(default=0)
+    withheld: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    ok: bool = SQLField(default=True)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+
+
+class DataAccess(SQLModel, table=True):
+    """One view of the rows of a project that holds health data.
+
+    Who saw what, how many rows, and whether as an administrator of a
+    project that is not theirs. Append-only: nothing in the API changes or
+    removes it. General projects are not recorded.
+    """
+
+    __tablename__ = "data_access_log"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    project_id: int = SQLField(foreign_key="projects.id", index=True)
+    user_id: int | None = SQLField(default=None, foreign_key="users.id")
+    username: str = SQLField(default="")
+    as_admin: bool = SQLField(default=False)
+    action: str = SQLField(default="")
+    resource: str = SQLField(default="")
+    rows: int = SQLField(default=0)
+    created_at: datetime = SQLField(default_factory=_utcnow)
 
 
 class GoldTable(SQLModel, table=True):
@@ -1135,6 +1191,94 @@ class CleaningRecipeResponse(BaseModel):
     stale_runs: int = 0
     #: The last re-clean of this source's silver (see DataSource.reclean).
     reclean: dict[str, Any] = Field(default_factory=dict)
+
+
+class LegalBasisRequest(BaseModel):
+    kind: str
+    purpose: str = ""
+    reference: str = ""
+    responsible: str = ""
+
+
+class PrivacyPolicyRequest(BaseModel):
+    pseudonymize: list[str] = Field(default_factory=list)
+    suppress: list[str] = Field(default_factory=list)
+    keep: list[str] = Field(default_factory=list)
+
+
+class ProjectPrivacyRequest(BaseModel):
+    """Mark a project as holding health data, and on what basis."""
+
+    classification: str
+    legal_basis: LegalBasisRequest | None = None
+    policy: PrivacyPolicyRequest = Field(default_factory=PrivacyPolicyRequest)
+
+
+class PrivacyColumnResponse(BaseModel):
+    column: str
+    #: pseudonymize | suppress | year | zip3
+    action: str
+
+
+class PrivacySourceResponse(BaseModel):
+    source_id: int
+    source_name: str
+    #: What would happen to the columns this source lands, as silver names them.
+    columns: list[PrivacyColumnResponse]
+    active: bool = True
+    #: Whether anything it extracted is stored — what deleting it would remove.
+    landed: bool = False
+
+
+class LegalBasisKindResponse(BaseModel):
+    kind: str
+    title: str
+    law: str
+    reference_hint: str
+
+
+class ProjectPrivacyResponse(BaseModel):
+    project_id: int
+    classification: str
+    legal_basis: dict[str, Any] | None = None
+    policy: dict[str, list[str]] = Field(default_factory=dict)
+    #: Protection of data that landed before the project was marked.
+    protection: dict[str, Any] = Field(default_factory=dict)
+    #: Whether anything has landed that was not protected when it did.
+    unprotected_runs: int = 0
+    sources: list[PrivacySourceResponse] = Field(default_factory=list)
+    legal_bases: list[LegalBasisKindResponse] = Field(default_factory=list)
+    #: The latest calls to language models, newest first (health projects only).
+    egress: list[dict[str, Any]] = Field(default_factory=list)
+    egress_total: int = 0
+    #: The latest views of this project's rows, newest first (health projects only).
+    access: list[dict[str, Any]] = Field(default_factory=list)
+    access_total: int = 0
+    #: Deletions of a source's data, newest first.
+    purges: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PurgeSourceRequest(BaseModel):
+    """Delete a source's data in every layer. Irreversible, so it says why and confirms."""
+
+    reason: str = Field(..., min_length=3, max_length=1000)
+    #: The source's name, typed: deleting the wrong source cannot be undone.
+    confirm: str
+
+
+class EncryptionStatusResponse(BaseModel):
+    """Encryption at rest, as MinIO reports it."""
+
+    #: Whether the deployment asks MinIO to encrypt (STORAGE_ENCRYPTION).
+    enabled: bool
+    #: Each platform bucket's default: AES256, none or unknown.
+    buckets: dict[str, str] = Field(default_factory=dict)
+    #: This project's stored objects, and how many MinIO holds encrypted.
+    objects: int = 0
+    encrypted: int = 0
+    unknown: int = 0
+    #: The last run of encrypting what was stored before.
+    job: dict[str, Any] = Field(default_factory=dict)
 
 
 class DataSourceCreateRequest(BaseModel):
