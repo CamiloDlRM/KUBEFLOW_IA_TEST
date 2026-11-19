@@ -57,6 +57,7 @@ import type {
   UploadStatus,
   CleaningRecipe,
   CleaningRecipeState,
+  EncryptionStatus,
   LegalBasis,
   PrivacyPolicy,
   ProjectPrivacy,
@@ -715,6 +716,31 @@ export async function setProjectPrivacy(
   body: { classification: 'general' | 'health'; legal_basis: LegalBasis | null; policy: PrivacyPolicy },
 ): Promise<ProjectPrivacy> {
   const { data } = await apiClient.put<ProjectPrivacy>(`/projects/${projectId}/privacy`, body);
+  return data;
+}
+
+/** Encryption at rest of the project's stored objects, as MinIO reports it. */
+export async function getProjectEncryption(projectId: number): Promise<EncryptionStatus> {
+  const { data } = await apiClient.get<EncryptionStatus>(`/projects/${projectId}/privacy/encryption`);
+  return data;
+}
+
+/** Encrypt what the project stored before encryption was on. Queued. */
+export async function encryptProjectData(projectId: number): Promise<EncryptionStatus> {
+  const { data } = await apiClient.post<EncryptionStatus>(`/projects/${projectId}/privacy/encrypt`);
+  return data;
+}
+
+/** Delete a source's data in every layer. Irreversible; the name is typed to confirm. */
+export async function purgeSourceData(
+  projectId: number,
+  sourceId: number,
+  body: { reason: string; confirm: string },
+): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.post<ProjectPrivacy>(
+    `/projects/${projectId}/privacy/sources/${sourceId}/purge`,
+    body,
+  );
   return data;
 }
 

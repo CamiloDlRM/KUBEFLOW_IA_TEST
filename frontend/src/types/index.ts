@@ -1007,7 +1007,14 @@ export interface ProjectPrivacy {
     error?: string;
   };
   unprotected_runs: number;
-  sources: { source_id: number; source_name: string; columns: { column: string; action: PrivacyAction }[] }[];
+  sources: {
+    source_id: number;
+    source_name: string;
+    columns: { column: string; action: PrivacyAction }[];
+    active?: boolean;
+    /** Whether anything it extracted is stored. */
+    landed?: boolean;
+  }[];
   legal_bases: { kind: LegalBasisKind; title: string; law: string; reference_hint: string }[];
   /** Latest calls to language models from this project, newest first (health projects only). */
   egress?: LlmCall[];
@@ -1015,6 +1022,34 @@ export interface ProjectPrivacy {
   /** Latest views of this project's rows, newest first (health projects only). */
   access?: DataView[];
   access_total?: number;
+  /** Deletions of a source's data, newest first. */
+  purges?: SourcePurge[];
+}
+
+export interface SourcePurge {
+  id: string;
+  source_id: number;
+  source_name: string;
+  reason: string;
+  requested_by: string;
+  requested_at: string;
+  status: 'queued' | 'running' | 'success' | 'failed';
+  finished_at?: string;
+  deleted_objects?: number;
+  gold_version?: number | null;
+  warning?: string;
+  error?: string;
+}
+
+export interface EncryptionStatus {
+  /** Whether the deployment asks MinIO to encrypt (STORAGE_ENCRYPTION). */
+  enabled: boolean;
+  /** Each platform bucket's default: AES256, none or unknown. */
+  buckets: Record<string, string>;
+  objects: number;
+  encrypted: number;
+  unknown: number;
+  job: { status?: 'queued' | 'running' | 'success' | 'failed'; encrypted?: number; objects?: number; error?: string };
 }
 
 export interface DataView {

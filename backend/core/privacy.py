@@ -482,3 +482,26 @@ def protect_rows(
             ]
         )
     return [columns[index] for index in keep], protected_rows, actions
+
+
+def project_objects(session: Any, project_id: int) -> list[tuple[str, str]]:
+    """Every object the platform stores for a project: its layers and its datasets.
+
+    What "encrypted at rest" and "deleted" are measured against. MLflow's
+    artifacts are not here: they belong to runs, and MinIO encrypts them by
+    the bucket's default once encryption is on.
+    """
+    from sqlmodel import select
+
+    from core import medallion
+    from models.schemas import Dataset
+
+    found: dict[tuple[str, str], None] = {}
+    for layer in ("bronze", "silver", "gold"):
+        bucket = medallion.bucket_for(layer)
+        for item in medallion.list_layer(layer, f"project-{project_id}/"):
+            found[(bucket, item.key)] = None
+    for dataset in session.exec(select(Dataset).where(Dataset.project_id == project_id)).all():
+        if dataset.object_key and not (dataset.privacy or {}).get("purged"):
+            found[(dataset.bucket, dataset.object_key)] = None
+    return list(found)

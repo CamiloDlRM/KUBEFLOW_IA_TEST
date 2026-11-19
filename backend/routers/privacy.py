@@ -31,6 +31,8 @@ from models.schemas import (
     Project,
     ProjectPrivacyRequest,
     ProjectPrivacyResponse,
+    EncryptionStatusResponse,
+    PurgeSourceRequest,
     User,
 )
 
@@ -120,6 +122,8 @@ def _response(session: Session, project: Project) -> ProjectPrivacyResponse:
                     PrivacyColumnResponse(column=column, action=action)
                     for column, action in plan(columns, privacy.policy).items()
                 ],
+                active=source.is_active,
+                landed=any(r.bronze_key for r in runs if r.source_id == source.id),
             )
         )
 
@@ -183,6 +187,7 @@ def _response(session: Session, project: Project) -> ProjectPrivacyResponse:
             for view in views
         ],
         access_total=int(views_total or 0),
+        purges=list(reversed(stored.get("purges", []))),
     )
 
 
@@ -304,6 +309,154 @@ def protect(
                 detail="The project's data is already being protected.",
             )
     _queue_protection(session, project, force=True)
+    return _response(session, project)
+
+
+def _health_project(session: Session, project_id: int, user: User) -> Project:
+    from core.privacy import ProjectPrivacy
+
+    project = get_visible_project_or_404(session, project_id, user)
+    if not ProjectPrivacy.from_stored(project.privacy).health:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This applies to projects marked as holding health data.",
+        )
+    return project
+
+
+def _busy(entry: dict[str, Any]) -> bool:
+    if entry.get("status") not in ("queued", "running"):
+        return False
+    since = _parse(entry.get("started_at") or entry.get("queued_at") or entry.get("requested_at"))
+    return since is None or datetime.now(timezone.utc) - since < _STALE_AFTER
+
+
+@router.get(
+    "/{project_id}/privacy/encryption",
+    response_model=EncryptionStatusResponse,
+    summary="Whether this project's data is encrypted at rest",
+)
+def encryption_status(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EncryptionStatusResponse:
+    """What MinIO itself reports, object by object — not what the configuration claims."""
+    from core import storage
+    from core.config import get_settings
+    from core.privacy import project_objects
+
+    project = _health_project(session, project_id, current_user)
+    settings = get_settings()
+    buckets = {
+        layer: storage.bucket_encryption(bucket)
+        for layer, bucket in (
+            ("datasets", settings.minio_bucket_datasets),
+            ("bronze", settings.minio_bucket_bronze),
+            ("silver", settings.minio_bucket_silver),
+            ("gold", settings.minio_bucket_gold),
+            ("mlflow", settings.minio_bucket_mlflow),
+        )
+    }
+    objects = project_objects(session, project_id)
+    states = [storage.object_encrypted(bucket, key) for bucket, key in objects[:500]]
+    return EncryptionStatusResponse(
+        enabled=settings.storage_encryption,
+        buckets=buckets,
+        objects=len(objects),
+        encrypted=sum(1 for state in states if state),
+        unknown=sum(1 for state in states if state is None),
+        job=(project.privacy or {}).get("encryption", {}),
+    )
+
+
+@router.post(
+    "/{project_id}/privacy/encrypt",
+    response_model=EncryptionStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Encrypt what this project stored before encryption was on",
+)
+def encrypt(
+    project_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EncryptionStatusResponse:
+    from core.config import get_settings
+    from tasks.celery_tasks import encrypt_project
+
+    project = _health_project(session, project_id, current_user)
+    if not get_settings().storage_encryption:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Encryption at rest is not configured on this deployment: MinIO needs a KMS key. "
+                "See docker-compose.encryption.yml."
+            ),
+        )
+    if _busy((project.privacy or {}).get("encryption", {})):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already encrypting.")
+    stored = dict(project.privacy or {})
+    stored["encryption"] = {"status": "queued", "queued_at": datetime.now(timezone.utc).isoformat()}
+    project.privacy = stored
+    session.add(project)
+    session.commit()
+    encrypt_project.apply_async(args=[project_id])
+    logger.info("project.privacy.encryption_queued", project_id=project_id)
+    return EncryptionStatusResponse(enabled=True, job=stored["encryption"])
+
+
+@router.post(
+    "/{project_id}/privacy/sources/{source_id}/purge",
+    response_model=ProjectPrivacyResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Delete a source's data in every layer (health projects)",
+)
+def purge(
+    project_id: int,
+    source_id: int,
+    body: PurgeSourceRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProjectPrivacyResponse:
+    """Irreversible. Asks why, and for the source's name typed as confirmation.
+
+    Its bronze and silver objects, the original files of its uploads and
+    every gold build go; gold is rebuilt from the sources that remain. The
+    request — who, when, why — is kept on the project.
+    """
+    import uuid
+
+    from tasks.celery_tasks import purge_source
+
+    project = _health_project(session, project_id, current_user)
+    source = session.get(DataSource, source_id)
+    if source is None or source.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Data source {source_id} not found.")
+    if body.confirm.strip() != source.name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Type the source's name, {source.name!r}, to confirm.",
+        )
+    stored = dict(project.privacy or {})
+    purges = list(stored.get("purges", []))
+    if any(entry.get("source_id") == source_id and _busy(entry) for entry in purges):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source is already being deleted.")
+    entry = {
+        "id": uuid.uuid4().hex,
+        "source_id": source_id,
+        "source_name": source.name,
+        "reason": body.reason.strip(),
+        "requested_by": current_user.username,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "status": "queued",
+    }
+    stored["purges"] = [*purges, entry]
+    project.privacy = stored
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    purge_source.apply_async(args=[project_id, source_id, entry["id"]])
+    logger.info("project.privacy.purge_queued", project_id=project_id, source_id=source_id)
     return _response(session, project)
 
 

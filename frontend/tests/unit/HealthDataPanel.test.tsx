@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,12 +8,20 @@ import type { ProjectPrivacy } from '../../src/types';
 const getProjectPrivacy = vi.fn();
 const setProjectPrivacy = vi.fn();
 const protectProjectData = vi.fn();
+const getProjectEncryption = vi.fn();
+const encryptProjectData = vi.fn();
+const purgeSourceData = vi.fn();
 
 vi.mock('../../src/api/client', () => ({
   getProjectPrivacy: (...a: unknown[]) => getProjectPrivacy(...a),
   setProjectPrivacy: (...a: unknown[]) => setProjectPrivacy(...a),
   protectProjectData: (...a: unknown[]) => protectProjectData(...a),
+  getProjectEncryption: (...a: unknown[]) => getProjectEncryption(...a),
+  encryptProjectData: (...a: unknown[]) => encryptProjectData(...a),
+  purgeSourceData: (...a: unknown[]) => purgeSourceData(...a),
 }));
+
+const NO_ENCRYPTION = { enabled: false, buckets: { bronze: 'none' }, objects: 4, encrypted: 0, unknown: 0, job: {} };
 
 const BASES: ProjectPrivacy['legal_bases'] = [
   { kind: 'authorization', title: 'Authorisation of the data subjects', law: 'Ley 1581 de 2012, arts. 6(a) and 9', reference_hint: 'Where the authorisations are kept.' },
@@ -33,6 +41,8 @@ function privacy(overrides: Partial<ProjectPrivacy> = {}): ProjectPrivacy {
       {
         source_id: 1,
         source_name: 'patients',
+        active: true,
+        landed: true,
         columns: [
           { column: 'ssn', action: 'pseudonymize' },
           { column: 'first_name', action: 'suppress' },
@@ -68,6 +78,7 @@ function renderPanel() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getProjectEncryption.mockResolvedValue(NO_ENCRYPTION);
 });
 
 describe('HealthDataPanel', () => {
@@ -191,6 +202,56 @@ describe('HealthDataPanel', () => {
 
     await screen.findByText('General data');
     expect(screen.queryByText('Calls to external AI providers')).not.toBeInTheDocument();
+  });
+
+  it('says when encryption at rest is not configured', async () => {
+    getProjectPrivacy.mockResolvedValue(HEALTH);
+    renderPanel();
+
+    expect(await screen.findByText(/Not configured on this deployment/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Encrypt stored objects' })).not.toBeInTheDocument();
+  });
+
+  it('encrypts what was stored before encryption was on', async () => {
+    getProjectPrivacy.mockResolvedValue(HEALTH);
+    getProjectEncryption.mockResolvedValue({ ...NO_ENCRYPTION, enabled: true, buckets: { bronze: 'AES256' }, encrypted: 1 });
+    encryptProjectData.mockResolvedValue({ ...NO_ENCRYPTION, enabled: true, job: { status: 'queued' } });
+    renderPanel();
+
+    expect(await screen.findByText(/1 of 4 stored object\(s\) encrypted by MinIO/)).toBeInTheDocument();
+    expect(screen.getByText('bronze: encrypted by default')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Encrypt stored objects' }));
+    expect(encryptProjectData).toHaveBeenCalledWith(4);
+  });
+
+  it('deletes a source only with a reason and its name typed', async () => {
+    getProjectPrivacy.mockResolvedValue(HEALTH);
+    purgeSourceData.mockResolvedValue(
+      privacy({
+        ...HEALTH,
+        purges: [
+          {
+            id: 'p1', source_id: 1, source_name: 'patients', reason: 'Consent withdrawn',
+            requested_by: 'camilo', requested_at: '2026-11-19T10:00:00+00:00', status: 'queued',
+          },
+        ],
+      }),
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete its data…' }));
+    const form = screen.getByRole('form', { name: 'Delete the data of patients' });
+    const remove = within(form).getByRole('button', { name: 'Delete permanently' });
+    await userEvent.type(within(form).getByRole('textbox', { name: 'Why' }), 'Consent withdrawn');
+    await userEvent.type(within(form).getByRole('textbox', { name: /Type patients to confirm/ }), 'patient');
+    expect(remove).toBeDisabled();
+    await userEvent.type(within(form).getByRole('textbox', { name: /Type patients to confirm/ }), 's');
+    await userEvent.click(remove);
+
+    expect(purgeSourceData).toHaveBeenCalledWith(4, 1, { reason: 'Consent withdrawn', confirm: 'patients' });
+    const history = await screen.findByRole('list', { name: 'Deleted sources' });
+    expect(history).toHaveTextContent('Consent withdrawn');
+    expect(history).toHaveTextContent('deleting…');
   });
 
   it('reports a finished protection', async () => {

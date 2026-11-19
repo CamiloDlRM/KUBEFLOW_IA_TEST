@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
-import { getProjectPrivacy, protectProjectData, setProjectPrivacy } from '../api/client';
-import type { LegalBasis, PrivacyAction, PrivacyPolicy, ProjectPrivacy } from '../types';
+import {
+  encryptProjectData,
+  getProjectEncryption,
+  getProjectPrivacy,
+  protectProjectData,
+  purgeSourceData,
+  setProjectPrivacy,
+} from '../api/client';
+import type { LegalBasis, PrivacyAction, PrivacyPolicy, ProjectPrivacy, SourcePurge } from '../types';
 import Spinner from './Spinner';
 import ChipsInput from './cleaning/ChipsInput';
 
@@ -35,7 +42,14 @@ export default function HealthDataPanel({ projectId }: { projectId: number }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['project-privacy', projectId],
     queryFn: () => getProjectPrivacy(projectId),
-    refetchInterval: (query) => (IN_PROGRESS.has(query.state.data?.protection?.status ?? '') ? 3000 : false),
+    // Followed while something it started is still running.
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      const busy =
+        IN_PROGRESS.has(state?.protection?.status ?? '') ||
+        (state?.purges ?? []).some((purge) => IN_PROGRESS.has(purge.status));
+      return busy ? 3000 : false;
+    },
   });
   const [editing, setEditing] = useState(false);
   const [basis, setBasis] = useState<LegalBasis>(EMPTY_BASIS);
@@ -261,6 +275,10 @@ export default function HealthDataPanel({ projectId }: { projectId: number }) {
 
         {health && <AccessLog data={data} />}
 
+        {health && <Encryption projectId={projectId} />}
+
+        {health && <DeleteSourceData projectId={projectId} data={data} />}
+
         {data.sources.some((source) => source.columns.length > 0) && (
           <div>
             <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -461,6 +479,212 @@ function AccessLog({ data }: { data: ProjectPrivacy }) {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Encryption at rest, as MinIO reports it — bucket defaults and this
+ * project's objects one by one, not what the configuration claims.
+ */
+function Encryption({ projectId }: { projectId: number }) {
+  const queryClient = useQueryClient();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['project-encryption', projectId],
+    queryFn: () => getProjectEncryption(projectId),
+    refetchInterval: (query) => (IN_PROGRESS.has(query.state.data?.job?.status ?? '') ? 3000 : false),
+  });
+  const encrypt = useMutation({
+    mutationFn: () => encryptProjectData(projectId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-encryption', projectId] }),
+  });
+
+  return (
+    <div>
+      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Encryption at rest</h3>
+      {isLoading && <Spinner size="sm" />}
+      {error && <p className="text-xs text-red-300">{(error as Error).message}</p>}
+      {data && (
+        <div className="space-y-2 text-xs">
+          {!data.enabled ? (
+            <p className="text-amber-300">
+              Not configured on this deployment. MinIO needs a key to encrypt; an operator turns it on with
+              docker-compose.encryption.yml. Until then the data is protected by access control and pseudonymisation,
+              but stored unencrypted.
+            </p>
+          ) : (
+            <p className="text-slate-300">
+              {data.encrypted.toLocaleString()} of {data.objects.toLocaleString()} stored object(s) encrypted by MinIO
+              {data.unknown ? ` (${data.unknown} could not be checked)` : ''}.
+            </p>
+          )}
+          <p className="flex flex-wrap gap-1.5">
+            {Object.entries(data.buckets).map(([bucket, state]) => (
+              <span
+                key={bucket}
+                className={`rounded px-1.5 py-0.5 font-display ${
+                  state === 'AES256' ? 'bg-emerald-900/40 text-emerald-200' : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {bucket}: {state === 'AES256' ? 'encrypted by default' : state}
+              </span>
+            ))}
+          </p>
+          {IN_PROGRESS.has(data.job?.status ?? '') ? (
+            <p role="status" className="flex items-center gap-2 text-brand-200">
+              <Spinner size="sm" /> Encrypting the objects stored before encryption was on…
+            </p>
+          ) : (
+            data.enabled &&
+            data.encrypted + data.unknown < data.objects && (
+              <button
+                type="button"
+                onClick={() => encrypt.mutate()}
+                disabled={encrypt.isPending}
+                className="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                {encrypt.isPending && <Spinner size="sm" />}
+                Encrypt stored objects
+              </button>
+            )
+          )}
+          {data.job?.status === 'failed' && <p className="text-red-300">Encrypting failed: {data.job.error}</p>}
+          {encrypt.isError && <p className="text-red-300">{(encrypt.error as Error).message}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Deleting a source's data in every layer — the right to have one's data
+ * deleted (Ley 1581, art. 8(e)). Irreversible, so it asks why and for the
+ * source's name, and keeps the request on the record.
+ */
+function DeleteSourceData({ projectId, data }: { projectId: number; data: ProjectPrivacy }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState<number | null>(null);
+  const [reason, setReason] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const purge = useMutation({
+    mutationFn: (sourceId: number) => purgeSourceData(projectId, sourceId, { reason, confirm }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(['project-privacy', projectId], next);
+      setOpen(null);
+      setReason('');
+      setConfirm('');
+    },
+  });
+  const sources = data.sources.filter((source) => source.active && source.landed);
+  const purges = data.purges ?? [];
+
+  return (
+    <div>
+      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Delete a source's data</h3>
+      <p className="mb-2 text-xs text-slate-400">
+        Removes everything a source put here — bronze, silver, its original files and every gold build — and rebuilds
+        gold from the sources that remain. It cannot be undone; who asked, when and why is kept.
+      </p>
+      {sources.length > 0 && (
+        <ul className="space-y-2">
+          {sources.map((source) => (
+            <li key={source.source_id} className="rounded-lg border border-slate-800 px-3 py-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-slate-300">{source.source_name}</span>
+                {open !== source.source_id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(source.source_id);
+                      setReason('');
+                      setConfirm('');
+                      purge.reset();
+                    }}
+                    className="text-red-300 hover:text-red-200"
+                  >
+                    Delete its data…
+                  </button>
+                )}
+              </div>
+              {open === source.source_id && (
+                <form
+                  aria-label={`Delete the data of ${source.source_name}`}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    purge.mutate(source.source_id);
+                  }}
+                  className="mt-2 space-y-2"
+                >
+                  <label className="flex flex-col gap-1 text-slate-400">
+                    Why
+                    <input
+                      value={reason}
+                      onChange={(event) => setReason(event.target.value)}
+                      placeholder="The data subjects asked for their data to be deleted"
+                      className={FIELD}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-slate-400">
+                    Type {source.source_name} to confirm
+                    <input value={confirm} onChange={(event) => setConfirm(event.target.value)} className={FIELD} />
+                  </label>
+                  {purge.isError && <p className="text-red-300">{(purge.error as Error).message}</p>}
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpen(null)}
+                      className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-300 hover:bg-slate-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={reason.trim().length < 3 || confirm !== source.source_name || purge.isPending}
+                      className="flex items-center gap-2 rounded-lg bg-red-700 px-3 py-1.5 font-medium text-white hover:bg-red-600 disabled:opacity-40"
+                    >
+                      {purge.isPending && <Spinner size="sm" />}
+                      Delete permanently
+                    </button>
+                  </div>
+                </form>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {purges.length > 0 && (
+        <ul aria-label="Deleted sources" className="mt-2 divide-y divide-slate-800 rounded-lg border border-slate-800 text-xs">
+          {purges.map((entry) => (
+            <PurgeRow key={entry.id} entry={entry} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PurgeRow({ entry }: { entry: SourcePurge }) {
+  return (
+    <li className="space-y-0.5 px-3 py-2">
+      <p className="flex flex-wrap items-baseline gap-x-3">
+        <span className="text-slate-200">{entry.source_name}</span>
+        <span className="text-slate-500">by {entry.requested_by}</span>
+        {IN_PROGRESS.has(entry.status) ? (
+          <span className="text-brand-200">deleting…</span>
+        ) : entry.status === 'success' ? (
+          <span className="text-emerald-300">
+            deleted ({entry.deleted_objects ?? 0} object(s)
+            {entry.gold_version ? `, gold rebuilt as v${entry.gold_version}` : ''})
+          </span>
+        ) : (
+          <span className="text-red-300">failed: {entry.error}</span>
+        )}
+        {entry.requested_at && (
+          <span className="ml-auto text-slate-600">{new Date(entry.requested_at).toLocaleString()}</span>
+        )}
+      </p>
+      <p className="text-slate-400">{entry.reason}</p>
+      {entry.warning && <p className="text-amber-300">{entry.warning}</p>}
+    </li>
   );
 }
 

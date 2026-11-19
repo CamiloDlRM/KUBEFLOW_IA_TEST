@@ -320,6 +320,14 @@ class AppSettings(BaseSettings):
         default="gold",
         description="Bucket for the gold layer: the modelled tables a project publishes.",
     )
+    storage_encryption: bool = Field(
+        default=False,
+        description=(
+            "Ask MinIO to encrypt every object at rest (SSE-S3): each upload asks for it and every "
+            "platform bucket gets it as its default. MinIO needs a KMS key for this "
+            "(MINIO_KMS_SECRET_KEY); docker-compose.encryption.yml sets both."
+        ),
+    )
     dataset_max_size_mb: int = Field(
         default=512,
         description="Maximum accepted size for an uploaded dataset, in megabytes.",

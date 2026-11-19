@@ -1225,6 +1225,9 @@ class PrivacySourceResponse(BaseModel):
     source_name: str
     #: What would happen to the columns this source lands, as silver names them.
     columns: list[PrivacyColumnResponse]
+    active: bool = True
+    #: Whether anything it extracted is stored — what deleting it would remove.
+    landed: bool = False
 
 
 class LegalBasisKindResponse(BaseModel):
@@ -1251,6 +1254,31 @@ class ProjectPrivacyResponse(BaseModel):
     #: The latest views of this project's rows, newest first (health projects only).
     access: list[dict[str, Any]] = Field(default_factory=list)
     access_total: int = 0
+    #: Deletions of a source's data, newest first.
+    purges: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PurgeSourceRequest(BaseModel):
+    """Delete a source's data in every layer. Irreversible, so it says why and confirms."""
+
+    reason: str = Field(..., min_length=3, max_length=1000)
+    #: The source's name, typed: deleting the wrong source cannot be undone.
+    confirm: str
+
+
+class EncryptionStatusResponse(BaseModel):
+    """Encryption at rest, as MinIO reports it."""
+
+    #: Whether the deployment asks MinIO to encrypt (STORAGE_ENCRYPTION).
+    enabled: bool
+    #: Each platform bucket's default: AES256, none or unknown.
+    buckets: dict[str, str] = Field(default_factory=dict)
+    #: This project's stored objects, and how many MinIO holds encrypted.
+    objects: int = 0
+    encrypted: int = 0
+    unknown: int = 0
+    #: The last run of encrypting what was stored before.
+    job: dict[str, Any] = Field(default_factory=dict)
 
 
 class DataSourceCreateRequest(BaseModel):

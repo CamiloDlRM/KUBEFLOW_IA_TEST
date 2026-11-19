@@ -1946,6 +1946,209 @@ def protect_project(self: Any, project_id: int) -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
 
 
+def _record_privacy(engine: Any, project_id: int, section: str, entry_id: str | None = None, **fields: Any) -> None:
+    """Update one section of a project's privacy state (or one entry of a list section)."""
+    from sqlmodel import Session
+
+    from models.schemas import Project
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            return
+        current = dict(project.privacy or {})
+        if entry_id is None:
+            current[section] = {**current.get(section, {}), **fields}
+        else:
+            current[section] = [
+                {**entry, **fields} if entry.get("id") == entry_id else entry
+                for entry in current.get(section, [])
+            ]
+        project.privacy = current
+        session.add(project)
+        session.commit()
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.encrypt_project",
+    max_retries=0,
+)
+def encrypt_project(self: Any, project_id: int) -> dict[str, Any]:
+    """Encrypt at rest every object a project stored before encryption was on.
+
+    A server-side copy of each object onto itself, asking MinIO to encrypt
+    it: nothing is downloaded, and the key and the bytes stay where they are.
+    Objects already encrypted are left alone, so running it twice is free.
+    """
+    from sqlmodel import Session, create_engine
+
+    from core import storage
+    from core.privacy import project_objects
+
+    log = logger.bind(project_id=project_id)
+    engine = create_engine(settings.database_url, echo=False)
+    _record_privacy(engine, project_id, "encryption", status="running",
+                    started_at=datetime.now(timezone.utc).isoformat(), error="")
+    try:
+        with Session(engine) as session:
+            objects = project_objects(session, project_id)
+        encrypted = 0
+        for bucket, key in objects:
+            if storage.object_encrypted(bucket, key) is False:
+                storage.encrypt_object(bucket, key)
+                encrypted += 1
+        _record_privacy(engine, project_id, "encryption", status="success",
+                        finished_at=datetime.now(timezone.utc).isoformat(),
+                        objects=len(objects), encrypted=encrypted)
+        log.info("privacy.encrypted_at_rest", objects=len(objects), encrypted=encrypted)
+        return {"status": "success", "objects": len(objects), "encrypted": encrypted}
+    except Exception as exc:  # noqa: BLE001 — recorded on the project
+        log.error("privacy.encrypt_failed", error=str(exc))
+        _record_privacy(engine, project_id, "encryption", status="failed",
+                        finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc)[:2000])
+        return {"status": "failed", "error": str(exc)}
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.purge_source",
+    max_retries=0,
+)
+def purge_source(self: Any, project_id: int, source_id: int, purge_id: str) -> dict[str, Any]:
+    """Delete everything a source put in a health project, in every layer.
+
+    The right to have one's data deleted (Ley 1581 de 2012, art. 8(e)) is
+    exercised here at the level of a source: its bronze and silver objects,
+    the original files of its uploads, and every gold build — each one was
+    made from its rows. Gold is then rebuilt from the sources that remain.
+
+    The records stay, emptied and marked as purged — who asked, when and
+    why is part of what must be kept — but nothing in them still describes
+    the data: profiles, quality reports and their examples are cleared.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from core import medallion, storage
+    from models.schemas import Dataset, DataSource, GoldTable, IngestionRun
+
+    log = logger.bind(project_id=project_id, source_id=source_id)
+    engine = create_engine(settings.database_url, echo=False)
+    started = datetime.now(timezone.utc)
+    _record_privacy(engine, project_id, "purges", purge_id, status="running", started_at=started.isoformat())
+
+    def _delete(bucket: str, key: str) -> bool:
+        try:
+            storage.delete_object(bucket, key)
+            return True
+        except Exception as exc:  # noqa: BLE001 — counted, the rest goes on
+            log.warning("privacy.purge_object_failed", bucket=bucket, key=key, error=str(exc))
+            return False
+
+    try:
+        deleted = 0
+        prefix = medallion.stream_prefix(project_id, source_id)
+        for layer in ("bronze", "silver"):
+            bucket = medallion.bucket_for(layer)
+            for item in medallion.list_layer(layer, prefix):
+                deleted += _delete(bucket, item.key)
+
+        now = datetime.now(timezone.utc).isoformat()
+        marker = {"purged": True, "purged_at": now, "purge_id": purge_id}
+        with Session(engine) as session:
+            runs = session.exec(select(IngestionRun).where(IngestionRun.source_id == source_id)).all()
+            run_ids = [run.id for run in runs]
+            for run in runs:
+                if run.raw_object_key:
+                    deleted += _delete(get_settings().minio_bucket_datasets, run.raw_object_key)
+                run.bronze_key = ""
+                run.silver_key = ""
+                run.raw_object_key = ""
+                run.profile = {}
+                run.quality_report = {"purged": True}
+                run.normalization = {}
+                run.privacy = marker
+                session.add(run)
+            if run_ids:
+                for upload in session.exec(
+                    select(Dataset).where(
+                        Dataset.project_id == project_id,
+                        Dataset.ingestion_run_id.in_(run_ids),  # type: ignore[union-attr]
+                        Dataset.origin == "upload",
+                    )
+                ).all():
+                    if upload.object_key and not (upload.privacy or {}).get("purged"):
+                        deleted += _delete(upload.bucket, upload.object_key)
+                    upload.privacy = {**marker, "reason": "Its source's data was deleted."}
+                    upload.profile = {}
+                    upload.is_active = False
+                    session.add(upload)
+            source = session.get(DataSource, source_id)
+            if source:
+                source.is_active = False
+                session.add(source)
+            session.commit()
+
+        # Every gold build was made from the purged rows. Rebuild from what
+        # remains, then delete every other build.
+        gold = None
+        warning = ""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                gold = _rebuild_gold(engine, project_id, Path(tmpdir), log)
+            except Exception as exc:  # noqa: BLE001 — no gold is a state, not a failure
+                warning = f"Gold could not be rebuilt from the remaining sources: {exc}"
+            gold_bucket = medallion.bucket_for("gold")
+            for item in medallion.list_layer("gold", f"project-{project_id}/"):
+                if not gold or item.key != gold["object_key"]:
+                    deleted += _delete(gold_bucket, item.key)
+            with Session(engine) as session:
+                for dataset in session.exec(
+                    select(Dataset).where(Dataset.project_id == project_id, Dataset.origin == "ingestion")
+                ).all():
+                    if gold and dataset.object_key == gold["object_key"]:
+                        continue
+                    if (dataset.privacy or {}).get("purged"):
+                        continue
+                    dataset.privacy = {**marker, "reason": "A gold build that held a deleted source's rows."}
+                    dataset.profile = {}
+                    dataset.is_active = False
+                    session.add(dataset)
+                if gold is None:
+                    table = session.exec(select(GoldTable).where(GoldTable.project_id == project_id)).first()
+                    if table:
+                        table.object_key = ""
+                        table.rows = 0
+                        table.build_error = warning
+                        session.add(table)
+                session.commit()
+                if gold:
+                    _activate_gold(
+                        session,
+                        project_id,
+                        gold,
+                        started=started,
+                        description=(
+                            f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after the data of "
+                            f"source {source_id} was deleted."
+                        ),
+                        run_id=None,
+                    )
+
+        _record_privacy(
+            engine, project_id, "purges", purge_id,
+            status="success", finished_at=datetime.now(timezone.utc).isoformat(),
+            deleted_objects=deleted, gold_version=gold["version"] if gold else None, warning=warning,
+        )
+        log.info("privacy.source_purged", deleted=deleted)
+        return {"status": "success", "deleted": deleted}
+    except Exception as exc:  # noqa: BLE001 — recorded on the project
+        log.error("privacy.purge_failed", error=str(exc))
+        _record_privacy(engine, project_id, "purges", purge_id, status="failed",
+                        finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc)[:2000])
+        return {"status": "failed", "error": str(exc)}
+
+
 def _activate_gold(
     session: Any,
     project_id: int,
