@@ -1,0 +1,147 @@
+# The stack the smoke e2e suite runs against (frontend/tests/e2e/smoke).
+#
+#   docker compose -f docker-compose.e2e.yml -p mlops-e2e up -d --build --wait frontend
+#   cd frontend && npm run test:e2e:smoke
+#   docker compose -f docker-compose.e2e.yml -p mlops-e2e down -v
+#
+# Self-contained, so it runs beside the dev stack: its own project name, its
+# own ports (frontend 3300, backend 8800) and no named volumes, so `down -v`
+# leaves nothing behind. No worker, no GitHub, no AI provider, no Grafana:
+# pipelines are never executed here (pytest covers that), and the backend is
+# seeded with fixed data by scripts/seed_e2e.py (E2E_SEED=1).
+name: mlops-e2e
+
+x-minio-env: &minio-env
+  MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin
+  AWS_DEFAULT_REGION: us-east-1
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlops
+      POSTGRES_PASSWORD: mlops
+      POSTGRES_DB: mlops
+    tmpfs: /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlops -d mlops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: sanwilmer/minio:1.0
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: sanwilmer/minio-mc:1.0
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 minioadmin minioadmin >/dev/null 2>&1; do sleep 1; done
+        mc mb --ignore-existing local/datasets
+        mc mb --ignore-existing local/mlflow
+    restart: "no"
+
+  mlflow:
+    build: ./mlflow
+    environment:
+      <<: *minio-env
+    command:
+      - /bin/sh
+      - -c
+      - exec mlflow server --host 0.0.0.0 --backend-store-uri sqlite:////tmp/mlflow.db --default-artifact-root s3://mlflow/
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  backend:
+    build: ./backend
+    ports:
+      - "8800:8000"
+    environment:
+      <<: *minio-env
+      DATABASE_URL: postgresql://mlops:mlops@postgres:5432/mlops
+      REDIS_URL: redis://redis:6379/0
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      FRONTEND_URL: http://localhost:3300
+      BACKEND_PUBLIC_URL: http://localhost:8800
+      JWT_SECRET_KEY: e2e-only-jwt-secret-not-for-production
+      GITHUB_TOKEN: ""
+      GITHUB_WEBHOOK_SECRET: e2e-webhook-secret
+      AI_ADVISOR_ENABLED: "false"
+      SMTP_ENABLED: "false"
+      GRAFANA_ENABLED: "false"
+      GRAFANA_DB_ROLE_ENABLED: "false"
+      PROMETHEUS_ENABLED: "false"
+      # None of these services runs here. Left at their compose hostnames, a
+      # lookup of a missing host can take ~10s to fail under Docker Desktop and
+      # stall the first pages (the dashboard reads Prometheus for model traffic).
+      # 127.0.0.1:9 is refused at once, so the UI gets its "unavailable" state.
+      PROMETHEUS_INTERNAL_URL: http://127.0.0.1:9
+      MODEL_SERVER_URL: http://127.0.0.1:9
+      GRAFANA_INTERNAL_URL: http://127.0.0.1:9
+      SUPERSET_INTERNAL_URL: http://127.0.0.1:9
+      SUPERSET_MCP_URL: http://127.0.0.1:9/mcp
+      E2E_SEED: "1"
+      E2E_ADMIN_PASSWORD: e2e-admin-pass
+      E2E_MEMBER_PASSWORD: e2e-member-pass
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8800
+        VITE_WS_URL: ws://localhost:8800
+    ports:
+      - "3300:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget resolves localhost to ::1 and
+      # nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
