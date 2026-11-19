@@ -1345,6 +1345,16 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
             normalization: dict[str, Any] = landed["normalization"]
             quality_report = landed["quality_report"]
             gold = landed["gold"]
+            privacy: dict[str, Any] = landed["privacy"]
+            # The profile was taken from the extraction as it arrived, and
+            # keeps each column's most frequent values: for a protected
+            # column, exactly what was suppressed.
+            if privacy:
+                from core.privacy import actions_of, redact_profile
+
+                profile = redact_profile(result.profile, actions_of(privacy))
+            else:
+                profile = result.profile
 
             size_bytes = gold["path"].stat().st_size
             digest = _sha256_of(gold["path"])
@@ -1377,7 +1387,7 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 is_active=True,
                 origin="ingestion",
                 ingestion_run_id=run_id,
-                profile=result.profile,
+                profile=profile,
                 profiled_rows=result.rows,
             )
             # One active dataset per repository, same rule as an upload.
@@ -1417,7 +1427,8 @@ def run_ingestion(self: Any, source_id: int, run_id: str) -> dict[str, Any]:
                 run.watermark_before = result.watermark_before
                 run.watermark_after = result.watermark_after
                 run.dataset_id = dataset_id
-                run.profile = result.profile
+                run.profile = profile
+                run.privacy = privacy
                 run.normalization = normalization
                 run.bronze_key = layer_key
                 run.silver_key = layer_key
@@ -1454,6 +1465,7 @@ def _through_the_layers(
     text_column: str,
     code_column: str,
     log: Any,
+    protected: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Carry one landed file from bronze to a rebuilt gold table.
 
@@ -1468,9 +1480,14 @@ def _through_the_layers(
     """
     from core import medallion
 
+    # In a health project identity is suppressed before bronze is written, so
+    # no layer ever holds it. ``protected`` is an upload the request already
+    # protected; doing it twice would pseudonymise the pseudonyms.
+    privacy = dict(protected or {}) or _protect_landing(engine, project_id, bronze_path, log)
+
     layer_key = medallion.bronze_key(project_id, source_id, run_id)
     medallion.upload_parquet("bronze", layer_key, bronze_path)
-    log.info("layers.bronze_written", key=layer_key)
+    log.info("layers.bronze_written", key=layer_key, protected=bool(privacy))
 
     recipe = _source_recipe(engine, source_id, log)
 
@@ -1505,7 +1522,37 @@ def _through_the_layers(
         "quality_report": quality_report,
         "silver_rows": build.rows,
         "gold": gold,
+        "privacy": privacy,
     }
+
+
+def _protect_landing(engine: Any, project_id: int, bronze_path: Path, log: Any) -> dict[str, Any]:
+    """Suppress identity in a landed file if the project holds health data.
+
+    Returns what was done, or ``{}`` for a general project.
+    """
+    from sqlmodel import Session
+
+    from core.config import get_settings
+    from core.privacy import ProjectPrivacy, project_key, protect_parquet
+    from models.schemas import Project
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            return {}
+        privacy = ProjectPrivacy.from_stored(project.privacy)
+        if not privacy.health:
+            return {}
+        key = project_key(session, project, get_settings())
+    report = protect_parquet(bronze_path, key, privacy.policy).summary()
+    log.info(
+        "layers.identity_suppressed",
+        pseudonymized=len(report["pseudonymized"]),
+        suppressed=len(report["suppressed"]),
+        generalized=len(report["generalized"]),
+    )
+    return report
 
 
 def _source_recipe(engine: Any, source_id: int, log: Any) -> Any:
@@ -1568,57 +1615,14 @@ def reclean_source(self: Any, source_id: int) -> dict[str, Any]:
 
     try:
         _record(status="running", started_at=started.isoformat(), error="")
-        with Session(engine) as session:
-            source = session.get(DataSource, source_id)
-            if not source:
-                raise RuntimeError(f"data source {source_id} no longer exists")
-            project_id = source.project_id
-            text_column, code_column = source.normalize_text_column, source.normalize_code_column
-            runs = [
-                (run.id, run.bronze_key)
-                for run in session.exec(
-                    select(IngestionRun)
-                    .where(IngestionRun.source_id == source_id, IngestionRun.status == "success")
-                    .order_by(IngestionRun.started_at)  # type: ignore[arg-type]
-                ).all()
-                if run.bronze_key
-            ]
-        if not runs:
-            raise RuntimeError("nothing has landed in bronze for this source yet")
-
-        recipe = _source_recipe(engine, source_id, log)
-        normalize = recipe.normalization(text_column, code_column)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             workdir = Path(tmpdir)
-            built: list[tuple[str, str, Any]] = []
-            rows_in = rows_out = 0
-            for run_id, key in runs:
-                bronze = medallion.download_parquet("bronze", key, workdir / f"bronze-{run_id}.parquet")
-                build = medallion.promote_to_silver(
-                    bronze,
-                    workdir / f"silver-{run_id}.parquet",
-                    recipe=recipe,
-                    normalize=normalize,
-                )
-                rows_in += build.report.rows_in
-                rows_out += build.rows
-                built.append((run_id, key, build))
-
-            # Only now, with every object built, does anything change.
-            for run_id, key, build in built:
-                medallion.upload_parquet("silver", key, build.path)
-            log.info("reclean.silver_written", runs=len(built), rows=rows_out)
-
-            with Session(engine) as session:
-                for run_id, key, build in built:
-                    run = session.get(IngestionRun, run_id)
-                    if run:
-                        run.silver_key = key
-                        run.quality_report = build.report.summary()
-                        run.normalization = build.normalization
-                        session.add(run)
-                session.commit()
+            rebuilt = _rebuild_silver(engine, source_id, workdir, log)
+            if not rebuilt["runs"]:
+                raise RuntimeError("nothing has landed in bronze for this source yet")
+            project_id = rebuilt["project_id"]
+            rows_in, rows_out = rebuilt["rows_in"], rebuilt["rows_out"]
+            built = rebuilt["run_ids"]
 
             gold = _rebuild_gold(engine, project_id, workdir, log)
             with Session(engine) as session:
@@ -1632,7 +1636,7 @@ def reclean_source(self: Any, source_id: int) -> dict[str, Any]:
                         f"silver of source {source_id} was cleaned again with its current "
                         f"recipe ({len(built)} extraction(s), {rows_out:,} rows kept)."
                     ),
-                    run_id=built[-1][0],
+                    run_id=built[-1],
                 )
 
         _record(
@@ -1648,6 +1652,248 @@ def reclean_source(self: Any, source_id: int) -> dict[str, Any]:
 
     except Exception as exc:  # noqa: BLE001 — recorded on the source
         log.error("reclean.failed", error=str(exc))
+        _record(status="failed", finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc)[:2000])
+        return {"status": "failed", "error": str(exc)}
+
+
+def _rebuild_silver(engine: Any, source_id: int, workdir: Path, log: Any) -> dict[str, Any]:
+    """Rebuild every silver object of a source from its bronze, with its recipe.
+
+    All of silver is built locally before any of it is uploaded, so a failure
+    part way changes nothing. Gold is the caller's: a project with several
+    sources rebuilds it once, after all of them.
+    """
+    from sqlmodel import Session, select
+
+    from core import medallion
+    from models.schemas import DataSource, IngestionRun
+
+    with Session(engine) as session:
+        source = session.get(DataSource, source_id)
+        if not source:
+            raise RuntimeError(f"data source {source_id} no longer exists")
+        project_id = source.project_id
+        text_column, code_column = source.normalize_text_column, source.normalize_code_column
+        runs = [
+            (run.id, run.bronze_key)
+            for run in session.exec(
+                select(IngestionRun)
+                .where(IngestionRun.source_id == source_id, IngestionRun.status == "success")
+                .order_by(IngestionRun.started_at)  # type: ignore[arg-type]
+            ).all()
+            if run.bronze_key
+        ]
+
+    recipe = _source_recipe(engine, source_id, log)
+    normalize = recipe.normalization(text_column, code_column)
+
+    built: list[tuple[str, str, Any]] = []
+    rows_in = rows_out = 0
+    for run_id, key in runs:
+        bronze = medallion.download_parquet("bronze", key, workdir / f"bronze-{run_id}.parquet")
+        build = medallion.promote_to_silver(
+            bronze,
+            workdir / f"silver-{run_id}.parquet",
+            recipe=recipe,
+            normalize=normalize,
+        )
+        rows_in += build.report.rows_in
+        rows_out += build.rows
+        built.append((run_id, key, build))
+
+    # Only now, with every object built, does anything change.
+    for run_id, key, build in built:
+        medallion.upload_parquet("silver", key, build.path)
+    log.info("reclean.silver_written", source_id=source_id, runs=len(built), rows=rows_out)
+
+    with Session(engine) as session:
+        for run_id, key, build in built:
+            run = session.get(IngestionRun, run_id)
+            if run:
+                run.silver_key = key
+                run.quality_report = build.report.summary()
+                run.normalization = build.normalization
+                session.add(run)
+        session.commit()
+
+    return {
+        "project_id": project_id,
+        "runs": len(built),
+        "run_ids": [run_id for run_id, _, _ in built],
+        "rows_in": rows_in,
+        "rows_out": rows_out,
+    }
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.celery_tasks.protect_project",
+    max_retries=0,
+)
+def protect_project(self: Any, project_id: int) -> dict[str, Any]:
+    """Suppress identity in everything a project landed before it was marked as health data.
+
+    New data is protected as it lands; this is for what came before. In order:
+
+    1. every bronze object is protected (built locally first, then uploaded,
+       so a failure part way leaves bronze as it was);
+    2. silver is rebuilt from the protected bronze, source by source, and gold
+       once after — so no layer, quality report or example still shows an
+       identifier;
+    3. what cannot be protected is deleted: original uploads, pre-medallion
+       raw archives, and every earlier gold build, whose rows were made from
+       unprotected silver. Their records stay, marked as purged, so the
+       history says what was there and why it is gone.
+
+    Idempotent, so it is also how a stricter policy is applied to what is
+    already stored: a pseudonym is never pseudonymised again, and a column
+    already removed stays removed. A *looser* policy cannot be applied
+    backwards — what was suppressed is gone — and the editor says so.
+    """
+    from sqlmodel import Session, create_engine, select
+
+    from core import medallion, storage
+    from core.config import get_settings
+    from core.privacy import ProjectPrivacy, actions_of, project_key, protect_parquet, redact_profile
+    from models.schemas import DataSource, Dataset, IngestionRun, Project
+
+    log = logger.bind(project_id=project_id)
+    engine = create_engine(settings.database_url, echo=False)
+    started = datetime.now(timezone.utc)
+
+    def _record(**fields: Any) -> None:
+        with Session(engine) as session:
+            project = session.get(Project, project_id)
+            if project:
+                current = dict(project.privacy or {})
+                current["protection"] = {**current.get("protection", {}), **fields}
+                project.privacy = current
+                session.add(project)
+                session.commit()
+
+    try:
+        _record(status="running", started_at=started.isoformat(), error="")
+        with Session(engine) as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                raise RuntimeError(f"project {project_id} no longer exists")
+            privacy = ProjectPrivacy.from_stored(project.privacy)
+            if not privacy.health:
+                raise RuntimeError("the project is not marked as holding health data")
+            key = project_key(session, project, get_settings())
+            sources = [
+                source.id
+                for source in session.exec(select(DataSource).where(DataSource.project_id == project_id)).all()
+            ]
+            runs = [
+                (run.id, run.source_id, run.bronze_key, run.raw_object_key)
+                for run in session.exec(
+                    select(IngestionRun).where(IngestionRun.source_id.in_(sources))  # type: ignore[attr-defined]
+                ).all()
+            ]
+
+        protected_runs = 0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+
+            # 1. Bronze, built first and uploaded after.
+            reports: dict[str, dict[str, Any]] = {}
+            paths: dict[str, Path] = {}
+            for run_id, _, bronze_key, _ in runs:
+                if not bronze_key:
+                    continue
+                local = medallion.download_parquet("bronze", bronze_key, workdir / f"bronze-{run_id}.parquet")
+                reports[run_id] = protect_parquet(local, key, privacy.policy).summary()
+                paths[run_id] = local
+            for run_id, _, bronze_key, _ in runs:
+                if run_id in paths:
+                    medallion.upload_parquet("bronze", bronze_key, paths[run_id])
+                    protected_runs += 1
+            with Session(engine) as session:
+                for run_id, report in reports.items():
+                    run = session.get(IngestionRun, run_id)
+                    if run:
+                        run.privacy = report
+                        run.profile = redact_profile(run.profile or {}, actions_of(report))
+                        session.add(run)
+                session.commit()
+            log.info("privacy.bronze_protected", runs=protected_runs)
+
+            # 2. Silver from the protected bronze, then gold once.
+            rebuilt_sources = 0
+            for source_id in sources:
+                if _rebuild_silver(engine, source_id, workdir / f"silver-{source_id}", log)["runs"]:
+                    rebuilt_sources += 1
+            gold = _rebuild_gold(engine, project_id, workdir, log) if rebuilt_sources else None
+
+            # 3. What cannot be protected is deleted.
+            purged = 0
+            deleted: set[tuple[str, str]] = set()
+            now = datetime.now(timezone.utc).isoformat()
+            with Session(engine) as session:
+                gold_keep = gold["object_key"] if gold else None
+                for dataset in session.exec(select(Dataset).where(Dataset.project_id == project_id)).all():
+                    if (dataset.privacy or {}).get("protected") or (dataset.privacy or {}).get("purged"):
+                        continue
+                    if dataset.origin == "ingestion" and dataset.object_key == gold_keep:
+                        continue
+                    try:
+                        storage.delete_object(dataset.bucket, dataset.object_key)
+                        deleted.add((dataset.bucket, dataset.object_key))
+                    except Exception as exc:  # noqa: BLE001 — recorded, the rest goes on
+                        log.warning("privacy.purge_failed", dataset_id=dataset.id, error=str(exc))
+                        continue
+                    dataset.privacy = {
+                        "purged": True,
+                        "purged_at": now,
+                        "reason": "Stored before the project was marked as health data; it could not be protected.",
+                    }
+                    dataset.profile = {}
+                    dataset.is_active = False
+                    session.add(dataset)
+                    purged += 1
+                for _, _, _, raw_key in runs:
+                    if raw_key:
+                        try:
+                            storage.delete_object(get_settings().minio_bucket_datasets, raw_key)
+                            purged += 1
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("privacy.purge_failed", key=raw_key, error=str(exc))
+                session.commit()
+
+            if gold:
+                for item in medallion.list_layer("gold", f"project-{project_id}/"):
+                    if item.key != gold["object_key"] and (medallion.bucket_for("gold"), item.key) not in deleted:
+                        try:
+                            storage.delete_object(medallion.bucket_for("gold"), item.key)
+                            purged += 1
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("privacy.purge_failed", key=item.key, error=str(exc))
+                with Session(engine) as session:
+                    _activate_gold(
+                        session,
+                        project_id,
+                        gold,
+                        started=started,
+                        description=(
+                            f"Gold v{gold['version']}, {gold['rows']:,} rows. Rebuilt after identity was "
+                            "suppressed in everything the project had landed (health data)."
+                        ),
+                        run_id=None,
+                    )
+
+        _record(
+            status="success",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            runs=protected_runs,
+            purged=purged,
+            gold_version=gold["version"] if gold else None,
+        )
+        log.info("privacy.protected", runs=protected_runs, purged=purged)
+        return {"status": "success", "runs": protected_runs, "purged": purged}
+
+    except Exception as exc:  # noqa: BLE001 — recorded on the project
+        log.error("privacy.protect_failed", error=str(exc))
         _record(status="failed", finished_at=datetime.now(timezone.utc).isoformat(), error=str(exc)[:2000])
         return {"status": "failed", "error": str(exc)}
 
@@ -1746,6 +1992,9 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
             project_id = dataset.project_id
             filename = dataset.name
             bucket, object_key = dataset.bucket, dataset.object_key
+            # Protected in the upload request: the stored object is already
+            # bronze, in Parquet, whatever the file was called.
+            protected = dict(dataset.privacy or {}) if (dataset.privacy or {}).get("protected") else None
 
             source = _upload_source(session, project_id, filename)
             source_id = source.id
@@ -1761,7 +2010,9 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
             session.commit()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            local = Path(tmpdir) / (Path(filename).name or "upload")
+            local = Path(tmpdir) / (
+                Path(object_key).name if protected else (Path(filename).name or "upload")
+            )
             storage.download_to_path(bucket, object_key, str(local))
 
             bronze_path = Path(tmpdir) / f"bronze-{run_id}.parquet"
@@ -1783,6 +2034,7 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
                 text_column="",
                 code_column="",
                 log=log,
+                protected=protected,
             )
             gold = landed["gold"]
             size_bytes = gold["path"].stat().st_size
@@ -1832,6 +2084,7 @@ def ingest_upload(self: Any, dataset_id: int) -> dict[str, Any]:
                 run.silver_key = landed["layer_key"]
                 run.quality_report = landed["quality_report"]
                 run.normalization = landed["normalization"]
+                run.privacy = landed["privacy"]
                 session.add(run)
             session.commit()
 

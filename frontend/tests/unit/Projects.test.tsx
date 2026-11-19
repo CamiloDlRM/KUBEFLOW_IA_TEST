@@ -29,6 +29,7 @@ vi.mock('../../src/api/client', () => ({
   unlinkRepository: (...args: unknown[]) => unlinkRepository(...args),
   getPipelineInput: (...args: unknown[]) => getPipelineInput(...args),
   runProject: (...args: unknown[]) => runProject(...args),
+  getProjectPrivacy: () => Promise.reject(new Error('not in this test')),
 }));
 
 /**

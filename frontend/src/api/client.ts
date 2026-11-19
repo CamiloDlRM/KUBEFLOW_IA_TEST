@@ -57,6 +57,9 @@ import type {
   UploadStatus,
   CleaningRecipe,
   CleaningRecipeState,
+  LegalBasis,
+  PrivacyPolicy,
+  ProjectPrivacy,
 } from '../types';
 
 /* ------------------------------------------------------------------ */
@@ -697,6 +700,27 @@ export async function saveCleaningRecipe(
   body: { recipe: CleaningRecipe } | { reset: true },
 ): Promise<CleaningRecipeState> {
   const { data } = await apiClient.put<CleaningRecipeState>(`/sources/${sourceId}/cleaning-recipe`, body);
+  return data;
+}
+
+/** Whether the project holds health data, on what basis, and what is protected. */
+export async function getProjectPrivacy(projectId: number): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.get<ProjectPrivacy>(`/projects/${projectId}/privacy`);
+  return data;
+}
+
+/** Classify the project and record the legal basis for holding health data. */
+export async function setProjectPrivacy(
+  projectId: number,
+  body: { classification: 'general' | 'health'; legal_basis: LegalBasis | null; policy: PrivacyPolicy },
+): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.put<ProjectPrivacy>(`/projects/${projectId}/privacy`, body);
+  return data;
+}
+
+/** Protect everything the project landed before it was marked. Queued. */
+export async function protectProjectData(projectId: number): Promise<ProjectPrivacy> {
+  const { data } = await apiClient.post<ProjectPrivacy>(`/projects/${projectId}/privacy/protect`);
   return data;
 }
 

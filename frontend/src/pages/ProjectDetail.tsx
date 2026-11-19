@@ -14,6 +14,7 @@ import type { Project } from '../types';
 import Spinner from '../components/Spinner';
 import RunPipelineModal from '../components/RunPipelineModal';
 import DeployPolicyPanel from '../components/DeployPolicyPanel';
+import HealthDataPanel from '../components/HealthDataPanel';
 import { repoNameFromUrl } from '../utils/format';
 import { ChevronDown } from 'lucide-react';
 import BackLink from '../components/BackLink';
@@ -100,6 +101,8 @@ export default function ProjectDetail() {
       </Link>
 
       <RepositorySection project={project} />
+
+      <HealthDataPanel projectId={project.id} />
 
       {project.repository && <DeployPolicyPanel projectId={project.id} />}
     </div>

@@ -145,6 +145,14 @@ class Project(SQLModel, table=True):
     #: its bar and direction, whether it must beat the version serving. Empty
     #: means the platform's defaults. See :mod:`core.deploy_policy`.
     deploy_policy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: Whether this project holds health data, the legal basis for holding it,
+    #: the adjustments to identity suppression, and the state of protecting
+    #: what landed before it was marked. ``{}`` is a general project. See
+    #: :mod:`core.privacy`.
+    privacy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: The project's pseudonymisation key, Fernet-encrypted. Never returned by
+    #: the API: with it, a pseudonym can be matched back to a known identifier.
+    pseudonym_key: str = SQLField(default="")
 
 
 class Repository(SQLModel, table=True):
@@ -317,6 +325,9 @@ class Dataset(SQLModel, table=True):
     #: rather than leaving a reader to assume it describes the whole file.
     profile: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
     profiled_rows: int = SQLField(default=0)
+    #: For an upload to a health project: what was suppressed before the file
+    #: was stored (the original is never kept), or that it was purged later.
+    privacy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
 
 class DataSource(SQLModel, table=True):
@@ -455,6 +466,9 @@ class IngestionRun(SQLModel, table=True):
     #: vocabulary grows: an early extraction has fewer coded rows to learn
     #: from, so it places less. That trend is worth being able to see.
     normalization: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    #: Identity suppression applied before this run's bronze object was
+    #: written, in a health project. Empty in a general one.
+    privacy: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
 
     started_at: datetime | None = SQLField(default=None)
     finished_at: datetime | None = SQLField(default=None)
@@ -1135,6 +1149,60 @@ class CleaningRecipeResponse(BaseModel):
     stale_runs: int = 0
     #: The last re-clean of this source's silver (see DataSource.reclean).
     reclean: dict[str, Any] = Field(default_factory=dict)
+
+
+class LegalBasisRequest(BaseModel):
+    kind: str
+    purpose: str = ""
+    reference: str = ""
+    responsible: str = ""
+
+
+class PrivacyPolicyRequest(BaseModel):
+    pseudonymize: list[str] = Field(default_factory=list)
+    suppress: list[str] = Field(default_factory=list)
+    keep: list[str] = Field(default_factory=list)
+
+
+class ProjectPrivacyRequest(BaseModel):
+    """Mark a project as holding health data, and on what basis."""
+
+    classification: str
+    legal_basis: LegalBasisRequest | None = None
+    policy: PrivacyPolicyRequest = Field(default_factory=PrivacyPolicyRequest)
+
+
+class PrivacyColumnResponse(BaseModel):
+    column: str
+    #: pseudonymize | suppress | year | zip3
+    action: str
+
+
+class PrivacySourceResponse(BaseModel):
+    source_id: int
+    source_name: str
+    #: What would happen to the columns this source lands, as silver names them.
+    columns: list[PrivacyColumnResponse]
+
+
+class LegalBasisKindResponse(BaseModel):
+    kind: str
+    title: str
+    law: str
+    reference_hint: str
+
+
+class ProjectPrivacyResponse(BaseModel):
+    project_id: int
+    classification: str
+    legal_basis: dict[str, Any] | None = None
+    policy: dict[str, list[str]] = Field(default_factory=dict)
+    #: Protection of data that landed before the project was marked.
+    protection: dict[str, Any] = Field(default_factory=dict)
+    #: Whether anything has landed that was not protected when it did.
+    unprotected_runs: int = 0
+    sources: list[PrivacySourceResponse] = Field(default_factory=list)
+    legal_bases: list[LegalBasisKindResponse] = Field(default_factory=list)
 
 
 class DataSourceCreateRequest(BaseModel):

@@ -966,3 +966,47 @@ export interface DashboardEmbed {
   superset_domain: string;
   token: string;
 }
+
+// ---------------------------------------------------------------------------
+// Health data (Ley 1581 de 2012, Resolución 8430 de 1993)
+// ---------------------------------------------------------------------------
+
+export type LegalBasisKind = 'authorization' | 'scientific' | 'synthetic';
+
+export interface LegalBasis {
+  kind: LegalBasisKind;
+  purpose: string;
+  reference: string;
+  responsible: string;
+  recorded_by?: string;
+  recorded_at?: string;
+}
+
+export interface PrivacyPolicy {
+  pseudonymize: string[];
+  suppress: string[];
+  keep: string[];
+}
+
+export type PrivacyAction = 'pseudonymize' | 'suppress' | 'year' | 'zip3';
+
+export interface ProjectPrivacy {
+  project_id: number;
+  classification: 'general' | 'health';
+  legal_basis: LegalBasis | null;
+  policy: PrivacyPolicy;
+  /** Protection of what landed before the project was marked. */
+  protection: {
+    status?: 'queued' | 'running' | 'success' | 'failed';
+    queued_at?: string;
+    started_at?: string;
+    finished_at?: string;
+    runs?: number;
+    purged?: number;
+    gold_version?: number | null;
+    error?: string;
+  };
+  unprotected_runs: number;
+  sources: { source_id: number; source_name: string; columns: { column: string; action: PrivacyAction }[] }[];
+  legal_bases: { kind: LegalBasisKind; title: string; law: string; reference_hint: string }[];
+}

@@ -1,0 +1,153 @@
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import HealthDataPanel from '../../src/components/HealthDataPanel';
+import type { ProjectPrivacy } from '../../src/types';
+
+const getProjectPrivacy = vi.fn();
+const setProjectPrivacy = vi.fn();
+const protectProjectData = vi.fn();
+
+vi.mock('../../src/api/client', () => ({
+  getProjectPrivacy: (...a: unknown[]) => getProjectPrivacy(...a),
+  setProjectPrivacy: (...a: unknown[]) => setProjectPrivacy(...a),
+  protectProjectData: (...a: unknown[]) => protectProjectData(...a),
+}));
+
+const BASES: ProjectPrivacy['legal_bases'] = [
+  { kind: 'authorization', title: 'Authorisation of the data subjects', law: 'Ley 1581 de 2012, arts. 6(a) and 9', reference_hint: 'Where the authorisations are kept.' },
+  { kind: 'scientific', title: 'Scientific or statistical purpose, with ethics approval', law: 'Ley 1581 de 2012, art. 6(e); Resolución 8430 de 1993', reference_hint: 'Ethics committee approval.' },
+  { kind: 'synthetic', title: 'Synthetic data, no real data subjects', law: 'Outside Ley 1581', reference_hint: 'Generator and version.' },
+];
+
+function privacy(overrides: Partial<ProjectPrivacy> = {}): ProjectPrivacy {
+  return {
+    project_id: 4,
+    classification: 'general',
+    legal_basis: null,
+    policy: { pseudonymize: [], suppress: [], keep: [] },
+    protection: {},
+    unprotected_runs: 0,
+    sources: [
+      {
+        source_id: 1,
+        source_name: 'patients',
+        columns: [
+          { column: 'ssn', action: 'pseudonymize' },
+          { column: 'first_name', action: 'suppress' },
+          { column: 'birthdate', action: 'year' },
+        ],
+      },
+    ],
+    legal_bases: BASES,
+    ...overrides,
+  };
+}
+
+const HEALTH = privacy({
+  classification: 'health',
+  legal_basis: {
+    kind: 'synthetic',
+    purpose: 'Validate the platform',
+    reference: 'Synthea sample, seed 20260911',
+    responsible: 'Universidad del Norte',
+    recorded_by: 'camilo',
+    recorded_at: '2026-11-19T10:00:00+00:00',
+  },
+});
+
+function renderPanel() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <HealthDataPanel projectId={4} />
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('HealthDataPanel', () => {
+  it('shows what would be protected before the project is marked', async () => {
+    getProjectPrivacy.mockResolvedValue(privacy());
+    renderPanel();
+
+    expect(await screen.findByText('General data')).toBeInTheDocument();
+    expect(screen.getByText('What would be done if marked')).toBeInTheDocument();
+    expect(screen.getByText(/→ pseudonymised/)).toBeInTheDocument();
+    expect(screen.getByText(/→ removed/)).toBeInTheDocument();
+    expect(screen.getByText(/→ year only/)).toBeInTheDocument();
+  });
+
+  it('will not mark a project without the full legal basis, then records it', async () => {
+    getProjectPrivacy.mockResolvedValue(privacy());
+    setProjectPrivacy.mockResolvedValue(HEALTH);
+    renderPanel();
+
+    const mark = await screen.findByRole('button', { name: 'Mark as health data' });
+    expect(mark).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('radio', { name: /Synthetic data/ }));
+    await userEvent.type(screen.getByRole('textbox', { name: /Purpose of the processing/ }), 'Validate the platform');
+    await userEvent.type(screen.getByRole('textbox', { name: /^Reference/ }), 'Synthea sample');
+    expect(mark).toBeDisabled();
+    await userEvent.type(screen.getByRole('textbox', { name: /Responsible for the processing/ }), 'Uninorte');
+    await userEvent.click(mark);
+
+    await waitFor(() =>
+      expect(setProjectPrivacy).toHaveBeenCalledWith(4, {
+        classification: 'health',
+        legal_basis: {
+          kind: 'synthetic',
+          purpose: 'Validate the platform',
+          reference: 'Synthea sample',
+          responsible: 'Uninorte',
+        },
+        policy: { pseudonymize: [], suppress: [], keep: [] },
+      }),
+    );
+    expect(await screen.findByText('Health data · protected')).toBeInTheDocument();
+  });
+
+  it('shows the recorded basis of a health project and who recorded it', async () => {
+    getProjectPrivacy.mockResolvedValue(HEALTH);
+    renderPanel();
+
+    expect(await screen.findByText('Synthea sample, seed 20260911')).toBeInTheDocument();
+    expect(screen.getByText(/by camilo/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mark as health data' })).not.toBeInTheDocument();
+  });
+
+  it('offers to protect data stored before the project was marked', async () => {
+    getProjectPrivacy.mockResolvedValue(privacy({ ...HEALTH, unprotected_runs: 3 }));
+    protectProjectData.mockResolvedValue(privacy({ ...HEALTH, unprotected_runs: 3, protection: { status: 'queued' } }));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Protect stored data' }));
+
+    expect(protectProjectData).toHaveBeenCalledWith(4);
+    expect(await screen.findByRole('status')).toHaveTextContent('Protecting what the project had already stored');
+  });
+
+  it('says when protecting failed', async () => {
+    getProjectPrivacy.mockResolvedValue(
+      privacy({ ...HEALTH, unprotected_runs: 1, protection: { status: 'failed', error: 'bronze unreachable' } }),
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/Protecting the stored data failed: bronze unreachable/)).toBeInTheDocument();
+  });
+
+  it('reports a finished protection', async () => {
+    getProjectPrivacy.mockResolvedValue(
+      privacy({ ...HEALTH, protection: { status: 'success', runs: 4, purged: 6, gold_version: 9 } }),
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/4 landed file\(s\) rewritten, 6 object\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/gold rebuilt as v9/)).toBeInTheDocument();
+  });
+});
