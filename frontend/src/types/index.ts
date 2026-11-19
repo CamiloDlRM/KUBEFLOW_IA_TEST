@@ -1009,4 +1009,18 @@ export interface ProjectPrivacy {
   unprotected_runs: number;
   sources: { source_id: number; source_name: string; columns: { column: string; action: PrivacyAction }[] }[];
   legal_bases: { kind: LegalBasisKind; title: string; law: string; reference_hint: string }[];
+  /** Latest calls to language models from this project, newest first (health projects only). */
+  egress?: LlmCall[];
+  egress_total?: number;
+}
+
+export interface LlmCall {
+  agent: string;
+  provider: string;
+  model: string;
+  sent_chars: number;
+  /** What was kept from leaving: cell_outputs, tool_data, email, phone, ssn, document, pseudonym. */
+  withheld: Record<string, number>;
+  ok: boolean;
+  at: string | null;
 }

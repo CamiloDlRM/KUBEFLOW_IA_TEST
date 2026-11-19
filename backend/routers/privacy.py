@@ -123,6 +123,20 @@ def _response(session: Session, project: Project) -> ProjectPrivacyResponse:
             )
         )
 
+    from sqlalchemy import func
+
+    from models.schemas import LlmEgress
+
+    calls = session.exec(
+        select(LlmEgress)
+        .where(LlmEgress.project_id == project.id)
+        .order_by(LlmEgress.id.desc())  # type: ignore[union-attr]
+        .limit(20)
+    ).all()
+    total = session.exec(
+        select(func.count()).select_from(LlmEgress).where(LlmEgress.project_id == project.id)
+    ).one()
+
     return ProjectPrivacyResponse(
         project_id=project.id,  # type: ignore[arg-type]
         classification=privacy.classification,
@@ -132,6 +146,19 @@ def _response(session: Session, project: Project) -> ProjectPrivacyResponse:
         unprotected_runs=_unprotected(session, project) if privacy.health else 0,
         sources=previews,
         legal_bases=[LegalBasisKindResponse(kind=kind, **info) for kind, info in LEGAL_BASES.items()],
+        egress=[
+            {
+                "agent": call.agent,
+                "provider": call.provider,
+                "model": call.model,
+                "sent_chars": call.sent_chars,
+                "withheld": call.withheld or {},
+                "ok": call.ok,
+                "at": call.created_at.isoformat() if call.created_at else None,
+            }
+            for call in calls
+        ],
+        egress_total=int(total or 0),
     )
 
 

@@ -1130,12 +1130,18 @@ async def suggest_gold(
             )
         described = gold_module.describe_relations(relations)
 
+    from core.ai_advisor import resolve_model
     from core.ai_gold import GoldSuggestionError, suggest_definition
+    from core.llm_egress import egress_for, record
 
+    egress = egress_for(session, project_id, "gold.suggest")
     try:
-        suggestion = suggest_definition(described, body.question)
+        suggestion = suggest_definition(described, body.question, egress=egress)
     except GoldSuggestionError as exc:
+        if egress.sent_chars:
+            record(session, egress, get_settings().ai_advisor_provider, resolve_model(), ok=False)
         return GoldSuggestResponse(error=str(exc))
+    record(session, egress, get_settings().ai_advisor_provider, resolve_model())
 
     return GoldSuggestResponse(sql=suggestion.sql, explanation=suggestion.explanation)
 
@@ -1266,8 +1272,10 @@ def build_dashboard(
 
     earlier = _conversation(session, project_id)
 
+    from core.llm_egress import egress_for, record
     from core.superset_agent import DashboardRequestError, build_dashboard as run_agent
 
+    egress = egress_for(session, project_id, "dashboard")
     try:
         run = run_agent(
             body.prompt,
@@ -1281,11 +1289,15 @@ def build_dashboard(
             # have been replayed into every prompt after it.
             history=[(turn.prompt, turn.summary) for turn in earlier if turn.calls],
             settings=settings,
+            egress=egress,
         )
     except DashboardRequestError as exc:
+        if egress.sent_chars:
+            record(session, egress, settings.dashboard_agent_provider, settings.dashboard_agent_model, ok=False)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
+    record(session, egress, settings.dashboard_agent_provider, settings.dashboard_agent_model)
 
     # Recorded even when the loop was cut off. Whatever it managed to do is in
     # Superset either way, and a turn that vanished because it did not finish

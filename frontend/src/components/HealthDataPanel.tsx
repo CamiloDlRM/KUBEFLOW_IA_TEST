@@ -257,6 +257,8 @@ export default function HealthDataPanel({ projectId }: { projectId: number }) {
 
         {health && <Protection data={data} pending={protect.isPending} onProtect={() => protect.mutate()} />}
 
+        {health && <ExternalCalls data={data} />}
+
         {data.sources.some((source) => source.columns.length > 0) && (
           <div>
             <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -342,3 +344,70 @@ function Protection({
     </div>
   );
 }
+
+const AGENT_LABEL: Record<string, string> = {
+  'advisor.analysis': 'AI advisor — diagnosis',
+  'advisor.apply': 'AI advisor — applying suggestions',
+  'gold.suggest': 'Gold definition suggestion',
+  dashboard: 'Dashboard agent',
+};
+
+const WITHHELD_LABEL: Record<string, string> = {
+  cell_outputs: 'cell outputs',
+  tool_data: 'data in tool answers',
+  email: 'e-mails',
+  phone: 'phones',
+  ssn: 'SSNs',
+  document: 'document numbers',
+  pseudonym: 'pseudonyms',
+};
+
+/**
+ * What the agents sent to external AI providers. Structure leaves — code,
+ * metrics, errors, column names — and data does not; this is the record of it.
+ */
+function ExternalCalls({ data }: { data: ProjectPrivacy }) {
+  const calls = data.egress ?? [];
+  return (
+    <div>
+      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        Calls to external AI providers
+      </h3>
+      <p className="mb-2 text-xs text-slate-400">
+        The agents receive code, metrics, errors and column names. Cell outputs and rows are withheld, and anything
+        shaped like an identifier is removed before a call leaves.
+      </p>
+      {calls.length === 0 ? (
+        <p className="text-xs text-slate-500">No calls yet.</p>
+      ) : (
+        <ul aria-label="External AI calls" className="divide-y divide-slate-800 rounded-lg border border-slate-800 text-xs">
+          {calls.map((call, index) => {
+            const withheld = Object.entries(call.withheld ?? {}).filter(([, count]) => count > 0);
+            return (
+              <li key={index} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
+                <span className="text-slate-200">{AGENT_LABEL[call.agent] ?? call.agent}</span>
+                <span className="font-display text-slate-500">
+                  {call.provider}:{call.model}
+                </span>
+                <span className="text-slate-500">{call.sent_chars.toLocaleString()} characters sent</span>
+                <span className={withheld.length ? 'text-emerald-300' : 'text-slate-500'}>
+                  {withheld.length
+                    ? 'withheld: ' + withheld.map(([kind, count]) => `${count} ${WITHHELD_LABEL[kind] ?? kind}`).join(', ')
+                    : 'nothing to withhold'}
+                </span>
+                {!call.ok && <span className="text-amber-300">call failed</span>}
+                {call.at && <span className="ml-auto text-slate-600">{new Date(call.at).toLocaleString()}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {(data.egress_total ?? 0) > calls.length && (
+        <p className="mt-1 text-xs text-slate-500">
+          Showing the latest {calls.length} of {data.egress_total?.toLocaleString()}.
+        </p>
+      )}
+    </div>
+  );
+}
+

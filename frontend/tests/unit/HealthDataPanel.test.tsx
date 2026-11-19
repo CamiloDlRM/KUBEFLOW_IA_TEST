@@ -141,6 +141,39 @@ describe('HealthDataPanel', () => {
     expect(await screen.findByText(/Protecting the stored data failed: bronze unreachable/)).toBeInTheDocument();
   });
 
+  it('lists the calls to external AI providers and what was withheld', async () => {
+    getProjectPrivacy.mockResolvedValue(
+      privacy({
+        ...HEALTH,
+        egress_total: 1,
+        egress: [
+          {
+            agent: 'advisor.analysis',
+            provider: 'anthropic',
+            model: 'claude',
+            sent_chars: 5120,
+            withheld: { cell_outputs: 1, email: 2 },
+            ok: true,
+            at: '2026-11-19T10:00:00+00:00',
+          },
+        ],
+      }),
+    );
+    renderPanel();
+
+    const calls = await screen.findByRole('list', { name: 'External AI calls' });
+    expect(calls).toHaveTextContent('AI advisor — diagnosis');
+    expect(calls).toHaveTextContent('withheld: 1 cell outputs, 2 e-mails');
+  });
+
+  it('shows no call log for a general project', async () => {
+    getProjectPrivacy.mockResolvedValue(privacy());
+    renderPanel();
+
+    await screen.findByText('General data');
+    expect(screen.queryByText('Calls to external AI providers')).not.toBeInTheDocument();
+  });
+
   it('reports a finished protection', async () => {
     getProjectPrivacy.mockResolvedValue(
       privacy({ ...HEALTH, protection: { status: 'success', runs: 4, purged: 6, gold_version: 9 } }),

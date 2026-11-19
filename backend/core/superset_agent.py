@@ -575,6 +575,7 @@ def build_dashboard(
     model: str = "",
     generate: Callable[..., dict[str, Any]] | None = None,
     client: MCPClient | None = None,
+    egress: Any = None,
 ) -> DashboardRun:
     """Ask the model to build a dashboard, and let it use Superset to do it.
 
@@ -598,7 +599,14 @@ def build_dashboard(
             directly — and it can be, because the model has the tools.
         generate: Seam for tests. Defaults to calling Gemini.
         client: Seam for tests. Defaults to opening one against ``mcp_url``.
+        egress: The way out (:class:`core.llm_egress.Egress`). In a project
+            that holds health data the tool set is the default one whatever
+            the deployment configures — no tool that returns rows can be
+            switched on — and every tool answer has its data removed before
+            the model reads it.
     """
+    health = bool(egress is not None and egress.health)
+    text = egress.outgoing if egress is not None else (lambda value: value)
     settings = settings or get_settings()
     provider = settings.dashboard_agent_provider
     # Checked whatever the caller injects: a missing credential is a fact
@@ -630,12 +638,12 @@ def build_dashboard(
                 "Superset's MCP server offered no tools, so there is nothing "
                 "the model can do with it."
             )
-        declarations = _declarations(_select(tools, settings.dashboard_agent_tools))
+        declarations = _declarations(_select(tools, "" if health else settings.dashboard_agent_tools))
 
         contents: list[dict[str, Any]] = []
         for earlier, answer in history or []:
-            contents.append({"role": "user", "parts": [{"text": earlier}]})
-            contents.append({"role": "model", "parts": [{"text": answer}]})
+            contents.append({"role": "user", "parts": [{"text": text(earlier)}]})
+            contents.append({"role": "model", "parts": [{"text": text(answer)}]})
         # The schema goes on the current message rather than the first, so a
         # gold table rebuilt between two prompts is described as it is now.
         contents.append(
@@ -643,7 +651,7 @@ def build_dashboard(
                 "role": "user",
                 "parts": [
                     {
-                        "text": (
+                        "text": text(
                             f"The gold table available to you:\n{schema}\n\n"
                             f"What to build:\n{request}"
                         )
@@ -688,7 +696,11 @@ def build_dashboard(
                     {
                         "functionResponse": {
                             "name": name,
-                            "response": {"result": _for_the_model(name, result)},
+                            "response": {
+                                "result": egress.tool_result(_for_the_model(name, result))
+                                if egress is not None
+                                else _for_the_model(name, result)
+                            },
                         }
                     }
                 )

@@ -283,6 +283,44 @@ def _deploy_decision(
     return decide(policy, metrics, serving, serving_unknown=serving_unknown)
 
 
+def _advisor_egress(engine: Any, pipeline_id: str, agent: str) -> tuple[Any, list[str]]:
+    """The way out for the advisor working on a run, and the data's column names.
+
+    In a health project the model gets the gold table's column names in
+    place of the rows it would otherwise see printed. Elsewhere, nothing
+    changes.
+    """
+    from sqlmodel import Session, select
+
+    from core.llm_egress import egress_for
+    from models.schemas import GoldTable, Pipeline
+
+    with Session(engine) as session:
+        pipeline = session.get(Pipeline, pipeline_id)
+        project_id = pipeline.project_id if pipeline else None
+        egress = egress_for(session, project_id, agent)
+        columns: list[str] = []
+        if egress.health and project_id is not None:
+            gold = session.exec(select(GoldTable).where(GoldTable.project_id == project_id)).first()
+            columns = list(gold.columns or []) if gold else []
+    return egress, columns
+
+
+def _record_egress(engine: Any, egress: Any) -> None:
+    """Record a health project's call to the advisor's provider."""
+    if egress is None or not egress.health:
+        return
+    from sqlmodel import Session
+
+    from core.ai_advisor import resolve_model
+    from core.config import get_settings
+    from core.llm_egress import record
+
+    current = get_settings()
+    with Session(engine) as session:
+        record(session, egress, current.ai_advisor_provider, resolve_model(current))
+
+
 def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:
     """Fetch a run's training notebook from GitHub at a given ref."""
     import base64
@@ -426,14 +464,20 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
             pipeline_data["commit_sha"] or pipeline_data["branch"],
         )
 
-        report = generate_insight(
-            notebook=notebook,
-            status=pipeline_data["status"],
-            metrics=pipeline_data["metrics"],
-            phases=pipeline_data["phases"],
-            history=history_data,
-            commit_sha=pipeline_data["commit_sha"] or "HEAD",
-        )
+        egress, data_columns = _advisor_egress(engine, pipeline_id, "advisor.analysis")
+        try:
+            report = generate_insight(
+                notebook=notebook,
+                status=pipeline_data["status"],
+                metrics=pipeline_data["metrics"],
+                phases=pipeline_data["phases"],
+                history=history_data,
+                commit_sha=pipeline_data["commit_sha"] or "HEAD",
+                egress=egress,
+                data_columns=data_columns,
+            )
+        finally:
+            _record_egress(engine, egress)
 
         _update_insight(
             status="ready",
@@ -529,9 +573,13 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
         notebook = _download_notebook_for_analysis(repo, notebook_path, commit_ref)
 
         # 2. LLM applies the report's recommendations
-        patched, commit_message = generate_improved_notebook(
-            notebook=notebook, report=report
-        )
+        egress, _ = _advisor_egress(engine, pipeline_id, "advisor.apply")
+        try:
+            patched, commit_message = generate_improved_notebook(
+                notebook=notebook, report=report, egress=egress
+            )
+        finally:
+            _record_egress(engine, egress)
 
         # 3. Create/reset the AI branch from the run's base branch and push
         base_sha = get_branch_head(repo.github_url, token, base_branch)

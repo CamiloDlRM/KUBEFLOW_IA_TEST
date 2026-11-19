@@ -475,6 +475,27 @@ class IngestionRun(SQLModel, table=True):
     error: str = SQLField(default="")
 
 
+class LlmEgress(SQLModel, table=True):
+    """One call to a language model from a project that holds health data.
+
+    Kept so the rule "structure leaves, data does not" can be shown to have
+    held: which agent called which provider, how much it sent, and what was
+    withheld on the way. General projects are not recorded.
+    """
+
+    __tablename__ = "llm_egress"
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    project_id: int | None = SQLField(default=None, foreign_key="projects.id", index=True)
+    agent: str = SQLField(default="")
+    provider: str = SQLField(default="")
+    model: str = SQLField(default="")
+    sent_chars: int = SQLField(default=0)
+    withheld: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    ok: bool = SQLField(default=True)
+    created_at: datetime = SQLField(default_factory=_utcnow)
+
+
 class GoldTable(SQLModel, table=True):
     """The modelled table a project publishes, defined by a query over silver.
 
@@ -1203,6 +1224,9 @@ class ProjectPrivacyResponse(BaseModel):
     unprotected_runs: int = 0
     sources: list[PrivacySourceResponse] = Field(default_factory=list)
     legal_bases: list[LegalBasisKindResponse] = Field(default_factory=list)
+    #: The latest calls to language models, newest first (health projects only).
+    egress: list[dict[str, Any]] = Field(default_factory=list)
+    egress_total: int = 0
 
 
 class DataSourceCreateRequest(BaseModel):
