@@ -240,6 +240,14 @@ class TestNotebookPatching:
         # Tags preserved
         assert patched["cells"][2]["metadata"]["tags"] == ["mlops:training"]
 
+    def test_applying_fixes_the_diagnosis_and_nothing_else(self):
+        """The validation's first round: applying every recommendation at once broke half the fixes."""
+        from core.ai_advisor import APPLY_SYSTEM_PROMPT
+
+        assert "smallest change" in APPLY_SYSTEM_PROMPT
+        assert "do NOT implement it here" in APPLY_SYSTEM_PROMPT
+        assert "Do not import any" in APPLY_SYSTEM_PROMPT
+
     def test_the_tag_wins_over_a_miscounted_index(self, sample_notebook):
         """Seen in the validation: the index of the cell before, counted without the markdown."""
         from core.ai_advisor import apply_cells_patch

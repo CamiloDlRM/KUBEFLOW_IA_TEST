@@ -336,10 +336,23 @@ APPLY_SYSTEM_PROMPT = """\
 You are an expert ML engineer. You receive a training notebook (its code cells, \
 each with an index) and a review report with improvement recommendations.
 
-Apply the recommendations from the report directly to the notebook code. Keep \
-the notebook's overall structure and the `mlops:*` cell tags working: do NOT \
-remove or rename MODEL_NAME, VERSION, MODEL_OUTPUT_PATH, or the joblib.dump \
-export. Only change what the report justifies.
+Fix the problem the report diagnoses, with the smallest change that fixes it:
+- If the run FAILED, fix the error that made it fail.
+- If the run succeeded, fix the most important defect in the report's \
+"Diagnostico" section (for example data leakage, evaluating on the training \
+data, a wrong metric, labels misaligned with the features).
+
+Everything else in the report (new features, other models, tuning, refactors, \
+extra logging) stays a suggestion for the developer: do NOT implement it here. \
+A correction that also adds improvements is a correction that can break, and \
+then nobody can tell which change did.
+
+Keep the notebook's overall structure and the `mlops:*` cell tags working: do \
+NOT remove or rename MODEL_NAME, VERSION, MODEL_OUTPUT_PATH, or the joblib.dump \
+export, and do not change how the notebook uses MLflow, the parameters cell or \
+the export cell unless the diagnosed problem is in them. Do not import any \
+library the notebook does not already import: only those are known to be \
+installed.
 
 Respond ONLY with a JSON object, no prose and no Markdown fences, with exactly \
 this shape:
