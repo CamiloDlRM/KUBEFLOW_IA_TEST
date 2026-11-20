@@ -177,7 +177,8 @@ def recipient(provider: str, base_url: str = "") -> str:
 def advisor_recipient(settings: Any) -> str:
     """Where the advisor's calls go (also the gold suggestion's)."""
     provider = settings.ai_advisor_provider
-    return recipient(provider, settings.ollama_base_url if provider == "ollama" else "")
+    base_url = {"ollama": settings.ollama_base_url, "openai": settings.ai_advisor_base_url}.get(provider, "")
+    return recipient(provider, base_url)
 
 
 def dashboard_recipient(settings: Any) -> str:

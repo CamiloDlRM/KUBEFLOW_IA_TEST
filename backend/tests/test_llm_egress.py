@@ -180,6 +180,11 @@ class TestTheRecordSaysWhoReceivedTheCall:
 
         assert advisor_recipient(settings) == "ollama (host.docker.internal)"
 
+    def test_an_openai_compatible_advisor_is_named_by_its_host(self):
+        settings = AppSettings(ai_advisor_provider="openai", ai_advisor_base_url="https://api.groq.com/openai/v1")
+
+        assert advisor_recipient(settings) == "openai (api.groq.com)"
+
     def test_without_a_url_the_provider_stands_alone(self):
         assert recipient("openai") == "openai"
 

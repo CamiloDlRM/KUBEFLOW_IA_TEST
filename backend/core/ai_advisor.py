@@ -34,6 +34,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
     "gemini": "gemini-pro-latest",
     "ollama": "llama3.1",
+    "openai": "openai/gpt-oss-120b",
 }
 
 SYSTEM_PROMPT = """\
@@ -96,6 +97,8 @@ def advisor_configured(settings: AppSettings | None = None) -> bool:
         return bool(settings.gemini_api_key)
     if provider == "ollama":
         return bool(settings.ollama_base_url)
+    if provider == "openai":
+        return bool(settings.ai_advisor_base_url and settings.ai_advisor_api_key)
     return False
 
 
@@ -256,10 +259,43 @@ def _generate_ollama(
     return text
 
 
+def _generate_openai(
+    settings: AppSettings, model: str, prompt: str, system: str = SYSTEM_PROMPT
+) -> str:
+    """Anything serving the OpenAI chat API: Groq, OpenRouter, a local server.
+
+    Moving between them is the base URL and the model name, the same as for
+    the dashboard agent (DASHBOARD_AGENT_PROVIDER=openai).
+    """
+    import httpx
+
+    base = settings.ai_advisor_base_url.rstrip("/")
+    resp = httpx.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {settings.ai_advisor_api_key}"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 16000,
+        },
+        timeout=300,
+    )
+    resp.raise_for_status()
+    choices = resp.json().get("choices") or []
+    text = (choices[0].get("message", {}).get("content") or "") if choices else ""
+    if not text.strip():
+        raise RuntimeError("The OpenAI-compatible provider returned an empty response.")
+    return text
+
+
 _BACKENDS = {
     "anthropic": _generate_anthropic,
     "gemini": _generate_gemini,
     "ollama": _generate_ollama,
+    "openai": _generate_openai,
 }
 
 
