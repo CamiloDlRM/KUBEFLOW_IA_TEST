@@ -23,10 +23,12 @@ was. In a health project it:
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlparse
 
@@ -99,6 +101,7 @@ class Egress:
         """The final text of a call: scrubbed, and counted."""
         prompt = self.text(prompt)
         self.sent_chars += len(prompt or "")
+        capture(self, prompt)
         return prompt
 
     def phases(self, phases: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -133,6 +136,30 @@ class Egress:
 
     def summary(self) -> dict[str, Any]:
         return {"sent_chars": self.sent_chars, "withheld": dict(self.withheld)}
+
+
+#: Set only in a validation environment: a directory where every outgoing
+#: text is appended, so a check can search what actually left rather than
+#: trust the counters. Unset (always, in production) it does nothing.
+CAPTURE_ENV: Final[str] = "LLM_EGRESS_CAPTURE_DIR"
+
+
+def capture(egress: Egress, text: str) -> None:
+    """Append ``text`` to the capture file when capture is switched on."""
+    directory = os.environ.get(CAPTURE_ENV)
+    if not directory:
+        return
+    path = Path(directory) / f"egress-{datetime.now(timezone.utc):%Y%m%d}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "agent": egress.agent,
+        "project_id": egress.project_id,
+        "health": egress.health,
+        "text": text,
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def recipient(provider: str, base_url: str = "") -> str:

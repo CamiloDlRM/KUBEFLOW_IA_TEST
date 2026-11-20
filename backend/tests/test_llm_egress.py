@@ -147,6 +147,24 @@ class TestAHealthProject:
         assert egress.health and columns == ["age", "target"]
 
 
+class TestTheValidationCapture:
+    def test_off_unless_switched_on(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_EGRESS_CAPTURE_DIR", raising=False)
+
+        Egress(agent="advisor.analysis", health=True).outgoing("prompt")
+
+        assert not list(tmp_path.iterdir())
+
+    def test_on_it_keeps_exactly_what_left(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LLM_EGRESS_CAPTURE_DIR", str(tmp_path))
+
+        sent = Egress(agent="advisor.analysis", project_id=7, health=True).outgoing(f"write to {SENTINEL}")
+
+        lines = [json.loads(line) for file in tmp_path.iterdir() for line in file.read_text().splitlines()]
+        assert [(line["agent"], line["project_id"], line["text"]) for line in lines] == [("advisor.analysis", 7, sent)]
+        assert "999-12-3456" not in lines[0]["text"]
+
+
 class TestTheRecordSaysWhoReceivedTheCall:
     def test_a_named_provider_is_enough(self):
         assert advisor_recipient(AppSettings(ai_advisor_provider="anthropic")) == "anthropic"
