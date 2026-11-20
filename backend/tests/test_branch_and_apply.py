@@ -240,6 +240,25 @@ class TestNotebookPatching:
         # Tags preserved
         assert patched["cells"][2]["metadata"]["tags"] == ["mlops:training"]
 
+    def test_the_tag_wins_over_a_miscounted_index(self, sample_notebook):
+        """Seen in the validation: the index of the cell before, counted without the markdown."""
+        from core.ai_advisor import apply_cells_patch
+
+        patched = apply_cells_patch(
+            sample_notebook,
+            [{"index": 1, "tag": "mlops:training", "source": "model = RandomForestClassifier()\n"}],
+        )
+
+        assert "".join(patched["cells"][2]["source"]).startswith("model = RandomForest")
+        assert patched["cells"][1] == sample_notebook["cells"][1], "the cell the index named is untouched"
+
+    def test_without_a_tag_the_index_is_used(self, sample_notebook):
+        from core.ai_advisor import apply_cells_patch
+
+        patched = apply_cells_patch(sample_notebook, [{"index": 2, "tag": "", "source": "x = 1\n"}])
+
+        assert "".join(patched["cells"][2]["source"]) == "x = 1\n"
+
     def test_apply_cells_patch_rejects_bad_index(self, sample_notebook):
         import pytest
 

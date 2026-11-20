@@ -347,12 +347,13 @@ this shape:
 {
   "commit_message": "<one-line conventional commit message in Spanish>",
   "cells": [
-    {"index": <int, index of an existing code cell>, "source": "<the FULL new source code of that cell>"}
+    {"index": <int, the number in the cell's "# --- Cell N" header>, "tag": "<the cell's mlops:* tag from that header, or an empty string if it has none>", "source": "<the FULL new source code of that cell>"}
   ]
 }
 
 Rules:
 - Include only the cells you actually changed.
+- Copy "index" and "tag" from the header of the cell you are replacing.
 - "source" must be the complete replacement source for the cell, not a diff.
 - The code must be valid Python that runs top-to-bottom in the notebook.\
 """
@@ -376,7 +377,16 @@ def _extract_json(text: str) -> dict[str, Any]:
 def apply_cells_patch(
     notebook: dict[str, Any], cells: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Return a copy of the notebook with the given cell sources replaced."""
+    """Return a copy of the notebook with the given cell sources replaced.
+
+    A change names its cell twice: by index and by ``mlops:*`` tag. The tag
+    wins. Indices count every cell, markdown included, and a model that
+    counts only the code cells lands one off: during the validation one
+    rewrote the data cell with the preprocessing code, which deleted the
+    target column's definition and left the fault where it was. A tag is
+    unique and copied verbatim from the cell's header, so it cannot be
+    miscounted.
+    """
     import copy
 
     patched = copy.deepcopy(notebook)
@@ -384,6 +394,15 @@ def apply_cells_patch(
     for change in cells:
         index = change.get("index")
         source = change.get("source", "")
+        tag = (change.get("tag") or "").strip()
+        if tag:
+            tagged = [
+                position
+                for position, cell in enumerate(nb_cells)
+                if cell.get("cell_type") == "code" and tag in cell.get("metadata", {}).get("tags", [])
+            ]
+            if len(tagged) == 1:
+                index = tagged[0]
         if not isinstance(index, int) or index < 0 or index >= len(nb_cells):
             raise ValueError(f"Patch references invalid cell index: {index}")
         if nb_cells[index].get("cell_type") != "code":
