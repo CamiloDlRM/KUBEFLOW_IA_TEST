@@ -11,7 +11,10 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e:mock": "playwright test --project=mock",
+    "test:e2e:smoke": "playwright test --project=smoke",
+    "typecheck:e2e": "tsc --noEmit -p tests/e2e/tsconfig.json"
   },
   "dependencies": {
     "@superset-ui/embedded-sdk": "^0.4.0",
@@ -33,6 +36,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

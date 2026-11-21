@@ -67,3 +67,8 @@ AGENTS.md
 /DOCUMENTACION
 skills-lock.json
 
+
+# Playwright e2e outputs
+frontend/playwright-report/
+frontend/test-results/
+frontend/playwright/.auth/
