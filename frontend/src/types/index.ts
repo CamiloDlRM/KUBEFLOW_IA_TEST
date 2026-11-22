@@ -307,6 +307,8 @@ export interface ModelCard {
   /** What each answer means, when the notebook said. */
   class_notes?: Record<string, string>;
   note?: string;
+  /** Set when the model answers nearly all its training rows alike. */
+  warning?: string;
 }
 
 /** When a project's model goes to production. */

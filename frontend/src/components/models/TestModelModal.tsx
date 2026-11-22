@@ -118,6 +118,18 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
             </p>
           )}
 
+          {described && card.warning && (
+            // Above the guide, not inside it: the guide below still draws
+            // ranges and strips, and they look right whatever the model answers.
+            <p
+              role="alert"
+              className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200"
+            >
+              <TriangleAlert size={13} className="mr-1 inline align-[-2px]" aria-hidden="true" />
+              {card.warning}
+            </p>
+          )}
+
           {described && (
             <section aria-label="Inputs" className="space-y-3">
               <div className="flex flex-wrap items-baseline justify-between gap-2">

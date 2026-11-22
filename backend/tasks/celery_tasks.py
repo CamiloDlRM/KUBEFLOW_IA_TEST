@@ -224,7 +224,8 @@ def _build_model_card(
         client.log_dict(mlflow_run_id, card, "model_card.json")
     except Exception as exc:  # noqa: BLE001
         logger.warning("pipeline.model_card.not_logged", pipeline_id=pipeline_id, error=str(exc))
-    return f"Described {len(card.get('inputs', []))} input(s) for the test page."
+    described = f"Described {len(card.get('inputs', []))} input(s) for the test page."
+    return f"{described} Warning: {card['warning']}" if card.get("warning") else described
 
 
 def _judged_line(project_id: int | None, metrics: dict[str, Any]) -> str:

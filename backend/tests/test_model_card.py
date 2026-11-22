@@ -139,6 +139,55 @@ class TestWhatCanGoWrong:
         json.dumps(describe(ThresholdClassifier(), features))
 
 
+class ScaledThresholdClassifier(ThresholdClassifier):
+    """The same thresholds, learned on standardized durations.
+
+    What a notebook produces when it scales before fit() and saves the model
+    alone: the model expects z-scores, and raw minutes are all far above its
+    last threshold.
+    """
+
+    def predict(self, frame: pd.DataFrame) -> np.ndarray:
+        z = frame["duration_minutes"].to_numpy(dtype=float)
+        return np.where(z < -0.5, "ambulatory", np.where(z < 0.5, "emergency", "inpatient"))
+
+
+class ConstantRegressor:
+    feature_names_in_ = np.array(["x"])
+
+    def predict(self, frame: pd.DataFrame) -> np.ndarray:
+        return np.full(len(frame), 7.0)
+
+
+class TestOneAnswerForEverything:
+    """The card warns when the model answers its own training rows almost all alike."""
+
+    def test_a_model_that_expects_transformed_values_is_warned_about(self, features):
+        warning = describe(ScaledThresholdClassifier(), features)["warning"]
+
+        assert "inpatient" in warning
+        assert "100%" in warning
+        assert "Pipeline" in warning
+
+    def test_a_model_that_tells_its_rows_apart_is_not(self, features):
+        assert describe(ThresholdClassifier(), features)["warning"] == ""
+
+    def test_a_regressor_with_one_answer_is_warned_about(self):
+        features = pd.DataFrame({"x": np.arange(100, dtype=float)})
+
+        assert "7.0" in describe(ConstantRegressor(), features)["warning"]
+        assert describe(DoublingRegressor(), features)["warning"] == ""
+
+    def test_a_classifier_that_knows_one_class_is_not(self, features):
+        class OneClass(ScaledThresholdClassifier):
+            classes_ = np.array(["inpatient"])
+
+        assert describe(OneClass(), features)["warning"] == ""
+
+    def test_too_few_rows_say_nothing(self, features):
+        assert describe(ScaledThresholdClassifier(), features.head(10))["warning"] == ""
+
+
 class TestModelsCarryTheirCard:
     def test_a_deployed_model_lists_the_card_of_the_run_that_trained_it(
         self, test_app, db_session
