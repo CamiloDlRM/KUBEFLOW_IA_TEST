@@ -1,0 +1,37 @@
+# Encryption at rest for everything the platform stores in MinIO (SSE-S3).
+#
+# Opt-in. The base docker-compose.yml is unchanged; this file adds what turns
+# encryption on, and is layered on top of it:
+#
+#   1. Generate a key ONCE and keep a copy somewhere safe. Losing it loses
+#      every object encrypted with it — there is no recovery.
+#
+#        echo "MINIO_KMS_SECRET_KEY=mlops-key:$(openssl rand -base64 32)" >> .env
+#
+#   2. Start the stack with both files:
+#
+#        docker compose -f docker-compose.yml -f docker-compose.encryption.yml up -d
+#
+# From then on every upload asks MinIO to encrypt the object, and on start-up
+# the backend makes encryption the default of every platform bucket. Objects
+# stored before that stay as they were until rewritten: for a health project,
+# its "Health data" panel shows how many are encrypted and can encrypt the
+# rest. Readers (DuckDB, Superset, MLflow, the model server) are unaffected —
+# MinIO decrypts on read.
+#
+# MINIO_KMS_SECRET_KEY is MinIO's single-key KMS, which is meant for small
+# deployments like this one. A production deployment would use MinIO KES
+# backed by a real key manager instead.
+
+services:
+  minio:
+    environment:
+      - MINIO_KMS_SECRET_KEY=${MINIO_KMS_SECRET_KEY:?set MINIO_KMS_SECRET_KEY in .env (see the header of docker-compose.encryption.yml)}
+
+  backend:
+    environment:
+      - STORAGE_ENCRYPTION=true
+
+  worker:
+    environment:
+      - STORAGE_ENCRYPTION=true

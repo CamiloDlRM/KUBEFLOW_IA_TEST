@@ -93,6 +93,7 @@ def suggest_definition(
     question: str,
     *,
     settings: AppSettings | None = None,
+    egress: Any = None,
 ) -> GoldSuggestion:
     """Ask the configured provider for a gold definition.
 
@@ -120,6 +121,10 @@ def suggest_definition(
 
     model = resolve_model(settings)
     prompt = build_prompt(relations, question)
+    if egress is not None:
+        # The schema has no values in it already; this is the second net, and
+        # the count that goes on the record.
+        prompt = egress.outgoing(prompt)
     log = logger.bind(provider=settings.ai_advisor_provider, model=model)
 
     try:

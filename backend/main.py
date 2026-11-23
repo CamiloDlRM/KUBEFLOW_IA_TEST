@@ -113,6 +113,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     ensure_grafana_role()
 
+    # Encryption at rest, when the deployment turned it on: every platform
+    # bucket encrypts by default, including those made before it was on.
+    # Never fatal — a MinIO without its KMS key is reported, not a boot loop.
+    if settings.storage_encryption:
+        from core.storage import encrypt_platform_buckets
+
+        outcome = encrypt_platform_buckets(
+            [
+                settings.minio_bucket_datasets,
+                settings.minio_bucket_mlflow,
+                settings.minio_bucket_bronze,
+                settings.minio_bucket_silver,
+                settings.minio_bucket_gold,
+            ]
+        )
+        logger.info("storage.encryption_at_rest", buckets=outcome)
+
     yield
 
     from routers.grafana import aclose_grafana_client
@@ -260,6 +277,7 @@ from routers.datasets import router as datasets_router
 from routers.sources import router as sources_router
 from routers.medallion import router as medallion_router
 from routers.projects import router as projects_router
+from routers.privacy import router as privacy_router
 from routers.grafana import router as grafana_router
 from routers.public import router as public_router
 
@@ -273,6 +291,7 @@ app.include_router(datasets_router)
 app.include_router(sources_router)
 app.include_router(medallion_router)
 app.include_router(projects_router)
+app.include_router(privacy_router)
 app.include_router(grafana_router)
 app.include_router(public_router)
 
