@@ -268,6 +268,27 @@ export function installDefaults(api: MockApi, me: UserResponse | null): void {
     .on('GET', '/projects/:id/notebook', data.repoNotebook())
     .on('POST', '/projects/:id/run', reply(202, { status: 'queued', pipeline_id: 'pipeline-002' }))
     .on('GET', '/projects/:id/run-settings', data.runSettings())
+    .on('GET', '/projects/:id/privacy', ({ params }) =>
+      data.projectPrivacy({ project_id: Number(params.id) }),
+    )
+    .on('PUT', '/projects/:id/privacy', ({ params, body }) =>
+      data.projectPrivacy({ project_id: Number(params.id), ...(body as object) }),
+    )
+    .on('POST', '/projects/:id/privacy/protect', ({ params }) =>
+      data.projectPrivacy({ project_id: Number(params.id), protection: { status: 'queued' } }),
+    )
+    .on('POST', '/projects/:id/privacy/sources/:sourceId/purge', ({ params }) =>
+      data.projectPrivacy({ project_id: Number(params.id) }),
+    )
+    .on('GET', '/projects/:id/privacy/encryption', {
+      enabled: false,
+      buckets: {},
+      objects: 0,
+      encrypted: 0,
+      unknown: 0,
+      job: {},
+    })
+    .on('POST', '/projects/:id/privacy/encrypt', reply(409, { detail: 'Storage encryption is not configured' }))
     .on('PUT', '/projects/:id/deploy-policy', ({ body }) =>
       data.runSettings({ is_default: false, policy: { ...data.runSettings().policy, ...(body as object) } }),
     )

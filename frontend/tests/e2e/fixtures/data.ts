@@ -29,6 +29,7 @@ import type {
   PipelinePhase,
   PipelineStats,
   Project,
+  ProjectPrivacy,
   ReadyResponse,
   Repository,
   RepoNotebook,
@@ -92,6 +93,44 @@ export function project(overrides: Partial<Project> = {}): Project {
     gold_rows: 0,
     active_dataset: null,
     deployed_model: null,
+    ...overrides,
+  };
+}
+
+export function projectPrivacy(overrides: Partial<ProjectPrivacy> = {}): ProjectPrivacy {
+  return {
+    project_id: 1,
+    classification: 'general',
+    legal_basis: null,
+    policy: { pseudonymize: [], suppress: [], keep: [] },
+    protection: {},
+    unprotected_runs: 0,
+    sources: [],
+    legal_bases: [
+      {
+        kind: 'authorization',
+        title: 'Authorisation of the data subjects',
+        law: 'Ley 1581 de 2012, arts. 6(a) and 9',
+        reference_hint: 'Where the authorisations are kept.',
+      },
+      {
+        kind: 'scientific',
+        title: 'Scientific or statistical purpose, with ethics approval',
+        law: 'Ley 1581 de 2012, art. 6(e); Resolución 8430 de 1993',
+        reference_hint: 'Ethics committee approval.',
+      },
+      {
+        kind: 'synthetic',
+        title: 'Synthetic data, no real data subjects',
+        law: 'Outside Ley 1581',
+        reference_hint: 'Generator and version.',
+      },
+    ],
+    egress: [],
+    egress_total: 0,
+    access: [],
+    access_total: 0,
+    purges: [],
     ...overrides,
   };
 }
