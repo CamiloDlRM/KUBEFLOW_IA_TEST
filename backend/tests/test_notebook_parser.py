@@ -241,11 +241,18 @@ class TestUsesProjectDataset:
     def test_no_declaration_means_own_data(self):
         assert not uses_project_dataset(self._nb('MODEL_OUTPUT_PATH = "./model.joblib"\n'))
 
-    def test_a_mention_outside_the_parameters_cell_does_not_count(self):
-        assert not uses_project_dataset(self._nb('df = read(DATASET_PATH)\n', tags=("mlops:data",)))
+    def test_reading_it_without_declaring_it_counts(self):
+        # The case that left the name undefined: used in a data cell, never declared.
+        assert uses_project_dataset(self._nb('df = read(DATASET_PATH)\n', tags=("mlops:data",)))
 
-    def test_a_comment_or_usage_is_not_a_declaration(self):
-        assert not uses_project_dataset(self._nb("# DATASET_PATH is not used here\nX = DATASET_PATH\n"))
+    def test_a_comment_or_a_string_is_not_a_use(self):
+        assert not uses_project_dataset(self._nb('# DATASET_PATH is not used here\nX = "DATASET_PATH"\n'))
+
+    def test_jupyter_magics_do_not_hide_a_use(self):
+        assert uses_project_dataset(self._nb("%matplotlib inline\n!pip install x\ndf = read(DATASET_PATH)\n"))
+
+    def test_papermills_injected_cell_is_not_the_authors_use(self):
+        assert not uses_project_dataset(self._nb("DATASET_PATH = '/tmp/x'\n", tags=("injected-parameters",)))
 
     def test_the_shipped_examples_are_classified(self):
         import json

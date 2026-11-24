@@ -982,6 +982,8 @@ def run_pipeline(
                     dataset_path=dataset_path,
                 )
             elif uses_data:
+                # Declared or not, a notebook that reads DATASET_PATH trains on
+                # the gold layer, so without one there is nothing to train on.
                 message = (
                     "This notebook reads DATASET_PATH but the project has no gold "
                     "data yet. Build the gold layer in the Data Factory and run again."
@@ -994,7 +996,7 @@ def run_pipeline(
                     "dataset",
                     "success",
                     "The notebook brings its own data; nothing downloaded from MinIO "
-                    "and DATASET_PATH was not injected.",
+                    "(DATASET_PATH = None).",
                 )
                 log.info("pipeline.phase.dataset.skipped", repo_id=repo_id)
 
@@ -1071,11 +1073,11 @@ def run_pipeline(
                 "MLFLOW_RUN_ID": mlflow_run_id,
                 "TRAINING_FEATURES_PATH": features_output_path,
                 "MODEL_NOTES_PATH": notes_output_path,
+                # Always defined. A notebook that reads it, declared or not, gets
+                # the gold layer (a run without one stopped above); one that
+                # never reads it gets None and is not bothered.
+                "DATASET_PATH": dataset_path,
             }
-            # Only injected when the repository has an active dataset, so
-            # notebooks without a DATASET_PATH parameter keep working.
-            if dataset_path:
-                parameters["DATASET_PATH"] = dataset_path
 
             try:
                 pm.execute_notebook(
