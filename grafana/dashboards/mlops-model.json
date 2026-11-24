@@ -68,7 +68,7 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
+          "fields": "/^version$/",
           "values": false
         },
         "orientation": "auto",

@@ -476,6 +476,21 @@ class TestAdminsSeeAnyModel:
             authorize_query(_payload(_render(raw, "prueba-3")), MEMBER)
 
 
+class TestActiveVersionPanel:
+    """The panel's one column is text ('v3'), and a Stat panel shows only numbers by default.
+
+    Seen in production: "Active version" showed "No data" to admins and owners
+    alike although its query returned a row. Grafana dropped the text column.
+    """
+
+    def test_it_shows_its_version_column(self):
+        document = json.loads((DASHBOARDS_DIR / "mlops-model.json").read_text(encoding="utf-8"))
+        panel = next(p for p in document["panels"] if p["title"] == "Active version")
+        assert panel["type"] == "stat"
+        assert 'AS "version"' in panel["targets"][0]["rawSql"]
+        assert re.fullmatch(panel["options"]["reduceOptions"]["fields"].strip("/"), "version")
+
+
 class TestResourcesDashboard:
     """CPU and memory of every container is the platform's, not a tenant's."""
 
