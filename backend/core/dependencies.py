@@ -222,9 +222,25 @@ def install_target() -> str | None:
     return os.environ.get("PYTHONUSERBASE") or None
 
 
+def _notebook_site() -> str:
+    """The site-packages that installs for notebooks go into.
+
+    Worked out from ``PYTHONUSERBASE`` as it is now, not from the user site
+    Python fixed when it started: the two agree in the containers, but where
+    the platform's own packages were installed with ``pip --user`` (CI does
+    this) the start-up user site holds them, and reading it would leave them
+    out of the constraints and let pip change them.
+    """
+    base = install_target()
+    if not base:
+        return site.getusersitepackages()
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return str(Path(base) / "lib" / version / "site-packages")
+
+
 def _platform_constraints() -> str:
     """Every package the platform ships, pinned: what pip may not change."""
-    user_site = site.getusersitepackages()
+    user_site = _notebook_site()
     lines = []
     for dist in importlib.metadata.distributions():
         name = dist.metadata["Name"]

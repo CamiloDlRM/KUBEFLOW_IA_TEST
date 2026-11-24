@@ -273,7 +273,8 @@ export function installDefaults(api: MockApi, me: UserResponse | null): void {
     )
     .on('GET', '/projects/:id/pipeline-input', data.pipelineInput())
     .on('PUT', '/projects/:id/pipeline-input', ({ body }) => data.pipelineInput({ choice: body as object }))
-    .on('GET', '/projects/:id/medallion/inputs', data.pipelineInputOptions());
+    .on('GET', '/projects/:id/medallion/inputs', data.pipelineInputOptions())
+    .on('GET', '/projects/:id/privacy', ({ params }) => data.projectPrivacy({ project_id: Number(params.id) }));
 
   // Datasets and uploads.
   api
