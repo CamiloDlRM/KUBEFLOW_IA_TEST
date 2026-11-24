@@ -350,6 +350,125 @@ def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> 
     return json.loads(base64.b64decode(resp.json()["content"]))
 
 
+def _github_contents(owner: str, repo_name: str, path: str, ref: str, headers: dict[str, str]) -> Any:
+    """A file or folder listing from the GitHub contents API; None when absent."""
+    import httpx
+
+    url = f"https://api.github.com/repos/{owner}/{repo_name}/contents" + (f"/{path}" if path else "")
+    resp = httpx.get(url, headers=headers, params={"ref": ref}, timeout=30, follow_redirects=True)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _prepare_dependencies(
+    notebook: dict[str, Any],
+    notebook_path: str,
+    owner: str,
+    repo_name: str,
+    ref: str,
+    headers: dict[str, str],
+    phase: Any,
+) -> dict[str, Any]:
+    """Install what the notebook imports and the platform lacks.
+
+    Reads the notebook's folder in the repository for two things: a
+    ``requirements.txt`` (there, else at the root), which only gives versions,
+    and the ``.py`` files and folders beside it, which are the repository's
+    own modules and not packages to install. Neither is required.
+
+    Returns what the run trains with, recorded later with the model.
+    """
+    import base64
+
+    from core import dependencies
+
+    folder = notebook_path.rpartition("/")[0]
+    lines: list[str] = []
+    local_names: set[str] = set()
+    requirements_text: str | None = None
+    requirements_at: str | None = None
+    try:
+        listing = _github_contents(owner, repo_name, folder, ref, headers) or []
+        for entry in listing if isinstance(listing, list) else []:
+            name = entry.get("name", "")
+            if entry.get("type") == "dir":
+                local_names.add(name)
+            elif name.endswith(".py"):
+                local_names.add(name[:-3])
+        for path in dict.fromkeys([f"{folder}/requirements.txt" if folder else "requirements.txt", "requirements.txt"]):
+            found = _github_contents(owner, repo_name, path, ref, headers)
+            if isinstance(found, dict) and found.get("content"):
+                requirements_text = base64.b64decode(found["content"]).decode("utf-8", "replace")
+                requirements_at = path
+                break
+    except Exception as exc:  # noqa: BLE001 - the imports alone are still enough
+        lines.append(f"Could not read the notebook's folder in the repository ({exc}); going by the imports alone.")
+
+    lines.append(
+        f"requirements.txt found at {requirements_at}; used only for the versions of what the notebook imports."
+        if requirements_at
+        else "No requirements.txt; going by the notebook's imports, newest versions."
+    )
+    imports = dependencies.notebook_imports(notebook)
+    the_plan = dependencies.plan(
+        imports, dependencies.parse_requirements(requirements_text or ""), local_names
+    )
+    try:
+        lines += dependencies.install(the_plan)
+    except dependencies.DependencyError as exc:
+        phase("dependencies", "failed", "\n".join([*lines, str(exc)]))
+        raise
+    lines += the_plan.notes
+    if not the_plan.installs:
+        lines.append("Every library the notebook imports is already on the platform.")
+    phase("dependencies", "success", "\n".join(lines))
+    return {"versions": the_plan.versions, "notes": the_plan.notes, "requirements": requirements_at}
+
+
+def _record_environment(
+    client: Any,
+    mlflow_run_id: str,
+    model_path: str,
+    training_env: dict[str, Any],
+    tmpdir: str,
+) -> str:
+    """Save, next to the model, the library versions it was trained with.
+
+    The model server reads it when a load fails, to say which library and
+    version are missing instead of a bare error. Best effort: a model whose
+    environment cannot be worked out still registers.
+    """
+    import platform
+
+    from core.dependencies import model_environment
+
+    try:
+        packages = model_environment(model_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pipeline.environment.unknown", error=str(exc))
+        return ""
+    path = os.path.join(tmpdir, "environment.json")
+    with open(path, "w") as handle:
+        json.dump(
+            {
+                "python": platform.python_version(),
+                "packages": packages,
+                "notebook_imports": training_env.get("versions", {}),
+                "notes": training_env.get("notes", []),
+            },
+            handle,
+            indent=2,
+        )
+    try:
+        client.log_artifact(mlflow_run_id, path, artifact_path="environment")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pipeline.environment.not_logged", error=str(exc))
+        return ""
+    return "Trained with " + ", ".join(f"{name} {version}" for name, version in sorted(packages.items())) + "."
+
+
 def _enqueue_analysis(pipeline_id: str) -> None:
     """Create an insight record and queue the AI analysis task."""
     from core.ai_advisor import advisor_configured
@@ -842,6 +961,16 @@ def run_pipeline(
         if _shutting_down:
             raise SystemExit("Worker shutting down")
 
+        # Phase 2b: The libraries the notebook imports that the platform lacks.
+        _phase("dependencies", "running", "Checking the libraries the notebook imports...")
+        training_env = _prepare_dependencies(
+            notebook, clean_nb_path, owner, repo_name, run_branch, headers, _phase
+        )
+        log.info("pipeline.phase.dependencies.done", libraries=training_env["versions"])
+
+        if _shutting_down:
+            raise SystemExit("Worker shutting down")
+
         # Phase 3: Execute notebook with papermill
         _phase("execute", "running", "Executing notebook with papermill...")
         log.info("pipeline.phase.execute.start")
@@ -982,6 +1111,8 @@ def run_pipeline(
                     dataset_path=dataset_path,
                 )
             elif uses_data:
+                # Declared or not, a notebook that reads DATASET_PATH trains on
+                # the gold layer, so without one there is nothing to train on.
                 message = (
                     "This notebook reads DATASET_PATH but the project has no gold "
                     "data yet. Build the gold layer in the Data Factory and run again."
@@ -994,7 +1125,7 @@ def run_pipeline(
                     "dataset",
                     "success",
                     "The notebook brings its own data; nothing downloaded from MinIO "
-                    "and DATASET_PATH was not injected.",
+                    "(DATASET_PATH = None).",
                 )
                 log.info("pipeline.phase.dataset.skipped", repo_id=repo_id)
 
@@ -1071,11 +1202,11 @@ def run_pipeline(
                 "MLFLOW_RUN_ID": mlflow_run_id,
                 "TRAINING_FEATURES_PATH": features_output_path,
                 "MODEL_NOTES_PATH": notes_output_path,
+                # Always defined. A notebook that reads it, declared or not, gets
+                # the gold layer (a run without one stopped above); one that
+                # never reads it gets None and is not bothered.
+                "DATASET_PATH": dataset_path,
             }
-            # Only injected when the repository has an active dataset, so
-            # notebooks without a DATASET_PATH parameter keep working.
-            if dataset_path:
-                parameters["DATASET_PATH"] = dataset_path
 
             try:
                 pm.execute_notebook(
@@ -1130,12 +1261,16 @@ def run_pipeline(
             # Log model artifact via MlflowClient (run_id-based, does not
             # require an active run context — safe after papermill ends the
             # run the notebook opened with `with mlflow.start_run()`).
+            environment_note = ""
             if os.path.exists(model_output_path):
                 client.log_artifact(mlflow_run_id, model_output_path, artifact_path="model")
                 log.info(
                     "pipeline.artifact.logged",
                     mlflow_run_id=mlflow_run_id,
                     artifact=model_output_path,
+                )
+                environment_note = _record_environment(
+                    client, mlflow_run_id, model_output_path, training_env, tmpdir
                 )
             else:
                 log.warning(
@@ -1176,7 +1311,8 @@ def run_pipeline(
             _phase(
                 "register",
                 "success",
-                f"Model registered in MLflow run {mlflow_run_id}. {_judged_line(project_id, metrics)}. {card_note}",
+                f"Model registered in MLflow run {mlflow_run_id}. {_judged_line(project_id, metrics)}. {card_note}"
+                + (f" {environment_note}" if environment_note else ""),
             )
             log.info(
                 "pipeline.phase.register.done",
@@ -1238,8 +1374,16 @@ def run_pipeline(
                     _phase("deploy", "success", f"Model deployed successfully. Endpoint: {endpoint_url}")
                     log.info("pipeline.phase.deploy.done", endpoint_url=endpoint_url)
                 except Exception as exc:
-                    _phase("deploy", "failed", str(exc))
-                    log.warning("pipeline.phase.deploy.failed", error=str(exc))
+                    message = str(exc)
+                    # The model server says why (a missing library, say); that
+                    # is the line worth showing, not the bare status code.
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        try:
+                            message = exc.response.json().get("detail") or message
+                        except ValueError:
+                            pass
+                    _phase("deploy", "failed", message)
+                    log.warning("pipeline.phase.deploy.failed", error=message)
             else:
                 log.info("pipeline.deploy.skipped", reason=deploy_reason)
 

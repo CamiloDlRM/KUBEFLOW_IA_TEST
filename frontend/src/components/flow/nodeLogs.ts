@@ -15,7 +15,7 @@ import type { PhaseCard } from '../canvas/phases';
  * The run's final error goes to whichever node broke.
  */
 
-const BEFORE_NOTEBOOK = new Set(['download', 'validate', 'dataset']);
+const BEFORE_NOTEBOOK = new Set(['download', 'validate', 'dependencies', 'dataset']);
 const AFTER_NOTEBOOK = new Set(['register', 'deploy', 'complete']);
 const ENDINGS = new Set(['error', 'shutdown']);
 

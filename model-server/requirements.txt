@@ -16,6 +16,8 @@ boto3==1.35.76
 scikit-learn==1.5.2
 joblib==1.4.2
 numpy==1.26.4
+# Libraries a notebook adds (xgboost, lightgbm…) are not pinned here: the
+# worker installs them in the shared pylibs volume, mounted read-only here.
 
 # Structured logging
 structlog==24.4.0

@@ -5,7 +5,9 @@ import { BACK_BUTTON_CLASS } from '../components/BackLink';
 import { ArrowLeft, ExternalLink, GitBranch, NotebookText, Pencil, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
 import { getRepoNotebook, getRepos, saveRepoNotebook } from '../api/client';
 import type { EditorCell, NotebookSaved } from '../types';
+import { usePipeline } from '../hooks/usePipelines';
 import CodeInput from '../components/notebook/CodeInput';
+import { failedCell, type CellFailure } from '../components/notebook/failedCell';
 import Markdown from '../components/Markdown';
 import Spinner from '../components/Spinner';
 
@@ -61,6 +63,20 @@ export default function NotebookEditor() {
     setSha(notebook.data.sha);
     setDrafts({});
   }, [notebook.data]);
+
+  // Opened from a failed run (`run` in the link): the cell it broke on, and the error it raised.
+  const runId = searchParams.get('run') ?? undefined;
+  const run = usePipeline(runId).data;
+  const failure = useMemo(() => {
+    if (!notebook.data) return null;
+    // Against what GitHub has now, so a pushed fix reads as no longer the code that ran.
+    const cells = notebook.data.cells.map((cell) => ({ ...cell, source: saved[cell.index] ?? cell.source }));
+    return failedCell(cells, run?.cells);
+  }, [notebook.data, saved, run]);
+  // Back to where the editor was opened from: the run's canvas, or the list of repos.
+  const back = run?.project_id
+    ? { to: `/pipelines/canvas/${run.project_id}`, label: 'Pipeline' }
+    : { to: '/repos/new', label: 'My repos' };
 
   function edit(index: number, source: string) {
     setDrafts((current) => {
@@ -143,7 +159,7 @@ export default function NotebookEditor() {
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <Link
-              to="/repos/new"
+              to={back.to}
               // An in-app move does not fire beforeunload, so unsaved cells are asked about here.
               onClick={(event) => {
                 if (dirty && !window.confirm('Leave the editor? Your unsaved changes will be lost.')) {
@@ -153,7 +169,7 @@ export default function NotebookEditor() {
               className={`${BACK_BUTTON_CLASS} shrink-0 !px-3 !py-1.5`}
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              My repos
+              {back.label}
             </Link>
             <NotebookText size={22} className="shrink-0 text-brand-400" aria-hidden="true" />
             <div className="min-w-0">
@@ -257,6 +273,7 @@ export default function NotebookEditor() {
               cell={cell}
               value={drafts[cell.index] ?? saved[cell.index] ?? cell.source}
               edited={cell.index in drafts}
+              failure={failure?.index === cell.index ? failure : undefined}
               onChange={(source) => edit(cell.index, source)}
               onRevert={() => edit(cell.index, saved[cell.index])}
             />
@@ -285,18 +302,27 @@ function CellRow({
   cell,
   value,
   edited,
+  failure,
   onChange,
   onRevert,
 }: {
   cell: EditorCell;
   value: string;
   edited: boolean;
+  /** Set on the cell a failed run broke on, when the editor was opened from that run. */
+  failure?: CellFailure;
   onChange: (source: string) => void;
   onRevert: () => void;
 }) {
   const number = cell.index + 1;
+  // The failed cell is what the editor was opened for: bring it into view once it is known.
+  const rowRef = useRef<HTMLElement>(null);
+  const failed = Boolean(failure);
+  useEffect(() => {
+    if (failed) rowRef.current?.scrollIntoView?.({ block: 'center' });
+  }, [failed]);
   return (
-    <article aria-label={`${cell.cell_type} cell ${number}`} className="flex gap-2">
+    <article ref={rowRef} aria-label={`${cell.cell_type} cell ${number}`} className="flex gap-2">
       {/* The gutter: the cell's number, and what is unsaved about it. */}
       <div className="flex w-12 shrink-0 flex-col items-end gap-1 pt-2.5 font-display text-[11px] text-slate-500">
         <span>[{number}]</span>
@@ -318,7 +344,11 @@ function CellRow({
         {cell.cell_type === 'markdown' ? (
           <TextCell value={value} onChange={onChange} number={number} />
         ) : cell.cell_type === 'code' ? (
-          <div className="overflow-hidden rounded-lg border border-slate-700 bg-slate-900 transition focus-within:border-brand-500">
+          <div
+            className={`overflow-hidden rounded-lg border bg-slate-900 transition focus-within:border-brand-500 ${
+              failure ? 'border-red-500/70' : 'border-slate-700'
+            }`}
+          >
             {cell.tags.length > 0 && (
               <div className="flex flex-wrap gap-1 border-b border-slate-800 px-3 py-1.5">
                 {cell.tags.map((tag) => (
@@ -338,6 +368,19 @@ function CellRow({
           <pre className="overflow-x-auto rounded-lg border border-dashed border-slate-700 px-3 py-2.5 font-display text-[13px] text-slate-500">
             {value}
           </pre>
+        )}
+        {failure && (
+          <div className="mt-1 rounded-md border-l-2 border-red-500 bg-red-950/40 px-3 py-2 text-xs">
+            <p className="font-semibold text-red-300">The run failed on this cell</p>
+            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-display text-[12px] text-red-200">
+              {failure.error || 'No error message was recorded.'}
+            </pre>
+            {failure.stale && (
+              <p className="mt-1 text-amber-300">
+                This cell has changed since that run: the code here is not the code that raised the error.
+              </p>
+            )}
+          </div>
         )}
       </div>
     </article>

@@ -12,7 +12,7 @@ import { errorNodeOf } from './nodeLogs';
 export const ACTIVE = new Set(['queued', 'running']);
 
 /** The backend's steps, in run order. `dataset` happens inside `execute`, before the notebook. */
-const STAGES = ['download', 'validate', 'dataset', 'execute', 'register', 'deploy'];
+const STAGES = ['download', 'validate', 'dependencies', 'dataset', 'execute', 'register', 'deploy'];
 
 /**
  * Where a failed run broke: the last step that failed, or that started and

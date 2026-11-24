@@ -289,6 +289,8 @@ async def load_model(
         # Load the model with joblib
         import joblib
 
+        _see_shared_libraries()
+
         model_file = Path(local_path)
         if model_file.is_dir():
             # Find the .joblib file inside the directory
@@ -322,6 +324,12 @@ async def load_model(
             message=f"Model '{model_name}' v{body.version} loaded successfully."
         )
 
+    except ModuleNotFoundError as exc:
+        logger.exception("model.load_failed", model_name=model_name, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_missing_library_message(client, body.mlflow_run_id, exc.name or str(exc)),
+        )
     except Exception as exc:
         logger.exception(
             "model.load_failed",
@@ -332,6 +340,47 @@ async def load_model(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to load model; see the model-server logs.",
         )
+
+
+def _see_shared_libraries() -> None:
+    """Pick up libraries the worker installed after this server started.
+
+    The worker installs what notebooks import into the shared volume
+    (PYTHONUSERBASE). Python only adds that folder at startup, and only if it
+    exists then, so a library installed later needs adding by hand.
+    """
+    import importlib
+    import site
+
+    user_site = site.getusersitepackages()
+    if Path(user_site).is_dir() and user_site not in sys.path:
+        site.addsitedir(user_site)
+    importlib.invalidate_caches()
+
+
+def _missing_library_message(client: Any, mlflow_run_id: str, module: str) -> str:
+    """Which library the model needs and the server lacks, with its version.
+
+    The version comes from the environment the worker recorded next to the
+    model; a model trained before that was recorded gets the name alone.
+    """
+    top = module.split(".")[0]
+    version = ""
+    try:
+        import json
+
+        path = client.download_artifacts(mlflow_run_id, "environment/environment.json")
+        recorded = json.loads(Path(path).read_text())
+        packages = {name.lower().replace("_", "-"): v for name, v in recorded.get("packages", {}).items()}
+        version = packages.get(top.lower().replace("_", "-"), "")
+    except Exception:  # noqa: BLE001 - the name alone is still the answer
+        pass
+    trained = f" {version}" if version else ""
+    return (
+        f"The model needs the library '{top}'{trained}, which it was trained with, and the "
+        "model server does not have it. Run the pipeline again so the worker installs it "
+        "in the shared library volume."
+    )
 
 
 def _probabilities(model: Any, data: list[list[float]]) -> list[dict[str, float]] | None:
