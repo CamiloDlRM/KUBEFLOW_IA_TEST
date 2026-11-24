@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowLeft,
   ArrowRight,
   ArrowUp,
   BookOpen,
@@ -11,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { Anatomy, Callout, FieldList, QaList, Steps } from './ManualBlocks';
+import BackLink from '../BackLink';
 
 export interface ManualPageChapter {
   id: string;
@@ -378,13 +378,7 @@ export default function ManualPage({
       {/* ---- Paper top bar ------------------------------------------ */}
       <header className="manual-print-hide sticky top-0 z-40 border-b border-[var(--rule)] bg-[var(--paper)]/95 backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 lg:px-8">
-          <Link
-            to="/"
-            className="group inline-flex items-center gap-2 text-[12px] font-medium text-[var(--ink-2)] transition-colors hover:text-[var(--accent)]"
-          >
-            <ArrowLeft size={14} aria-hidden="true" />
-            <span>Back to Maia</span>
-          </Link>
+          <BackLink to="/">Back to Maia</BackLink>
 
           <p className="manual-eyebrow hidden normal-case tracking-[0.14em] sm:block">
             <span className="font-semibold text-[var(--ink)]">Maia</span>
@@ -711,13 +705,7 @@ export default function ManualPage({
                   <CrossLinkIcon size={13} aria-hidden="true" />
                   {crossLink.footerLabel}
                 </Link>
-                <Link
-                  to="/"
-                  className="inline-flex items-center gap-2 border border-[var(--rule-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)]"
-                >
-                  <ArrowLeft size={13} aria-hidden="true" />
-                  Back to Maia
-                </Link>
+                <BackLink to="/">Back to Maia</BackLink>
                 <button
                   type="button"
                   onClick={() => navigate('top')}
