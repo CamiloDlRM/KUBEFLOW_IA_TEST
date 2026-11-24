@@ -180,6 +180,20 @@ export interface NotebookSaved {
   changed_cells: number;
 }
 
+/** The editor's cells as they are on screen, for Maia to review one (`focus_index`) or all. */
+export interface NotebookReviewPayload {
+  cells: EditorCell[];
+  focus_index: number | null;
+  /** What the focused cell raised in the last run, when the editor was opened from it. */
+  error: string;
+}
+
+/** What Maia says about the cells, and the code she proposes for some of them. */
+export interface NotebookReview {
+  comment: string;
+  cells: { index: number; source: string }[];
+}
+
 export interface TriggerAccepted {
   status: string;
   pipeline_id: string;

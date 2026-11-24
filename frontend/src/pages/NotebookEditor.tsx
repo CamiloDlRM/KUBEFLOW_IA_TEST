@@ -8,6 +8,7 @@ import type { EditorCell, NotebookSaved } from '../types';
 import { usePipeline } from '../hooks/usePipelines';
 import CodeInput from '../components/notebook/CodeInput';
 import { failedCell, type CellFailure } from '../components/notebook/failedCell';
+import MaiaReview from '../components/notebook/MaiaReview';
 import Markdown from '../components/Markdown';
 import Spinner from '../components/Spinner';
 
@@ -73,6 +74,17 @@ export default function NotebookEditor() {
     const cells = notebook.data.cells.map((cell) => ({ ...cell, source: saved[cell.index] ?? cell.source }));
     return failedCell(cells, run?.cells);
   }, [notebook.data, saved, run]);
+  // What Maia reviews: the code cell last worked in (the failed one, coming from a run),
+  // and every cell as it reads on screen.
+  const [selected, setSelected] = useState<number | null>(null);
+  const onScreen = useMemo(
+    () =>
+      (notebook.data?.cells ?? []).map((cell) => ({
+        ...cell,
+        source: drafts[cell.index] ?? saved[cell.index] ?? cell.source,
+      })),
+    [notebook.data, drafts, saved],
+  );
   // Back to where the editor was opened from: the run's canvas, or the list of repos.
   const back = run?.project_id
     ? { to: `/pipelines/canvas/${run.project_id}`, label: 'Pipeline' }
@@ -226,7 +238,8 @@ export default function NotebookEditor() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">
+      {/* Room at the bottom so Maia, floating there, never covers the last cell. */}
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 pb-28 pt-6">
         {lastCommit && !dirty && (
           <p className="mb-4 rounded-lg border border-emerald-700 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-300">
             Pushed {lastCommit.changed_cells} cell{lastCommit.changed_cells === 1 ? '' : 's'} to{' '}
@@ -274,12 +287,23 @@ export default function NotebookEditor() {
               value={drafts[cell.index] ?? saved[cell.index] ?? cell.source}
               edited={cell.index in drafts}
               failure={failure?.index === cell.index ? failure : undefined}
+              onSelect={() => setSelected(cell.index)}
               onChange={(source) => edit(cell.index, source)}
               onRevert={() => edit(cell.index, saved[cell.index])}
             />
           ))}
         </div>
       </main>
+
+      {notebook.data && notebook.data.cells.length > 0 && (
+        <MaiaReview
+          repoId={repoId}
+          cells={onScreen}
+          selected={selected ?? failure?.index ?? null}
+          failure={failure}
+          onApply={edit}
+        />
+      )}
 
       {confirming && (
         <PushDialog
@@ -303,6 +327,7 @@ function CellRow({
   value,
   edited,
   failure,
+  onSelect,
   onChange,
   onRevert,
 }: {
@@ -311,6 +336,8 @@ function CellRow({
   edited: boolean;
   /** Set on the cell a failed run broke on, when the editor was opened from that run. */
   failure?: CellFailure;
+  /** A code cell was focused: it becomes the one Maia is offered to review alone. */
+  onSelect: () => void;
   onChange: (source: string) => void;
   onRevert: () => void;
 }) {
@@ -345,6 +372,7 @@ function CellRow({
           <TextCell value={value} onChange={onChange} number={number} />
         ) : cell.cell_type === 'code' ? (
           <div
+            onFocus={onSelect}
             className={`overflow-hidden rounded-lg border bg-slate-900 transition focus-within:border-brand-500 ${
               failure ? 'border-red-500/70' : 'border-slate-700'
             }`}
