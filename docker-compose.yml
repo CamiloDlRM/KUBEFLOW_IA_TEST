@@ -145,8 +145,13 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
+      # Libraries a notebook imports that the image lacks are installed here
+      # (pip --user), never over the image's own packages. Shared with the
+      # model server so a model is served with what it was trained with.
+      - PYTHONUSERBASE=/opt/pylibs
     volumes:
       - mlops-models:/app/model_artifacts
+      - pylibs:/opt/pylibs
     depends_on:
       postgres:
         condition: service_healthy
@@ -255,8 +260,11 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minioadmin}
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - AWS_DEFAULT_REGION=${MINIO_REGION:-us-east-1}
+      # The libraries the worker installed for notebooks (read-only here).
+      - PYTHONUSERBASE=/opt/pylibs
     volumes:
       - mlops-models:/app/model_artifacts
+      - pylibs:/opt/pylibs:ro
     depends_on:
       minio:
         condition: service_healthy
@@ -561,6 +569,7 @@ networks:
 
 volumes:
   mlops-models:
+  pylibs:           # Libraries installed for notebooks: worker writes, model server reads
   mlflow-data:      # MLflow SQLite backend store (artifacts now live in MinIO)
   minio-data:       # MinIO object storage (datasets + mlflow buckets)
   redis-data:
