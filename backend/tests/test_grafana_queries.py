@@ -412,6 +412,70 @@ class TestModelDashboard:
             authorize_query(_payload(_render(raw, "iris", OTHER_LOGIN)), MEMBER)
 
 
+class TestIntervalVariables:
+    """Grafana fills ``$__interval`` before the query reaches the proxy.
+
+    Seen in production: "Average pipeline duration" arrived as
+    ``$__timeGroupAlias(p.started_at, 30m)``, matched no template and was
+    refused, so it showed no data to every member.
+    """
+
+    @staticmethod
+    def _duration_panel(interval: str) -> str:
+        return (
+            _panel_sql("mlops-ml.json", "Average pipeline duration")
+            .replace("${__user.login}", MEMBER_LOGIN)
+            .replace("$__interval", interval)
+        )
+
+    @pytest.mark.parametrize("interval", ["30m", "1h", "500ms", "15s", "2d", "1w"])
+    def test_the_panel_runs_at_any_interval_grafana_picks(self, interval):
+        authorize_query(_payload(self._duration_panel(interval)), MEMBER)
+
+    @pytest.mark.parametrize("interval", ["30m) OR (TRUE", "1h'", "abc", "", "30 m"])
+    def test_anything_but_an_interval_in_that_slot_is_refused(self, interval):
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(_payload(self._duration_panel(interval)), MEMBER)
+
+    def test_another_users_rows_at_an_interval_are_refused(self):
+        sql = self._duration_panel("30m").replace(MEMBER_LOGIN, OTHER_LOGIN)
+        with pytest.raises(QueryNotAllowed):
+            authorize_query(_payload(sql), MEMBER)
+
+    def test_interval_ms_is_a_number_and_not_read_as_interval(self):
+        from core.grafana_queries import _slot_pattern
+
+        pattern = _slot_pattern("x $__interval_ms y $__interval z")
+        assert pattern.fullmatch("x 1500 y 30m z")
+        assert not pattern.fullmatch("x 1h y 30m z")
+        assert not pattern.fullmatch("x 1500_ms y 30m z")
+
+
+class TestAdminsSeeAnyModel:
+    """In the per-model dashboard an admin sees any model, a member only theirs.
+
+    Seen in production: an admin opening another user's model from the Models
+    page got "No data" in every SQL panel ("Active version" among them),
+    because the SQL kept only the viewer's own models.
+    """
+
+    def test_every_sql_panel_admits_an_admin(self):
+        for raw in _model_targets("rawSql"):
+            assert "a.role = 'admin'" in raw, raw
+
+    def test_a_members_queries_name_nobody_but_them(self):
+        allowed = allowed_queries_for(MEMBER_LOGIN, get_settings())
+        model_panels = [sql for sql in allowed if "a.role = 'admin'" in sql]
+        assert model_panels, "the model dashboard's panels are in the member's allow-list"
+        for sql in model_panels:
+            assert sql.count(f"'{MEMBER_LOGIN}'") == 2
+            assert OTHER_LOGIN not in sql
+
+    def test_a_member_still_runs_every_model_panel(self):
+        for raw in _model_targets("rawSql"):
+            authorize_query(_payload(_render(raw, "prueba-3")), MEMBER)
+
+
 class TestResourcesDashboard:
     """CPU and memory of every container is the platform's, not a tenant's."""
 

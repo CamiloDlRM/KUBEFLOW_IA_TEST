@@ -95,6 +95,29 @@ _WHITESPACE = re.compile(r"\s+")
 _MODEL_VARIABLE: Final[str] = "${model}"
 _MODEL_VALUE: Final[str] = MODEL_NAME_PATTERN
 
+#: Grafana's interval variables, also interpolated before the query reaches us
+#: ("30m", "1h"), and what each may hold: a number and a unit, nothing else.
+#: Without them a panel that groups by ``$__interval`` arrived as
+#: ``$__timeGroupAlias(p.started_at, 30m)``, matched no template, and was
+#: refused: "Average pipeline duration" showed no data to every member.
+_DURATION: Final[str] = r"\d+(?:ms|s|m|h|d|w|y)"
+_INTERVAL_VARIABLES: Final[dict[str, str]] = {
+    "${__interval_ms}": r"\d+",
+    "$__interval_ms": r"\d+",
+    "${__interval}": _DURATION,
+    "$__interval": _DURATION,
+    "${__rate_interval}": _DURATION,
+    "$__rate_interval": _DURATION,
+}
+#: Every variable a template may leave for Grafana to fill, longest spelling
+#: first so ``$__interval_ms`` is never read as ``$__interval`` followed by "_ms".
+_SLOT = re.compile(
+    "|".join(
+        re.escape(token)
+        for token in sorted([_MODEL_VARIABLE, *_INTERVAL_VARIABLES], key=len, reverse=True)
+    )
+)
+
 
 def grafana_login(user: User) -> str:
     """The login a user has in Grafana: ``user-<id>``, never the username.
@@ -228,29 +251,49 @@ def reset_cache() -> None:
 
 
 @lru_cache(maxsize=256)
-def _model_pattern(template: str) -> re.Pattern[str]:
-    """Compile a template holding ``${model}`` into a full-match pattern.
+def _slot_pattern(template: str) -> re.Pattern[str]:
+    """Compile a template holding Grafana variables into a full-match pattern.
 
-    Every occurrence must carry the *same* value (back-reference), so a query
-    cannot mix two model names into one panel.
+    ``${model}`` admits a model name, and every occurrence must carry the
+    *same* value (back-reference), so a query cannot mix two model names into
+    one panel. An interval variable admits only a number and a unit. The rest
+    of the template must match literally.
     """
-    head, *rest = template.split(_MODEL_VARIABLE)
-    parts = [re.escape(head)]
-    for index, chunk in enumerate(rest):
-        parts.append(f"(?P<model>{_MODEL_VALUE})" if index == 0 else "(?P=model)")
-        parts.append(re.escape(chunk))
+    parts: list[str] = []
+    position = 0
+    model_seen = False
+    for slot in _SLOT.finditer(template):
+        parts.append(re.escape(template[position:slot.start()]))
+        token = slot.group(0)
+        if token == _MODEL_VARIABLE:
+            parts.append("(?P=model)" if model_seen else f"(?P<model>{_MODEL_VALUE})")
+            model_seen = True
+        else:
+            parts.append(f"(?:{_INTERVAL_VARIABLES[token]})")
+        position = slot.end()
+    parts.append(re.escape(template[position:]))
     return re.compile("".join(parts))
+
+
+#: Earlier name, kept for callers that only ever dealt with ``${model}``.
+_model_pattern = _slot_pattern
+
+
+def _match_slotted_template(query: str, templates: frozenset[str]) -> re.Match[str] | None:
+    """The match of ``query`` against a template holding Grafana variables, if any."""
+    for template in templates:
+        if not _SLOT.search(template):
+            continue
+        match = _slot_pattern(template).fullmatch(query)
+        if match:
+            return match
+    return None
 
 
 def _match_model_template(query: str, templates: frozenset[str]) -> str | None:
     """Return the model name if ``query`` is a ``${model}`` template, else ``None``."""
-    for template in templates:
-        if _MODEL_VARIABLE not in template:
-            continue
-        match = _model_pattern(template).fullmatch(query)
-        if match:
-            return match.group("model")
-    return None
+    match = _match_slotted_template(query, templates)
+    return match.groupdict().get("model") if match else None
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +386,7 @@ def authorize_query(
         raw_sql = query.get("rawSql")
         if isinstance(raw_sql, str) and raw_sql.strip():
             normalised = normalise_sql(raw_sql)
-            if normalised in allowed or _match_model_template(normalised, allowed):
+            if normalised in allowed or _match_slotted_template(normalised, allowed):
                 continue
             raise QueryNotAllowed(
                 "query does not match a provisioned dashboard panel", normalised
