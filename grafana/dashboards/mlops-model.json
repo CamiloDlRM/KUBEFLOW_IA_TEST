@@ -87,7 +87,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT 'v' || md.version AS \"version\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND md.is_active\nORDER BY md.deployed_at DESC\nLIMIT 1;"
+          "rawSql": "SELECT 'v' || md.version AS \"version\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE 'user-' || u.id = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND md.is_active\nORDER BY md.deployed_at DESC\nLIMIT 1;"
         }
       ]
     },
@@ -746,7 +746,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  md.deployed_at AS \"time\",\n  m.name AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(md.deployed_at)\nORDER BY 1;"
+          "rawSql": "SELECT\n  md.deployed_at AS \"time\",\n  m.name AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE 'user-' || u.id = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(md.deployed_at)\nORDER BY 1;"
         }
       ]
     },
@@ -797,7 +797,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT m.key AS \"metric\", m.value AS \"value\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL jsonb_each_text(p.metrics::jsonb) m\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND md.is_active\nORDER BY 1;"
+          "rawSql": "SELECT m.key AS \"metric\", m.value AS \"value\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL jsonb_each_text(p.metrics::jsonb) m\nWHERE 'user-' || u.id = '${__user.login}'\n  AND md.model_name = '${model}'\n  AND md.is_active\nORDER BY 1;"
         }
       ]
     },
@@ -916,7 +916,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  m.name AS \"metric\",\n  CASE WHEN p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$' THEN (p.metrics->>m.name)::float END AS \"value\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE u.username = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
+          "rawSql": "SELECT\n  'v' || md.version AS \"version\",\n  md.deployed_at AS \"deployed\",\n  CASE WHEN md.is_active THEN 'active' ELSE 'inactive' END AS \"status\",\n  m.name AS \"metric\",\n  CASE WHEN p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$' THEN (p.metrics->>m.name)::float END AS \"value\",\n  COALESCE(NULLIF(p.branch, ''), pr.branch) AS \"branch\",\n  LEFT(p.commit_sha, 8) AS \"commit\",\n  EXTRACT(EPOCH FROM (p.finished_at - p.started_at)) AS \"pipeline duration\",\n  p.id AS \"pipeline\"\nFROM model_deployments md\nJOIN pipelines p ON p.id = md.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE 'user-' || u.id = '${__user.login}'\n  AND md.model_name = '${model}'\nORDER BY md.deployed_at DESC\nLIMIT 50;"
         }
       ]
     }

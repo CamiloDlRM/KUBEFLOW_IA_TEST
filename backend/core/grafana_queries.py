@@ -6,7 +6,14 @@ Why this module exists
 Every panel in ``mlops-ml.json`` scopes its SQL to the signed-in user::
 
     JOIN users u ON u.id = r.owner_id
-    WHERE u.username = '${__user.login}'
+    WHERE 'user-' || u.id = '${__user.login}'
+
+The login Grafana knows a user by is ``user-<id>`` (``grafana_login``), not
+their username. Grafana lowercases logins, so a username with capitals
+(``WilmerJr01@g``) came back from it as ``wilmerjr01@g``: it matched no
+allow-list entry here (403) and no row in ``users`` (no data). An id has no
+case, cannot be shared by two accounts, and keeps usernames, which are often
+email addresses, out of Grafana's own user table.
 
 That filter is what makes the dashboard multi-tenant — but it only governs the
 queries *the dashboard itself* issues. Grafana's ``Viewer`` role, which every
@@ -23,8 +30,8 @@ The dashboards are provisioned from JSON and marked ``editable: false``, so the
 set of legitimate queries is fixed and known ahead of time. At startup we read
 those files and keep the SQL of every panel as a *template*, with
 ``${__user.login}`` left in place. On each request we substitute the
-authenticated username into each template and require the incoming SQL to match
-one of them exactly (after whitespace normalisation).
+authenticated user's Grafana login into each template and require the incoming
+SQL to match one of them exactly (after whitespace normalisation).
 
 Consequences worth knowing:
 
@@ -87,6 +94,17 @@ _WHITESPACE = re.compile(r"\s+")
 #: pattern whose slot only admits identifier characters - never a quote.
 _MODEL_VARIABLE: Final[str] = "${model}"
 _MODEL_VALUE: Final[str] = MODEL_NAME_PATTERN
+
+
+def grafana_login(user: User) -> str:
+    """The login a user has in Grafana: ``user-<id>``, never the username.
+
+    Sent as the auth-proxy header, and so the value of ``${__user.login}`` the
+    dashboards filter on. Grafana lowercases a login, which a username with
+    capitals did not survive; it also interpolates the login into SQL verbatim,
+    and ``user-`` followed by digits holds no quote whatever the username is.
+    """
+    return f"user-{int(user.id)}"
 
 
 def is_query_path(path: str) -> bool:
@@ -184,11 +202,11 @@ def _is_user_scoped(template: str) -> bool:
     return any(alias in template for alias in _USER_VARIABLE_ALIASES)
 
 
-def allowed_queries_for(username: str, settings: AppSettings) -> frozenset[str]:
-    """Return the normalised SQL ``username`` is allowed to run.
+def allowed_queries_for(login: str, settings: AppSettings) -> frozenset[str]:
+    """Return the normalised SQL the Grafana user ``login`` is allowed to run.
 
     Only user-scoped templates are considered, each with the Grafana user
-    variable replaced by ``username``. A member's allow-list therefore contains
+    variable replaced by ``login`` (``grafana_login``). A member's allow-list therefore contains
     nothing but queries restricted to their own rows; platform-wide panels are
     left out entirely and stay admin-only.
     """
@@ -199,7 +217,7 @@ def allowed_queries_for(username: str, settings: AppSettings) -> frozenset[str]:
             continue
         rendered = template
         for alias in _USER_VARIABLE_ALIASES:
-            rendered = rendered.replace(alias, username)
+            rendered = rendered.replace(alias, login)
         allowed.add(rendered)
     return frozenset(allowed)
 
@@ -317,7 +335,7 @@ def authorize_query(
     if not queries:
         raise QueryNotAllowed("query payload contains no queries")
 
-    allowed = allowed_queries_for(user.username, settings)
+    allowed = allowed_queries_for(grafana_login(user), settings)
     if not allowed:
         raise QueryNotAllowed("no dashboard queries are provisioned")
 

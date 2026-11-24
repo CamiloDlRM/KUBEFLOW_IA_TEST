@@ -3,7 +3,8 @@
 The dashboards scope every panel to ``${__user.login}``, but Grafana's Viewer
 role can still *run* arbitrary SQL against the datasource. These tests pin the
 proxy-side rule that closes that gap: a member may run the provisioned panel
-queries with their own username substituted, and nothing else.
+queries with their own Grafana login (``user-<id>``) substituted, and nothing
+else.
 
 They also assert the allow-list is built from the *real* dashboard files, so a
 panel whose SQL drifts out of the allow-list fails here rather than in front of
@@ -56,6 +57,10 @@ MEMBER = make_user(1, "member", "testuser")
 OTHER_MEMBER = make_user(2, "member", "otheruser")
 ADMIN = make_user(3, "admin", "adminuser")
 
+#: What Grafana calls them: ``user-<id>`` (``grafana_login``), not the username.
+MEMBER_LOGIN = "user-1"
+OTHER_LOGIN = "user-2"
+
 
 @pytest.fixture(autouse=True)
 def _point_at_real_dashboards(monkeypatch):
@@ -83,11 +88,11 @@ def _payload(*sql: str) -> bytes:
 
 
 class TestUsernamePattern:
-    """The character set a username may use.
+    """The character set a username may use when it is set.
 
-    It guards the ``${__user.login}`` interpolation, which has no parameter
-    binding — but it must stay wide enough for the usernames this deployment
-    actually issues, which are email addresses.
+    It used to guard the ``${__user.login}`` interpolation too; that now holds
+    ``user-<id>`` instead (``TestGrafanaLogin``). It must stay wide enough for
+    the usernames this deployment issues, which are email addresses.
     """
 
     @pytest.mark.parametrize(
@@ -124,6 +129,48 @@ class TestUsernamePattern:
         assert not re.fullmatch(USERNAME_PATTERN, username)
 
 
+class TestGrafanaLogin:
+    """Grafana knows a user as ``user-<id>``, never by their username.
+
+    Seen in production: Grafana lowercases logins, so for ``WilmerJr01@g`` it
+    sent SQL filtered on ``wilmerjr01@g``. That matched no allow-list entry
+    (403) and no row in ``users`` (no data), for every user with a capital.
+    """
+
+    WILMER = make_user(5, "member", "WilmerJr01@g")
+
+    def test_the_login_is_the_id(self):
+        from core.grafana_queries import grafana_login
+
+        assert grafana_login(MEMBER) == "user-1"
+        assert grafana_login(self.WILMER) == "user-5"
+
+    def test_a_username_with_capitals_can_run_every_panel(self):
+        for dashboard in ("mlops-ml.json", "mlops-model.json"):
+            document = json.loads((DASHBOARDS_DIR / dashboard).read_text(encoding="utf-8"))
+            for panel in document["panels"]:
+                for target in panel.get("targets", []):
+                    if target.get("rawSql"):
+                        sql = target["rawSql"].replace("${__user.login}", "user-5").replace("${model}", "pulso")
+                        authorize_query(_payload(sql), self.WILMER)
+
+    def test_no_panel_filters_on_the_username_any_more(self):
+        for dashboard in ("mlops-ml.json", "mlops-model.json"):
+            text = (DASHBOARDS_DIR / dashboard).read_text(encoding="utf-8")
+            assert "u.username = '${__user.login}'" not in text
+            assert "'user-' || u.id = '${__user.login}'" in text
+
+    def test_the_proxy_sends_grafana_the_id_whatever_the_username_holds(self):
+        from routers.grafana import _identity_headers
+
+        settings = get_settings()
+        header = settings.grafana_auth_proxy_header
+        assert _identity_headers(self.WILMER, settings) == {header: "user-5"}
+        # A username that could break the SQL literal never reaches Grafana.
+        odd = make_user(6, "member", "bob' OR '1'='1")
+        assert _identity_headers(odd, settings) == {header: "user-6"}
+
+
 class TestNormalisation:
     def test_collapses_whitespace_and_trailing_semicolon(self):
         assert normalise_sql("SELECT   1\n  FROM t ;") == "SELECT 1 FROM t"
@@ -146,12 +193,12 @@ class TestQueryPathDetection:
 
 class TestAllowList:
     def test_dashboard_sql_is_loaded(self):
-        allowed = allowed_queries_for("testuser", get_settings())
+        allowed = allowed_queries_for(MEMBER_LOGIN, get_settings())
         assert allowed, "no dashboard SQL was loaded"
 
     def test_username_is_substituted(self):
-        allowed = allowed_queries_for("testuser", get_settings())
-        assert any("u.username = 'testuser'" in sql for sql in allowed)
+        allowed = allowed_queries_for(MEMBER_LOGIN, get_settings())
+        assert any("'user-' || u.id = 'user-1'" in sql for sql in allowed)
         assert not any("${__user.login}" in sql for sql in allowed)
 
     def test_allow_lists_of_two_users_are_disjoint(self):
@@ -159,19 +206,19 @@ class TestAllowList:
 
         Anything shared would by definition not be scoped to either of them.
         """
-        mine = allowed_queries_for("testuser", get_settings())
-        theirs = allowed_queries_for("otheruser", get_settings())
+        mine = allowed_queries_for(MEMBER_LOGIN, get_settings())
+        theirs = allowed_queries_for(OTHER_LOGIN, get_settings())
         assert mine.isdisjoint(theirs)
 
     def test_platform_queries_are_excluded_from_a_members_allow_list(self):
-        allowed = allowed_queries_for("testuser", get_settings())
-        assert all("u.username = 'testuser'" in sql for sql in allowed)
+        allowed = allowed_queries_for(MEMBER_LOGIN, get_settings())
+        assert all("'user-' || u.id = 'user-1'" in sql for sql in allowed)
 
 
 class TestMemberAuthorisation:
     def test_own_dashboard_panel_is_allowed(self):
         sql = _panel_sql("mlops-ml.json", "My projects").replace(
-            "${__user.login}", "testuser"
+            "${__user.login}", MEMBER_LOGIN
         )
         authorize_query(_payload(sql), MEMBER)
 
@@ -185,12 +232,12 @@ class TestMemberAuthorisation:
                 raw = target.get("rawSql")
                 if not raw:
                     continue
-                sql = raw.replace("${__user.login}", "testuser")
+                sql = raw.replace("${__user.login}", MEMBER_LOGIN)
                 authorize_query(_payload(sql), MEMBER)
 
     def test_another_users_name_is_refused(self):
         sql = _panel_sql("mlops-ml.json", "My projects").replace(
-            "${__user.login}", "otheruser"
+            "${__user.login}", OTHER_LOGIN
         )
         with pytest.raises(QueryNotAllowed):
             authorize_query(_payload(sql), MEMBER)
@@ -202,7 +249,7 @@ class TestMemberAuthorisation:
     def test_appending_a_disjunction_to_a_valid_panel_is_refused(self):
         """The attack the allow-list exists for: a real panel, widened."""
         sql = _panel_sql("mlops-ml.json", "My projects").replace(
-            "${__user.login}", "testuser"
+            "${__user.login}", MEMBER_LOGIN
         )
         with pytest.raises(QueryNotAllowed):
             authorize_query(_payload(sql.rstrip().rstrip(";") + " OR TRUE"), MEMBER)
@@ -219,7 +266,7 @@ class TestMemberAuthorisation:
 
     def test_a_batch_mixing_allowed_and_forbidden_is_refused(self):
         good = _panel_sql("mlops-ml.json", "My projects").replace(
-            "${__user.login}", "testuser"
+            "${__user.login}", MEMBER_LOGIN
         )
         with pytest.raises(QueryNotAllowed):
             authorize_query(_payload(good, "SELECT * FROM users"), MEMBER)
@@ -234,7 +281,7 @@ class TestMemberAuthorisation:
 
     def test_whitespace_differences_are_tolerated(self):
         sql = _panel_sql("mlops-ml.json", "My projects").replace(
-            "${__user.login}", "testuser"
+            "${__user.login}", MEMBER_LOGIN
         )
         authorize_query(_payload("  " + sql.replace("\n", "\n\t") + "  "), MEMBER)
 
@@ -286,9 +333,9 @@ def _model_targets(key: str) -> list[str]:
     return [t[key] for p in document["panels"] for t in p["targets"] if key in t]
 
 
-def _render(template: str, model: str, username: str = "testuser") -> str:
+def _render(template: str, model: str, login: str = "user-1") -> str:
     """What Grafana sends once it has interpolated both variables."""
-    return template.replace("${__user.login}", username).replace("${model}", model)
+    return template.replace("${__user.login}", login).replace("${model}", model)
 
 
 def _prom_payload(*exprs: str) -> bytes:
@@ -362,7 +409,7 @@ class TestModelDashboard:
     def test_another_users_name_with_a_model_is_refused(self):
         raw = _model_targets("rawSql")[0]
         with pytest.raises(QueryNotAllowed):
-            authorize_query(_payload(_render(raw, "iris", "otheruser")), MEMBER)
+            authorize_query(_payload(_render(raw, "iris", OTHER_LOGIN)), MEMBER)
 
 
 class TestResourcesDashboard:
