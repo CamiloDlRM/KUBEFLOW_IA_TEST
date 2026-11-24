@@ -14,6 +14,10 @@ from models.schemas import AuthProvider, Repository, User, UserIdentity
 _PROVIDERS = {"github": ("GitHub", "@g"), "token": ("GitHub token", "@t")}
 
 
+class MissingOwnerToken(ValueError):
+    """The repository calls GitHub with its owner's token, and the owner has none."""
+
+
 def _fernet(settings: AppSettings) -> Fernet:
     key = base64.urlsafe_b64encode(
         hashlib.sha256(settings.jwt_secret_key.encode()).digest()
@@ -82,5 +86,36 @@ def repo_token(repo: Repository, settings: AppSettings) -> str:
     owner = session.get(User, repo.owner_id) if session and repo.owner_id else None
     token = user_token(session, owner, settings) if owner else ""
     if not token:
-        raise ValueError("The repository owner has no GitHub token. Update it in Settings.")
+        raise MissingOwnerToken("The repository owner has no GitHub token. Update it in Settings.")
     return token
+
+
+def token_problem(exc: BaseException, action: str) -> str | None:
+    """What a GitHub refusal says about the token, or None when it was not a refusal.
+
+    Every call to a repository goes with its owner's token (``repo_token``),
+    so a refusal is something only the owner can fix, in Settings. A 401 is a
+    token GitHub no longer accepts: expired or revoked. A 403, or a 404 on a
+    write (GitHub answers 404 rather than reveal a repository the token
+    cannot write to), is a token without permission on this repository.
+    Quoting the URL GitHub refused, as the raw error does, says none of that.
+    """
+    import httpx
+
+    if isinstance(exc, MissingOwnerToken):
+        return str(exc)
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    code = exc.response.status_code
+    if code == 401:
+        return (
+            f"GitHub rejected the repository owner's token while trying to {action}: it expired "
+            "or was revoked. The owner must update their GitHub token in Settings."
+        )
+    if code == 403 or (code == 404 and exc.request.method != "GET"):
+        return (
+            f"The repository owner's token cannot {action}: it has no write access to this "
+            "repository, or the branch is protected. The owner must update their GitHub token "
+            "in Settings."
+        )
+    return None
