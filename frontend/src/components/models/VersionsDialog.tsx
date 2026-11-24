@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { getModelVersions, serveModelVersion } from '../../api/client';
 import type { ModelVersion } from '../../types';
 import Spinner from '../Spinner';
+import { MaiaAvatar } from '../flow/Maia';
 import { formatDate, truncate } from '../../utils/format';
 
 /**
@@ -45,7 +46,7 @@ export default function VersionsDialog({ modelName, onClose }: { modelName: stri
     .slice(0, 3);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
         role="dialog"
         aria-label={`Versions of ${modelName}`}
@@ -60,11 +61,17 @@ export default function VersionsDialog({ modelName, onClose }: { modelName: stri
               Every run that registered a model is here, deployed or not.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
-            <X size={18} />
-          </button>
+          <div className="flex shrink-0 items-start gap-1">
+            {/* Maia in amber, as the Versions button is. */}
+            <MaiaAvatar size={48} mood="alert" />
+            <button onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+              <X size={18} />
+            </button>
+          </div>
         </header>
 
+        {/* The columns wrap to fit the dialog, so it only scrolls down; on a phone, too narrow
+            for even that, it may still scroll sideways rather than cut columns off. */}
         <div className="min-h-0 flex-1 overflow-auto">
           {isLoading && (
             <div className="flex h-40 items-center justify-center">
@@ -76,18 +83,21 @@ export default function VersionsDialog({ modelName, onClose }: { modelName: stri
             <p className="px-5 py-6 text-sm text-slate-400">No registered versions yet.</p>
           )}
           {versions && versions.length > 0 && (
-            <table className="min-w-full text-left text-xs">
+            <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-slate-900 text-[11px] uppercase tracking-wider text-slate-500">
                 <tr>
-                  <th scope="col" className="px-4 py-2 font-medium">Version</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Trained</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Version</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Trained</th>
                   {metricNames.map((name) => (
-                    <th key={name} scope="col" className="px-4 py-2 text-right font-medium">{name}</th>
+                    // May break after an underscore: precision_weighted need not be one long line.
+                    <th key={name} scope="col" className="px-3 py-2 text-right font-medium">
+                      {name.replace(/_/g, '_​')}
+                    </th>
                   ))}
-                  <th scope="col" className="px-4 py-2 font-medium">Trained on</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Parameters</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Code</th>
-                  <th scope="col" className="px-4 py-2" />
+                  <th scope="col" className="hidden px-3 py-2 font-medium lg:table-cell">Trained on</th>
+                  <th scope="col" className="hidden px-3 py-2 font-medium lg:table-cell">Parameters</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Code</th>
+                  <th scope="col" className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -152,23 +162,24 @@ function VersionRow({
 }) {
   return (
     <tr className={`border-t border-slate-800 ${version.is_active ? 'bg-emerald-950/20' : ''}`}>
-      <td className="px-4 py-2.5">
-        <span className="font-display text-sm text-slate-100">v{version.version}</span>
+      {/* Its status goes under the number, not beside it, to keep the column narrow. */}
+      <td className="px-3 py-2.5">
+        <span className="block font-display text-sm text-slate-100">v{version.version}</span>
         {version.is_active ? (
-          <span className="ml-2 rounded-full bg-emerald-900/60 px-2 py-0.5 text-[10px] font-medium text-emerald-300">serving</span>
+          <span className="mt-0.5 inline-block rounded-full bg-emerald-900/60 px-2 py-0.5 text-[10px] font-medium text-emerald-300">serving</span>
         ) : version.deployed_at ? (
-          <span className="ml-2 text-[10px] text-slate-500">served {formatDate(version.deployed_at)}</span>
+          <span className="mt-0.5 block text-[10px] text-slate-500">served {formatDate(version.deployed_at)}</span>
         ) : (
-          <span className="ml-2 text-[10px] text-slate-500">never served</span>
+          <span className="mt-0.5 block whitespace-nowrap text-[10px] text-slate-500">never served</span>
         )}
       </td>
-      <td className="whitespace-nowrap px-4 py-2.5 text-slate-400">{formatDate(version.trained_at)}</td>
+      <td className="px-3 py-2.5 text-slate-400">{formatDate(version.trained_at)}</td>
       {metricNames.map((name, index) => {
         const value = version.metrics[name];
         return (
           <td
             key={name}
-            className={`px-4 py-2.5 text-right font-display tabular-nums ${
+            className={`px-3 py-2.5 text-right font-display tabular-nums ${
               index === 0 && value !== undefined && value === best ? 'text-slate-100' : 'text-slate-400'
             }`}
           >
@@ -176,17 +187,18 @@ function VersionRow({
           </td>
         );
       })}
-      <td className="px-4 py-2.5 text-slate-400">{version.input_label || '—'}</td>
-      <td className="max-w-[14rem] truncate px-4 py-2.5 font-display text-[11px] text-slate-400">
+      <td className="hidden break-words px-3 py-2.5 text-slate-400 lg:table-cell">{version.input_label || '—'}</td>
+      <td className="hidden max-w-[10rem] break-words px-3 py-2.5 font-display text-[11px] text-slate-400 lg:table-cell">
         {Object.entries(version.parameters ?? {})
           .map(([name, value]) => `${name}=${value}`)
           .join(' ') || '—'}
       </td>
-      <td className="whitespace-nowrap px-4 py-2.5 font-display text-[11px] text-slate-500">
+      {/* Branch over commit, so a long branch name wraps instead of widening the table. */}
+      <td className="min-w-[8rem] max-w-[10rem] px-3 py-2.5 font-display text-[11px] text-slate-500 [overflow-wrap:anywhere]">
         {version.branch || '—'}
-        {version.commit_sha && ` @ ${truncate(version.commit_sha, 7)}`}
+        {version.commit_sha && <span className="block text-slate-600">@ {truncate(version.commit_sha, 7)}</span>}
       </td>
-      <td className="whitespace-nowrap px-4 py-2.5 text-right">
+      <td className="whitespace-nowrap px-3 py-2.5 text-right">
         {version.is_active ? null : !version.deployable || !version.pipeline_id ? (
           <span className="text-[11px] text-slate-600" title="Its artifact cannot be located">
             unavailable
