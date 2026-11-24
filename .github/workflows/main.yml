@@ -28,7 +28,25 @@ jobs:
       - name: Executting test
         working-directory: backend
         run: pytest tests/ --cov=. --cov-report=term-missing -v
-        
+
+  # The model server has its own tests and its own requirements; until this job
+  # nothing ran them, and one stayed broken on dev unnoticed.
+  test-model-server:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Installing Python
+        run: sudo apt update && sudo apt install python3 python3-pip -y
+
+      - name: Install dependencies
+        run: pip install -r model-server/requirements.txt
+
+      - name: Executing tests
+        working-directory: model-server
+        run: pytest tests/ -v
+
   test-frontend:
     runs-on: ubuntu-22.04
     container:

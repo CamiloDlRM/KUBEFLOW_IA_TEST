@@ -15,6 +15,10 @@ boto3==1.35.76
 # Model loading
 scikit-learn==1.5.2
 joblib==1.4.2
+# Same version in the worker and the model server: a model whose notebook
+# wrote its own classes is saved with cloudpickle (core/portable_model.py)
+# and loaded with it. It comes with mlflow; pinned so both images agree.
+cloudpickle==3.1.3
 numpy==1.26.4
 # Libraries a notebook adds (xgboost, lightgbm…) are not pinned here: the
 # worker installs them in the shared pylibs volume, mounted read-only here.

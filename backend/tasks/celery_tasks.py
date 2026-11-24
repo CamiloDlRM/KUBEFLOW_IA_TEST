@@ -1020,9 +1020,13 @@ def run_pipeline(
             # optional: without it the card has ranges but no descriptions.
             notes_output_path = os.path.join(tmpdir, "model_notes.json")
 
-            # Write notebook to disk
+            # Write notebook to disk, with the platform's last cell: it keeps
+            # classes written in the notebook inside the saved model, which the
+            # model server could not load otherwise (core/portable_model.py).
+            from core.portable_model import is_platform_cell, with_portable_model_cell, without_platform_cells
+
             with open(input_path, "w") as f:
-                json.dump(notebook, f)
+                json.dump(with_portable_model_cell(notebook), f)
 
             # Phase 3a: Mount the project's active dataset, only for a notebook
             # Phase 3a: Mount what the repository trains on.
@@ -1255,7 +1259,7 @@ def run_pipeline(
                 if os.path.exists(output_path):
                     try:
                         with open(output_path, "r") as f:
-                            failed_nb = nbformat.read(f, as_version=4)
+                            failed_nb = without_platform_cells(nbformat.read(f, as_version=4))
                         _update_pipeline_db(pipeline_id, cells=notebook_cells(failed_nb))
                     except Exception as read_exc:  # noqa: BLE001 - the original error matters more
                         log.warning("pipeline.cells.unreadable", error=str(read_exc))
@@ -1264,6 +1268,17 @@ def run_pipeline(
             # Read output notebook for cell logs
             with open(output_path, "r") as f:
                 output_nb = nbformat.read(f, as_version=4)
+            # What the platform's cell printed goes to the log; the cell itself
+            # is not the author's and is not shown among theirs.
+            portable_note = "".join(
+                out.get("text", "")
+                for cell in output_nb.cells
+                if is_platform_cell(cell)
+                for out in cell.get("outputs", [])
+            ).strip()
+            if portable_note:
+                log.info("pipeline.model.portable", note=portable_note)
+            without_platform_cells(output_nb)
             _update_pipeline_db(pipeline_id, cells=notebook_cells(output_nb))
 
             cell_logs = []
