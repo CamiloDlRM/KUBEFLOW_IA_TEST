@@ -21,6 +21,15 @@ writes a gold definition it writes SQL, which is then read, executed and
 reported on by the platform. It never returns rows. A model that hands back
 data is a model you have to trust; a model that hands back a query is one you
 can check, run twice, and diff.
+
+**The query runs sealed.** A definition is written by a project member or a
+model and then executed in the worker (and in the API, for previews), next to
+the database password, the encryption key and the object-store credentials.
+DuckDB can read any file or URL it is pointed at, so the silver relations are
+copied into memory first and the connection is then cut off from the file
+system and the network, with its configuration locked, before a single line of
+the definition runs. :func:`validate_sql` refuses the obvious attempts early
+and with a clear message; the sealed connection is what makes the rest fail.
 """
 from __future__ import annotations
 
@@ -48,13 +57,56 @@ class GoldError(RuntimeError):
 
 
 #: Statements that must never appear in a gold definition. The query runs
-#: against a throwaway in-process database over read-only Parquet files, so the
-#: blast radius is already small — but a definition is written once and run on
-#: every extraction afterwards, and "it can only corrupt its own scratch
-#: database" is not a sentence worth having to say.
+#: against a throwaway in-process database that has already been sealed off
+#: from files and the network (see :func:`_seal`) — but a definition is written
+#: once and run on every extraction afterwards, and "the engine would have
+#: stopped it" is not a sentence worth having to say.
 _FORBIDDEN: Final[tuple[str, ...]] = (
     "attach", "copy", "create", "delete", "drop", "export", "insert", "install",
     "load", "pragma", "set", "update", "call", "import",
+)
+
+#: Functions that read files, URLs or the process environment. A gold
+#: definition reads the project's silver relations and nothing else, so a call
+#: to any of these is refused by name. This is defence in depth: the sealed
+#: connection already refuses every one of them, but a refusal at save time
+#: names the problem, where a failure at build time only reports it.
+_FILE_FUNCTIONS: Final[tuple[str, ...]] = (
+    # Plain files.
+    "read_text", "read_blob", "glob",
+    # CSV.
+    "read_csv", "read_csv_auto", "sniff_csv",
+    # JSON.
+    "read_json", "read_json_auto", "read_json_objects", "read_json_objects_auto",
+    "read_ndjson", "read_ndjson_auto", "read_ndjson_objects",
+    # Parquet, including the metadata readers, which open the file too.
+    "read_parquet", "parquet_scan", "parquet_metadata", "parquet_schema",
+    "parquet_file_metadata", "parquet_kv_metadata",
+    # Table formats and extension scanners — files, object stores, databases.
+    "iceberg_scan", "iceberg_metadata", "iceberg_snapshots", "delta_scan",
+    "sqlite_scan", "postgres_scan", "mysql_scan", "st_read",
+    # The environment is where the secrets are.
+    "getenv",
+)
+
+#: A call to one of :data:`_FILE_FUNCTIONS`: bare, schema-qualified
+#: (``main.read_text``) or quoted (``"read_text"``), with any whitespace before
+#: the parenthesis. Longest names first so the reported name is the whole one.
+_FILE_FUNCTION_CALL = re.compile(
+    r"\b("
+    + "|".join(re.escape(name) for name in sorted(_FILE_FUNCTIONS, key=len, reverse=True))
+    + r')"?\s*\('
+)
+
+#: A path used directly as a table: ``FROM '/etc/passwd.csv'`` or
+#: ``JOIN "s3://bucket/x.parquet"``. DuckDB turns either into a file scan
+#: without any function being named, so the name check above cannot see it.
+#: Only quoted text that looks like a path counts — a separator, an extension
+#: or a glob — so ``IS DISTINCT FROM 'closed'`` and ``EXTRACT(year FROM
+#: '2024-01-01'::date)`` are left alone. A comma join (``FROM a, 'x.csv'``)
+#: is not caught here; the sealed connection refuses it all the same.
+_PATH_AS_TABLE = re.compile(
+    r"""\b(?:from|join)\s*(?:'[^']*[/\\.*?]|"[^"]*[/\\.*?])"""
 )
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -96,6 +148,19 @@ def validate_sql(sql: str) -> None:
                 f"a gold definition may only read: {word.upper()} is not allowed"
             )
 
+    call = _FILE_FUNCTION_CALL.search(lowered)
+    if call:
+        raise GoldError(
+            "a gold definition may only read the project's silver relations: "
+            f"{call.group(1)}() reads files, URLs or the environment and is not allowed"
+        )
+
+    if _PATH_AS_TABLE.search(lowered):
+        raise GoldError(
+            "a gold definition may only read the project's silver relations: "
+            "reading a file or URL by its path is not allowed"
+        )
+
 
 def default_sql(relations: Sequence[str]) -> str:
     """The definition a project gets before it writes one of its own.
@@ -136,30 +201,58 @@ class GoldBuild:
         }
 
 
+def _seal(connection: Any) -> None:
+    """Cut a connection off from everything but the tables it already holds.
+
+    After this the connection cannot read or write a file, reach a URL, attach
+    a database, install or load an extension, or scan a Python object by name —
+    and, because the configuration is locked, it cannot undo any of that
+    either. DuckDB only allows external access to be switched *off* while a
+    database is open, and ``lock_configuration`` refuses every later ``SET``
+    and ``RESET``, so the order below matters: the lock goes last.
+    """
+    # Already implied by disabling external access in the Python client, but
+    # that coupling is an implementation detail; this one is said out loud.
+    connection.execute("SET python_enable_replacements = false")
+    connection.execute("SET enable_external_access = false")
+    connection.execute("SET lock_configuration = true")
+
+
 def _connect(relations: dict[str, Sequence[Path]]) -> Any:
-    """Open an in-memory DuckDB with one view per silver relation."""
+    """Open a sealed in-memory DuckDB holding one table per silver relation.
+
+    The relations are materialised as tables, not views over the Parquet
+    files, because a view reads its files when it is queried — which would be
+    after the connection is sealed, by which point no file can be read. Copying
+    them in first means nothing on this connection needs the file system once
+    a gold definition is allowed to run on it.
+    """
     import duckdb
 
-    connection = duckdb.connect(":memory:")
-    for name, paths in relations.items():
+    for name in relations:
         if not _IDENTIFIER.match(name):
             raise GoldError(f"{name!r} is not a usable relation name")
-        if not paths:
-            continue
-        # The file list is inlined rather than bound. DuckDB will not prepare a
-        # CREATE VIEW, so a parameter here fails outright — and these paths are
-        # not user input in any case: they are temporary files this process
-        # just created. Quotes are still escaped, because "not user input
-        # today" is the assumption every path-injection bug was built on.
-        files = ", ".join("'" + str(path).replace("'", "''") + "'" for path in paths)
-        # union_by_name because a source's schema can widen between
-        # extractions — a column added to the hospital table last month is
-        # present in the newer objects and absent from the older ones, and
-        # positional union would silently shift every value one column left.
-        connection.execute(
-            f"CREATE VIEW {name} AS "
-            f"SELECT * FROM read_parquet([{files}], union_by_name := true)"
-        )
+
+    connection = duckdb.connect(":memory:")
+    try:
+        for name, paths in relations.items():
+            if not paths:
+                continue
+            # The name is interpolated (an identifier cannot be bound) and was
+            # checked against _IDENTIFIER above; the file list is bound.
+            # union_by_name because a source's schema can widen between
+            # extractions — a column added to the hospital table last month is
+            # present in the newer objects and absent from the older ones, and
+            # positional union would silently shift every value one column left.
+            connection.execute(
+                f"CREATE TABLE {name} AS "
+                "SELECT * FROM read_parquet(?, union_by_name := true)",
+                [[str(path) for path in paths]],
+            )
+        _seal(connection)
+    except Exception:
+        connection.close()
+        raise
     return connection
 
 
@@ -220,9 +313,12 @@ def build(
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        # Written batch by batch rather than materialised. A gold definition is
-        # written by a person or a model and can be an unguarded cross join;
-        # the result should be able to exceed the worker without taking it out.
+        # The result leaves DuckDB as Arrow and is written by pyarrow, never by
+        # a COPY: the connection is sealed and cannot write a file — which is
+        # the point. It is fetched batch by batch rather than materialised,
+        # because a gold definition is written by a person or a model and can
+        # be an unguarded cross join; the result should be able to exceed the
+        # worker without taking it out.
         reader = connection.execute(f"SELECT * FROM (\n{body}\n) AS gold").fetch_record_batch(
             _BATCH
         )

@@ -117,9 +117,20 @@ class AppSettings(BaseSettings):
         default=True,
         description="Generate AI feedback automatically after each pipeline run.",
     )
-    ai_advisor_provider: Literal["anthropic", "gemini", "ollama"] = Field(
+    ai_advisor_provider: Literal["anthropic", "gemini", "ollama", "openai"] = Field(
         default="anthropic",
-        description="LLM provider used to generate training feedback.",
+        description=(
+            "LLM provider used to generate training feedback. 'openai' covers "
+            "everything serving the OpenAI chat API (Groq, OpenRouter, ...)."
+        ),
+    )
+    ai_advisor_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        description="Where to send the advisor's calls (provider=openai). No trailing path.",
+    )
+    ai_advisor_api_key: str = Field(
+        default="",
+        description="Bearer token for that endpoint (provider=openai).",
     )
     ai_advisor_model: str = Field(
         default="",

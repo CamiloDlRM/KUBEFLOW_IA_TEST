@@ -93,6 +93,31 @@ describe('UploadPanel', () => {
     expect(screen.getByText(/follow it below/)).toBeInTheDocument();
   });
 
+  it('still shows an upload in flight after leaving the page and coming back', async () => {
+    let fail!: (reason: Error) => void;
+    uploadDataset.mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const panel = () => (
+      <QueryClientProvider client={client}>
+        <UploadPanel projectId={4} />
+      </QueryClientProvider>
+    );
+
+    const first = render(panel());
+    await userEvent.upload(screen.getByLabelText('Dataset file'), new File(['a,b\n1,2\n'], 'admissions.csv'));
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    await screen.findByRole('button', { name: /Uploading/ });
+    first.unmount();
+
+    render(panel());
+    expect(screen.getByRole('button', { name: /Uploading/ })).toBeDisabled();
+    expect(screen.getByText('admissions.csv')).toBeInTheDocument();
+
+    fail(new Error('Network Error'));
+    expect(await screen.findByText('Upload failed: Network Error')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeInTheDocument();
+  });
+
   it('refreshes the layers on the page when an upload finishes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     getUploads.mockResolvedValue([status({ status: 'running' })]);

@@ -29,6 +29,7 @@ import type {
   PipelinePhase,
   PipelineStats,
   Project,
+  ProjectPrivacy,
   ReadyResponse,
   Repository,
   RepoNotebook,
@@ -348,6 +349,21 @@ export function runSettings(overrides: Partial<RunSettings> = {}): RunSettings {
     is_default: true,
     metrics_available: ['accuracy'],
     last_parameters: {},
+    ...overrides,
+  };
+}
+
+/** A project with ordinary data: no health protection, nothing to show for it. */
+export function projectPrivacy(overrides: Partial<ProjectPrivacy> = {}): ProjectPrivacy {
+  return {
+    project_id: 1,
+    classification: 'general',
+    legal_basis: null,
+    policy: { pseudonymize: [], suppress: [], keep: [] },
+    protection: {},
+    unprotected_runs: 0,
+    sources: [],
+    legal_bases: [],
     ...overrides,
   };
 }

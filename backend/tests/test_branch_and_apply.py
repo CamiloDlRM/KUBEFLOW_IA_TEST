@@ -240,6 +240,54 @@ class TestNotebookPatching:
         # Tags preserved
         assert patched["cells"][2]["metadata"]["tags"] == ["mlops:training"]
 
+    def test_applying_fixes_the_diagnosis_and_nothing_else(self):
+        """The validation's first round: applying every recommendation at once broke half the fixes."""
+        from core.ai_advisor import APPLY_SYSTEM_PROMPT
+
+        assert "smallest change" in APPLY_SYSTEM_PROMPT
+        assert "do NOT implement it here" in APPLY_SYSTEM_PROMPT
+        assert "Do not import any" in APPLY_SYSTEM_PROMPT
+
+    def test_the_tag_wins_over_a_miscounted_index(self, sample_notebook):
+        """Seen in the validation: the index of the cell before, counted without the markdown."""
+        from core.ai_advisor import apply_cells_patch
+
+        patched = apply_cells_patch(
+            sample_notebook,
+            [{"index": 1, "tag": "mlops:training", "source": "model = RandomForestClassifier()\n"}],
+        )
+
+        assert "".join(patched["cells"][2]["source"]).startswith("model = RandomForest")
+        assert patched["cells"][1] == sample_notebook["cells"][1], "the cell the index named is untouched"
+
+    def test_an_index_on_the_title_markdown_follows_the_parameters_tag(self):
+        """Seen in production: a title in markdown at index 0, and a change for
+        the parameters cell sent with index 0. The tag is not mlops:*, and
+        must still win."""
+        from core.ai_advisor import apply_cells_patch
+
+        notebook = {
+            "cells": [
+                {"cell_type": "markdown", "metadata": {}, "source": ["# PULSO v1\n"]},
+                {"cell_type": "code", "metadata": {"tags": ["parameters"]}, "source": ["DATASET_PATH = \"\"\n"],
+                 "outputs": [], "execution_count": None},
+                {"cell_type": "code", "metadata": {"tags": ["mlops:training"]}, "source": ["model.fit(X, y)\n"],
+                 "outputs": [], "execution_count": None},
+            ]
+        }
+
+        patched = apply_cells_patch(notebook, [{"index": 0, "tag": "parameters", "source": "DATASET_PATH = \"x\"\n"}])
+
+        assert "".join(patched["cells"][1]["source"]) == "DATASET_PATH = \"x\"\n"
+        assert patched["cells"][0] == notebook["cells"][0], "the title is untouched"
+
+    def test_without_a_tag_the_index_is_used(self, sample_notebook):
+        from core.ai_advisor import apply_cells_patch
+
+        patched = apply_cells_patch(sample_notebook, [{"index": 2, "tag": "", "source": "x = 1\n"}])
+
+        assert "".join(patched["cells"][2]["source"]) == "x = 1\n"
+
     def test_apply_cells_patch_rejects_bad_index(self, sample_notebook):
         import pytest
 

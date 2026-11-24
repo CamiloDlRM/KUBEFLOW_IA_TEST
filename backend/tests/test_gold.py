@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pytest
 
+from core import gold
 from core.gold import (
     GoldError,
     build,
@@ -233,3 +235,158 @@ def test_relations_are_described_with_their_types_and_row_counts(patients, encou
 def test_a_source_with_no_silver_yet_is_simply_absent(patients):
     described = describe_relations({"patients": [patients], "encounters": []})
     assert "encounters" not in described
+
+
+# ---------------------------------------------------------------------------
+# Reading anything but silver
+#
+# A definition runs in the worker and the API, beside the database password,
+# the encryption key and the object-store credentials. It may read the
+# project's silver relations and nothing else: no file, no URL, no environment.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def secret(tmp_path) -> Path:
+    """A file outside silver, standing in for /proc/self/environ or a .env.
+
+    A real file the test can prove is readable, rather than /etc/hosts: a path
+    that does not exist (as on Windows) would fail without any sandbox at all,
+    and a test that cannot fail proves nothing.
+    """
+    path = tmp_path / "worker-env.csv"
+    path.write_text("key,value\nFERNET_KEY,not-a-real-key\n")
+    return path
+
+
+@pytest.fixture()
+def unvalidated(monkeypatch):
+    """Switch :func:`validate_sql` off, so the sealed connection stands alone."""
+    monkeypatch.setattr(gold, "validate_sql", lambda sql: None)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM read_text('/etc/hosts')",
+        "SELECT * FROM read_text('/proc/self/environ')",
+        "SELECT * FROM read_csv('/etc/passwd')",
+        "SELECT * FROM read_csv_auto('C:/app/.env')",
+        "SELECT * FROM read_blob('/etc/hosts')",
+        "SELECT * FROM read_json_auto('/run/secrets/db.json')",
+        "SELECT * FROM read_parquet('s3://gold/other-project/gold.parquet')",
+        "SELECT * FROM parquet_scan('/tmp/*/silver/*/part-*.parquet')",
+        "SELECT * FROM glob('/')",
+        "SELECT * FROM sniff_csv('/etc/passwd')",
+        "SELECT getenv('FERNET_KEY')",
+        # Spelled to slip past a naive check.
+        'SELECT * FROM "read_text"(\'/etc/hosts\')',
+        "SELECT * FROM main.read_text('/etc/hosts')",
+        "SELECT * FROM READ_TEXT  ('/etc/hosts')",
+        "SELECT * FROM read_text/* nothing here */('/etc/hosts')",
+        # Hidden inside an otherwise ordinary query.
+        "SELECT p.* FROM patients p CROSS JOIN read_csv('/etc/passwd') AS x",
+        "WITH x AS (SELECT * FROM read_text('/etc/hosts')) SELECT * FROM patients, x",
+    ],
+)
+def test_a_definition_that_reads_files_or_the_network_is_refused(sql):
+    with pytest.raises(GoldError, match="reads files, URLs or the environment"):
+        validate_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM '/etc/passwd.csv'",
+        "SELECT * FROM 's3://bucket/x.parquet'",
+        "SELECT * FROM patients JOIN '/tmp/other/part-00000.parquet' USING (patient_id)",
+        'SELECT * FROM "/tmp/*/silver/*.parquet"',
+    ],
+)
+def test_a_path_used_as_a_table_is_refused(sql):
+    """DuckDB reads ``FROM 'file.csv'`` without any function being named."""
+    with pytest.raises(GoldError, match="by its path"):
+        validate_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT glob_pattern, my_read_csv_flag FROM patients",
+        "SELECT * FROM patients WHERE ward GLOB 'IC*'",
+        "SELECT * FROM patients WHERE status IS DISTINCT FROM 'closed'",
+        "SELECT EXTRACT(year FROM '2024-01-01'::date) AS y FROM patients",
+        "SELECT 'please read the text' AS note FROM \"patients\"",
+    ],
+)
+def test_the_file_checks_do_not_refuse_ordinary_queries(sql):
+    validate_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "SELECT content FROM read_text('{path}')",
+        "SELECT * FROM read_csv('{path}')",
+        "SELECT * FROM read_blob('{path}')",
+        "SELECT * FROM '{path}'",
+        "SELECT * FROM glob('{directory}/*')",
+        "SELECT p.patient_id, s.* FROM patients p CROSS JOIN read_csv('{path}') AS s",
+    ],
+)
+def test_with_validation_bypassed_the_build_still_cannot_read_a_file(
+    tmp_path, patients, secret, unvalidated, monkeypatch, template
+):
+    """The seal does not depend on validate_sql having caught the query."""
+    sql = template.format(path=secret.as_posix(), directory=secret.parent.as_posix())
+    relations = {"patients": [patients]}
+
+    # The control: unsealed, this exact query reaches the file. So the refusal
+    # below is the seal's doing, not a typo or a path that does not exist.
+    with monkeypatch.context() as unsealed:
+        unsealed.setattr(gold, "_seal", lambda connection: None)
+        _, leaked = build(relations, sql, tmp_path / "leak.parquet", preview_rows=10)
+    assert "not-a-real-key" in str(leaked) or secret.name in str(leaked)
+
+    with pytest.raises(GoldError, match="disabled through configuration") as caught:
+        build(relations, sql, tmp_path / "gold.parquet")
+    assert "not-a-real-key" not in str(caught.value)
+
+
+def test_the_connection_a_definition_runs_on_is_sealed_and_locked(patients):
+    connection = gold._connect({"patients": [patients]})
+    try:
+        settings = {
+            name: connection.execute(f"SELECT current_setting('{name}')").fetchone()[0]
+            for name in (
+                "enable_external_access",
+                "lock_configuration",
+                "python_enable_replacements",
+            )
+        }
+        assert settings == {
+            "enable_external_access": False,
+            "lock_configuration": True,
+            "python_enable_replacements": False,
+        }
+        # A definition cannot open the door again, whatever it is wrapped in.
+        with pytest.raises(duckdb.Error, match="locked"):
+            connection.execute("SET enable_external_access = true")
+        with pytest.raises(duckdb.Error, match="locked"):
+            connection.execute("RESET lock_configuration")
+        # Silver was copied in before the seal, so it is still there to read.
+        # A view over the Parquet files would fail here: it reads its files
+        # when queried, and by now no file can be read.
+        assert connection.execute("SELECT count(*) FROM patients").fetchone()[0] == 3
+    finally:
+        connection.close()
+
+
+def test_the_default_over_several_sources_still_builds(tmp_path, patients, encounters):
+    """The sealed build changes where silver lives, not what gold contains."""
+    relations = {"encounters": [encounters], "patients": [patients]}
+    result, _ = build(relations, default_sql(sorted(relations)), tmp_path / "gold.parquet")
+
+    assert result.rows == 6
+    assert set(result.columns) == {"patient_id", "age", "cost"}
+    assert result.relations == {"encounters": 3, "patients": 3}

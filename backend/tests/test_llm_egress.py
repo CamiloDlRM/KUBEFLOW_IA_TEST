@@ -147,6 +147,24 @@ class TestAHealthProject:
         assert egress.health and columns == ["age", "target"]
 
 
+class TestTheValidationCapture:
+    def test_off_unless_switched_on(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_EGRESS_CAPTURE_DIR", raising=False)
+
+        Egress(agent="advisor.analysis", health=True).outgoing("prompt")
+
+        assert not list(tmp_path.iterdir())
+
+    def test_on_it_keeps_exactly_what_left(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LLM_EGRESS_CAPTURE_DIR", str(tmp_path))
+
+        sent = Egress(agent="advisor.analysis", project_id=7, health=True).outgoing(f"write to {SENTINEL}")
+
+        lines = [json.loads(line) for file in tmp_path.iterdir() for line in file.read_text().splitlines()]
+        assert [(line["agent"], line["project_id"], line["text"]) for line in lines] == [("advisor.analysis", 7, sent)]
+        assert "999-12-3456" not in lines[0]["text"]
+
+
 class TestTheRecordSaysWhoReceivedTheCall:
     def test_a_named_provider_is_enough(self):
         assert advisor_recipient(AppSettings(ai_advisor_provider="anthropic")) == "anthropic"
@@ -161,6 +179,11 @@ class TestTheRecordSaysWhoReceivedTheCall:
         settings = AppSettings(ai_advisor_provider="ollama", ollama_base_url="http://host.docker.internal:11434")
 
         assert advisor_recipient(settings) == "ollama (host.docker.internal)"
+
+    def test_an_openai_compatible_advisor_is_named_by_its_host(self):
+        settings = AppSettings(ai_advisor_provider="openai", ai_advisor_base_url="https://api.groq.com/openai/v1")
+
+        assert advisor_recipient(settings) == "openai (api.groq.com)"
 
     def test_without_a_url_the_provider_stands_alone(self):
         assert recipient("openai") == "openai"

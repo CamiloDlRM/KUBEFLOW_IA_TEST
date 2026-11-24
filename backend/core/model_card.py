@@ -34,6 +34,18 @@ the actual model answer any row typed into it.
 The features come from the notebook (``TRAINING_FEATURES_PATH``), because only
 the notebook knows what it fitted on: derived columns like a duration exist
 nowhere upstream.
+
+**One answer for everything.** The card also says when the model gives the
+same answer for nearly every row it was trained on. A model asked about its own
+training data reproduces its variety; one that does not has usually been
+handed something other than what it learned from. The common cause is a
+transformation applied before ``fit()`` and left out of the saved model — a
+scaler fitted in the notebook, the forest saved alone. The model-server then
+sends it raw values it reads on the wrong scale, and every flower comes back
+as the same species. The platform cannot repair that (only the notebook knows
+which steps belong to the model) but it can say so, instead of drawing a guide
+that looks right over answers that are not. A class that really is that common
+in the data triggers it too, which is why it is worded as a possibility.
 """
 from __future__ import annotations
 
@@ -51,6 +63,10 @@ BINS = 20
 SAMPLE = 5_000
 #: Categories kept for a non-numeric input.
 MAX_CATEGORIES = 20
+#: Share of the training rows given one answer past which the card warns.
+SAME_ANSWER_SHARE = 0.99
+#: Rows needed before that share means anything.
+SAME_ANSWER_MIN_ROWS = 30
 
 
 def _plain(value: Any) -> Any:
@@ -132,6 +148,27 @@ def _category_effect(column: pd.Series, answers: pd.Series, classifier: bool) ->
     return effect
 
 
+def _same_answer_warning(answers: pd.Series, classes: int | None) -> str:
+    """A warning when the model answers its training rows almost all alike, else "".
+
+    ``classes`` is how many classes a classifier knows (None for a regressor).
+    A classifier that knows a single class cannot answer anything else, so it
+    is not warned about.
+    """
+    if len(answers) < SAME_ANSWER_MIN_ROWS or (classes is not None and classes < 2):
+        return ""
+    label, share = _majority(answers)
+    if share < SAME_ANSWER_SHARE:
+        return ""
+    return (
+        f"The model answers {_plain(label)} for {share:.0%} of the rows it was trained on. "
+        "If the notebook transforms the data before fit() (a scaler, an encoder) and saves "
+        "the model without that step, the model expects transformed values and reads what "
+        "it is sent on the wrong scale: put those steps in a Pipeline with the model. If "
+        "that answer really is this common in the data, this can be ignored."
+    )
+
+
 def describe(model: Any, features: pd.DataFrame) -> dict[str, Any]:
     """Build the card for ``model`` from the features it was fitted on."""
     names = [str(name) for name in getattr(model, "feature_names_in_", features.columns)]
@@ -208,6 +245,7 @@ def describe(model: Any, features: pd.DataFrame) -> dict[str, Any]:
     # One prediction per training row, reused for every input's ranges. The
     # model sees each row whole — every input as it really was together.
     answers = pd.Series(model.predict(frame), index=frame.index)
+    card["warning"] = _same_answer_warning(answers, len(model.classes_) if classifier else None)
 
     for spec in inputs:
         column = frame[spec["name"]]

@@ -8,6 +8,7 @@ MLOps notebooks must contain cells tagged with the following markers:
 """
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any
 
@@ -51,21 +52,48 @@ def get_cells_by_tag(notebook: dict[str, Any], tag: str) -> list[dict[str, Any]]
     ]
 
 
-_DATASET_PATH_DECLARATION = re.compile(r"^\s*DATASET_PATH\s*=", re.MULTILINE)
+_MAGIC_LINE = re.compile(r"^(\s*)[!%].*$", re.MULTILINE)
+
+
+def code_cells(notebook: dict[str, Any]) -> list[str]:
+    """The source of every code cell the author wrote, papermill's own left out."""
+    return [
+        _text(cell.get("source"))
+        for cell in notebook.get("cells", [])
+        if cell.get("cell_type") == "code" and INJECTED_TAG not in _cell_tags(cell)
+    ]
+
+
+def parse_code(source: str) -> ast.Module | None:
+    """A cell's code as a syntax tree, or None when it is not valid Python.
+
+    Jupyter lines (``!pip install x``, ``%matplotlib inline``) are not Python;
+    they become ``pass`` so the rest of the cell still parses.
+    """
+    try:
+        return ast.parse(_MAGIC_LINE.sub(r"\1pass", source))
+    except SyntaxError:
+        return None
+
+
+def _without_comments(source: str) -> str:
+    return "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
 
 
 def uses_project_dataset(notebook: dict[str, Any]) -> bool:
     """Whether the notebook reads the project's gold data.
 
-    The contract is the papermill ``parameters`` cell: a notebook that declares
-    ``DATASET_PATH`` there expects the platform to hand it the project's active
-    dataset; one that does not brings its own data, so nothing is downloaded.
+    Any cell that uses ``DATASET_PATH`` counts, declared in the ``parameters``
+    cell or not: a notebook that reads the name without declaring it still
+    expects the platform to hand it the data, and saying it "brings its own"
+    would leave the name undefined when the code reaches it.
     """
-    for cell in get_cells_by_tag(notebook, "parameters"):
-        source = cell.get("source", "")
-        if isinstance(source, list):
-            source = "".join(source)
-        if _DATASET_PATH_DECLARATION.search(source):
+    for source in code_cells(notebook):
+        tree = parse_code(source)
+        if tree is None:
+            if re.search(r"\bDATASET_PATH\b", _without_comments(source)):
+                return True
+        elif any(isinstance(node, ast.Name) and node.id == "DATASET_PATH" for node in ast.walk(tree)):
             return True
     return False
 

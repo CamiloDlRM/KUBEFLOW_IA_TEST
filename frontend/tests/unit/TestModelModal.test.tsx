@@ -155,6 +155,19 @@ describe('TestModelModal', () => {
     expect(api).toHaveTextContent(`-d '{"data":[[30,130]]}'`);
   });
 
+  it('warns, above the guide, when the model answers its training rows all alike', () => {
+    renderModal(model({ ...CARD, warning: 'The model answers inpatient for 100% of the rows it was trained on.' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('answers inpatient for 100%');
+    expect(screen.getByRole('region', { name: 'Inputs' })).toBeInTheDocument();
+  });
+
+  it('shows no warning for a model that tells its rows apart', () => {
+    renderModal();
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('falls back to raw JSON, and says how to get the guide, for a model without a card', () => {
     renderModal(model({}));
 

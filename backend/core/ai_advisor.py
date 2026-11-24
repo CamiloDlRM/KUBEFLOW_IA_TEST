@@ -34,6 +34,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
     "gemini": "gemini-pro-latest",
     "ollama": "llama3.1",
+    "openai": "openai/gpt-oss-120b",
 }
 
 SYSTEM_PROMPT = """\
@@ -96,6 +97,8 @@ def advisor_configured(settings: AppSettings | None = None) -> bool:
         return bool(settings.gemini_api_key)
     if provider == "ollama":
         return bool(settings.ollama_base_url)
+    if provider == "openai":
+        return bool(settings.ai_advisor_base_url and settings.ai_advisor_api_key)
     return False
 
 
@@ -256,10 +259,43 @@ def _generate_ollama(
     return text
 
 
+def _generate_openai(
+    settings: AppSettings, model: str, prompt: str, system: str = SYSTEM_PROMPT
+) -> str:
+    """Anything serving the OpenAI chat API: Groq, OpenRouter, a local server.
+
+    Moving between them is the base URL and the model name, the same as for
+    the dashboard agent (DASHBOARD_AGENT_PROVIDER=openai).
+    """
+    import httpx
+
+    base = settings.ai_advisor_base_url.rstrip("/")
+    resp = httpx.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {settings.ai_advisor_api_key}"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 16000,
+        },
+        timeout=300,
+    )
+    resp.raise_for_status()
+    choices = resp.json().get("choices") or []
+    text = (choices[0].get("message", {}).get("content") or "") if choices else ""
+    if not text.strip():
+        raise RuntimeError("The OpenAI-compatible provider returned an empty response.")
+    return text
+
+
 _BACKENDS = {
     "anthropic": _generate_anthropic,
     "gemini": _generate_gemini,
     "ollama": _generate_ollama,
+    "openai": _generate_openai,
 }
 
 
@@ -336,10 +372,23 @@ APPLY_SYSTEM_PROMPT = """\
 You are an expert ML engineer. You receive a training notebook (its code cells, \
 each with an index) and a review report with improvement recommendations.
 
-Apply the recommendations from the report directly to the notebook code. Keep \
-the notebook's overall structure and the `mlops:*` cell tags working: do NOT \
-remove or rename MODEL_NAME, VERSION, MODEL_OUTPUT_PATH, or the joblib.dump \
-export. Only change what the report justifies.
+Fix the problem the report diagnoses, with the smallest change that fixes it:
+- If the run FAILED, fix the error that made it fail.
+- If the run succeeded, fix the most important defect in the report's \
+"Diagnostico" section (for example data leakage, evaluating on the training \
+data, a wrong metric, labels misaligned with the features).
+
+Everything else in the report (new features, other models, tuning, refactors, \
+extra logging) stays a suggestion for the developer: do NOT implement it here. \
+A correction that also adds improvements is a correction that can break, and \
+then nobody can tell which change did.
+
+Keep the notebook's overall structure and the `mlops:*` cell tags working: do \
+NOT remove or rename MODEL_NAME, VERSION, MODEL_OUTPUT_PATH, or the joblib.dump \
+export, and do not change how the notebook uses MLflow, the parameters cell or \
+the export cell unless the diagnosed problem is in them. Do not import any \
+library the notebook does not already import: only those are known to be \
+installed.
 
 Respond ONLY with a JSON object, no prose and no Markdown fences, with exactly \
 this shape:
@@ -347,12 +396,13 @@ this shape:
 {
   "commit_message": "<one-line conventional commit message in Spanish>",
   "cells": [
-    {"index": <int, index of an existing code cell>, "source": "<the FULL new source code of that cell>"}
+    {"index": <int, the number in the cell's "# --- Cell N" header>, "tag": "<the cell's tag from that header, such as parameters or mlops:training, or an empty string if it has none>", "source": "<the FULL new source code of that cell>"}
   ]
 }
 
 Rules:
 - Include only the cells you actually changed.
+- Copy "index" and "tag" from the header of the cell you are replacing.
 - "source" must be the complete replacement source for the cell, not a diff.
 - The code must be valid Python that runs top-to-bottom in the notebook.\
 """
@@ -376,7 +426,16 @@ def _extract_json(text: str) -> dict[str, Any]:
 def apply_cells_patch(
     notebook: dict[str, Any], cells: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Return a copy of the notebook with the given cell sources replaced."""
+    """Return a copy of the notebook with the given cell sources replaced.
+
+    A change names its cell twice: by index and by ``mlops:*`` tag. The tag
+    wins. Indices count every cell, markdown included, and a model that
+    counts only the code cells lands one off: during the validation one
+    rewrote the data cell with the preprocessing code, which deleted the
+    target column's definition and left the fault where it was. A tag is
+    unique and copied verbatim from the cell's header, so it cannot be
+    miscounted.
+    """
     import copy
 
     patched = copy.deepcopy(notebook)
@@ -384,6 +443,15 @@ def apply_cells_patch(
     for change in cells:
         index = change.get("index")
         source = change.get("source", "")
+        tag = (change.get("tag") or "").strip()
+        if tag:
+            tagged = [
+                position
+                for position, cell in enumerate(nb_cells)
+                if cell.get("cell_type") == "code" and tag in cell.get("metadata", {}).get("tags", [])
+            ]
+            if len(tagged) == 1:
+                index = tagged[0]
         if not isinstance(index, int) or index < 0 or index >= len(nb_cells):
             raise ValueError(f"Patch references invalid cell index: {index}")
         if nb_cells[index].get("cell_type") != "code":

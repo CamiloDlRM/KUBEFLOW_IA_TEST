@@ -205,6 +205,15 @@ class TestProviderConfig:
         )
         assert not advisor_configured(settings)
 
+    def test_openai_compatible_needs_a_key(self, monkeypatch):
+        from core.ai_advisor import advisor_configured
+
+        settings = self._settings(monkeypatch, AI_ADVISOR_PROVIDER="openai")
+        assert not advisor_configured(settings)
+
+        settings = self._settings(monkeypatch, AI_ADVISOR_PROVIDER="openai", AI_ADVISOR_API_KEY="gsk-x")
+        assert advisor_configured(settings)
+
     def test_resolve_model_defaults_per_provider(self, monkeypatch):
         from core.ai_advisor import resolve_model
 
@@ -315,3 +324,34 @@ class TestProviderBackends:
         body = mock_post.call_args.kwargs["json"]
         assert body["model"] == "llama3.1"
         assert body["stream"] is False
+
+    def test_openai_compatible_parses_the_chat_completion(self, monkeypatch):
+        from core.ai_advisor import _generate_openai
+
+        settings = self._settings(
+            monkeypatch,
+            AI_ADVISOR_PROVIDER="openai",
+            AI_ADVISOR_BASE_URL="https://api.groq.com/openai/v1/",
+            AI_ADVISOR_API_KEY="gsk-x",
+        )
+        response = MagicMock()
+        response.json.return_value = {"choices": [{"message": {"role": "assistant", "content": "## Resumen\nok"}}]}
+        with patch("httpx.post", return_value=response) as mock_post:
+            report = _generate_openai(settings, "openai/gpt-oss-120b", "hola")
+
+        assert report == "## Resumen\nok"
+        assert mock_post.call_args.args[0] == "https://api.groq.com/openai/v1/chat/completions"
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer gsk-x"
+        assert mock_post.call_args.kwargs["json"]["messages"][0]["role"] == "system"
+
+    def test_openai_compatible_raises_on_an_empty_answer(self, monkeypatch):
+        import pytest
+
+        from core.ai_advisor import _generate_openai
+
+        settings = self._settings(monkeypatch, AI_ADVISOR_PROVIDER="openai", AI_ADVISOR_API_KEY="gsk-x")
+        response = MagicMock()
+        response.json.return_value = {"choices": []}
+        with patch("httpx.post", return_value=response):
+            with pytest.raises(RuntimeError, match="empty response"):
+                _generate_openai(settings, "openai/gpt-oss-120b", "hola")

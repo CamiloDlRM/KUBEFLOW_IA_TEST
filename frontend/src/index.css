@@ -47,8 +47,6 @@
 
   background-color: var(--paper);
   color: var(--ink);
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-feature-settings: 'ss01' 1;
 }
 
 .manual ::selection {
