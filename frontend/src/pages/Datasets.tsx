@@ -4,12 +4,12 @@ import BackLink from '../components/BackLink';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getDatasets,
-  uploadDataset,
   activateDataset,
   deleteDataset,
   getDatasetPreview,
 } from '../api/client';
 import { useRepos } from '../hooks/usePipelines';
+import { useDatasetUpload } from '../hooks/useDatasetUpload';
 import type { Dataset } from '../types';
 import Spinner from '../components/Spinner';
 import SourcesPanel from '../components/SourcesPanel';
@@ -189,21 +189,21 @@ export default function Datasets() {
 /* ------------------------------------------------------------------ */
 
 function UploadPanel({ projectId }: { projectId: number }) {
-  const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [description, setDescription] = useState('');
   const [dragging, setDragging] = useState(false);
 
-  const uploadMut = useMutation({
-    mutationFn: () => uploadDataset(projectId, file!, description),
-    onSuccess: () => {
-      setFile(null);
-      setDescription('');
-      if (inputRef.current) inputRef.current.value = '';
-      queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
-    },
-  });
+  // Shared with the Data Factory panel through the QueryClient: an upload
+  // started there (or here) is still shown as in flight after navigating.
+  const upload = useDatasetUpload(projectId);
+  const shown = file ?? upload.sending?.file ?? null;
+
+  function resetForm() {
+    setFile(null);
+    setDescription('');
+    if (inputRef.current) inputRef.current.value = '';
+  }
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
@@ -211,7 +211,7 @@ function UploadPanel({ projectId }: { projectId: number }) {
     const dropped = e.dataTransfer.files?.[0];
     if (dropped) {
       setFile(dropped);
-      uploadMut.reset();
+      upload.clear();
     }
   }
 
@@ -236,10 +236,10 @@ function UploadPanel({ projectId }: { projectId: number }) {
         }`}
       >
         <UploadIcon />
-        {file ? (
+        {shown ? (
           <>
-            <p className="mt-2 text-sm font-medium text-slate-100">{file.name}</p>
-            <p className="text-xs text-slate-400">{formatBytes(file.size)}</p>
+            <p className="mt-2 text-sm font-medium text-slate-100">{shown.name}</p>
+            <p className="text-xs text-slate-400">{formatBytes(shown.size)}</p>
           </>
         ) : (
           <>
@@ -257,7 +257,7 @@ function UploadPanel({ projectId }: { projectId: number }) {
           className="hidden"
           onChange={(e) => {
             setFile(e.target.files?.[0] ?? null);
-            uploadMut.reset();
+            upload.clear();
           }}
         />
       </div>
@@ -279,13 +279,13 @@ function UploadPanel({ projectId }: { projectId: number }) {
         />
       </div>
 
-      {uploadMut.isError && (
+      {upload.error && (
         <div className="mt-3 rounded border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-300">
-          Upload failed: {(uploadMut.error as Error).message}
+          Upload failed: {upload.error.message}
         </div>
       )}
 
-      {uploadMut.isSuccess && (
+      {upload.isSuccess && (
         <div className="mt-3 rounded border border-emerald-800 bg-emerald-900/20 px-3 py-2 text-xs text-emerald-300">
           Dataset uploaded successfully.
         </div>
@@ -293,19 +293,19 @@ function UploadPanel({ projectId }: { projectId: number }) {
 
       <div className="mt-4 flex items-center gap-3">
         <button
-          onClick={() => uploadMut.mutate()}
-          disabled={!file || uploadMut.isPending}
+          onClick={() => file && upload.start({ file, description }, resetForm)}
+          disabled={!file || upload.isPending}
           className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {uploadMut.isPending && <Spinner size="sm" />}
-          {uploadMut.isPending ? 'Uploading...' : 'Upload'}
+          {upload.isPending && <Spinner size="sm" />}
+          {upload.isPending ? 'Uploading...' : 'Upload'}
         </button>
-        {file && !uploadMut.isPending && (
+        {file && !upload.isPending && (
           <button
             onClick={() => {
               setFile(null);
               if (inputRef.current) inputRef.current.value = '';
-              uploadMut.reset();
+              upload.clear();
             }}
             className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-800"
           >

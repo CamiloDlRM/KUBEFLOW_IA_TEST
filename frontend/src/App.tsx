@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { useWarnOnUnloadWhileUploading } from './hooks/useDatasetUpload';
 import Layout from './components/Layout';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
@@ -41,6 +42,7 @@ function ProjectPipelineRedirect() {
 }
 
 export default function App() {
+  useWarnOnUnloadWhileUploading();
   return (
     <Routes>
       {/* Public routes */}
