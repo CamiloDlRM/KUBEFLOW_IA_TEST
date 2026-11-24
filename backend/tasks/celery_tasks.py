@@ -1374,8 +1374,16 @@ def run_pipeline(
                     _phase("deploy", "success", f"Model deployed successfully. Endpoint: {endpoint_url}")
                     log.info("pipeline.phase.deploy.done", endpoint_url=endpoint_url)
                 except Exception as exc:
-                    _phase("deploy", "failed", str(exc))
-                    log.warning("pipeline.phase.deploy.failed", error=str(exc))
+                    message = str(exc)
+                    # The model server says why (a missing library, say); that
+                    # is the line worth showing, not the bare status code.
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        try:
+                            message = exc.response.json().get("detail") or message
+                        except ValueError:
+                            pass
+                    _phase("deploy", "failed", message)
+                    log.warning("pipeline.phase.deploy.failed", error=message)
             else:
                 log.info("pipeline.deploy.skipped", reason=deploy_reason)
 
