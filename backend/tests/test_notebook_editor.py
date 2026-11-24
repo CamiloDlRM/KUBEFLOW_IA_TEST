@@ -185,3 +185,102 @@ class TestSaveNotebook:
 
         assert resp.status_code == 404
         put.assert_not_awaited()
+
+
+CELLS = [
+    {"index": 0, "cell_type": "markdown", "source": "# Title", "tags": []},
+    {"index": 1, "cell_type": "code", "source": "model.fit(X)", "tags": ["mlops:training"]},
+]
+
+
+@pytest.fixture()
+def maia(monkeypatch):
+    """The AI provider, answering what the test sets as ``maia.return_value``."""
+    from unittest.mock import MagicMock
+
+    from core.config import get_settings
+
+    monkeypatch.setenv("AI_ADVISOR_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    get_settings.cache_clear()
+    provider = MagicMock(return_value='{"comment": "X is not defined.", "cells": []}')
+    with patch.dict("core.ai_advisor._BACKENDS", {"anthropic": provider}):
+        yield provider
+    get_settings.cache_clear()
+
+
+def _review(test_app, repo_id: int, **overrides):
+    body = {"cells": CELLS, "focus_index": 1, "error": "NameError: X"}
+    body.update(overrides)
+    return test_app.post(f"/repos/{repo_id}/notebook/review", json=body)
+
+
+class TestReviewNotebook:
+    def test_returns_maias_comment_and_her_proposal_for_the_cell(self, test_app, db_session, maia):
+        repo = seed_repo(db_session)
+        maia.return_value = json.dumps(
+            {"comment": "X is not defined.", "cells": [{"index": 1, "source": "model.fit(X_train)"}]}
+        )
+
+        resp = _review(test_app, repo.id)
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "comment": "X is not defined.",
+            "cells": [{"index": 1, "source": "model.fit(X_train)"}],
+        }
+        prompt = maia.call_args.args[2]
+        assert "Revisa la celda 1" in prompt and "NameError: X" in prompt and "model.fit(X)" in prompt
+
+    def test_reviews_the_whole_notebook_when_no_cell_is_selected(self, test_app, db_session, maia):
+        repo = seed_repo(db_session)
+
+        resp = _review(test_app, repo.id, focus_index=None, error="")
+
+        assert resp.status_code == 200
+        assert "Revisa todo el notebook" in maia.call_args.args[2]
+
+    def test_drops_proposals_for_cells_the_editor_cannot_rewrite(self, test_app, db_session, maia):
+        repo = seed_repo(db_session)
+        maia.return_value = json.dumps(
+            {"comment": "ok", "cells": [{"index": 0, "source": "# New"}, {"index": 7, "source": "x"}]}
+        )
+
+        assert _review(test_app, repo.id).json()["cells"] == []
+
+    def test_an_answer_in_prose_is_shown_as_the_comment(self, test_app, db_session, maia):
+        repo = seed_repo(db_session)
+        maia.return_value = "Define X before fitting."
+
+        assert _review(test_app, repo.id).json() == {"comment": "Define X before fitting.", "cells": []}
+
+    def test_a_selected_cell_that_was_not_sent_is_refused(self, test_app, db_session, maia):
+        repo = seed_repo(db_session)
+
+        assert _review(test_app, repo.id, focus_index=9).status_code == 400
+        maia.assert_not_called()
+
+    def test_a_notebook_too_long_to_send_is_refused_unless_a_cell_is_selected(self, test_app, db_session, maia):
+        repo = seed_repo(db_session)
+        cells = [CELLS[1], {"index": 2, "cell_type": "code", "source": "x" * 200_001, "tags": []}]
+
+        assert _review(test_app, repo.id, cells=cells, focus_index=None).status_code == 413
+        assert _review(test_app, repo.id, cells=cells, focus_index=1).status_code == 200
+        assert "xxxx" not in maia.call_args.args[2]
+
+    def test_another_users_repository_is_not_found(self, test_app, db_session, maia):
+        repo = seed_repo(db_session, owner_id=OTHER_USER_ID, github_url="https://github.com/other/repo")
+
+        assert _review(test_app, repo.id).status_code == 404
+        maia.assert_not_called()
+
+    def test_says_so_when_no_ai_provider_is_configured(self, test_app, db_session, monkeypatch):
+        from core.config import get_settings
+
+        monkeypatch.setenv("AI_ADVISOR_PROVIDER", "anthropic")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        get_settings.cache_clear()
+        repo = seed_repo(db_session)
+
+        assert _review(test_app, repo.id).status_code == 503
+        get_settings.cache_clear()
