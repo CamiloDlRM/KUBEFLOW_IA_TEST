@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { Anatomy, Callout, FieldList, QaList, Steps } from './ManualBlocks';
-import BackLink from '../BackLink';
+import BackLink, { BACK_BUTTON_CLASS } from '../BackLink';
 
 export interface ManualPageChapter {
   id: string;
@@ -389,9 +389,9 @@ export default function ManualPage({
           <div className="flex items-center gap-2">
             <Link
               to={crossLink.to}
-              className="inline-flex items-center gap-1.5 border border-[var(--rule-strong)] bg-[var(--paper-soft)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)]"
+              className={BACK_BUTTON_CLASS}
             >
-              <CrossLinkIcon size={13} aria-hidden="true" />
+              <CrossLinkIcon className="h-4 w-4" aria-hidden="true" />
               <span>{crossLink.headerLabel}</span>
             </Link>
 
@@ -399,11 +399,11 @@ export default function ManualPage({
               type="button"
               onClick={() => window.print()}
               title="Print, or choose Save as PDF in the print dialog"
-              className="inline-flex items-center gap-2 border border-[var(--rule-strong)] bg-[var(--paper-soft)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)]"
+              className={BACK_BUTTON_CLASS}
             >
-              <Printer size={13} aria-hidden="true" />
+              <Printer className="h-4 w-4" aria-hidden="true" />
               Print
-              <span className="hidden font-display text-[10px] font-normal text-[var(--ink-3)] sm:inline">
+              <span className="hidden font-display text-[11px] font-normal text-slate-400 sm:inline">
                 / PDF
               </span>
             </button>
@@ -603,7 +603,7 @@ export default function ManualPage({
               <button
                 type="button"
                 onClick={() => setQuery('')}
-                className="mt-5 border border-[var(--rule-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)]"
+                className={`${BACK_BUTTON_CLASS} mt-5`}
               >
                 Clear search
               </button>
@@ -700,19 +700,19 @@ export default function ManualPage({
               <div className="manual-print-hide flex flex-wrap items-center gap-2">
                 <Link
                   to={crossLink.to}
-                  className="inline-flex items-center gap-2 border border-[var(--rule-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)]"
+                  className={BACK_BUTTON_CLASS}
                 >
-                  <CrossLinkIcon size={13} aria-hidden="true" />
+                  <CrossLinkIcon className="h-4 w-4" aria-hidden="true" />
                   {crossLink.footerLabel}
                 </Link>
                 <BackLink to="/">Back to Maia</BackLink>
                 <button
                   type="button"
                   onClick={() => navigate('top')}
-                  className="inline-flex items-center gap-2 bg-[var(--ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--paper)] transition-opacity hover:opacity-85"
+                  className={BACK_BUTTON_CLASS}
                 >
                   Back to the cover
-                  <ArrowUp size={13} aria-hidden="true" />
+                  <ArrowUp className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
             </div>

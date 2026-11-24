@@ -5,6 +5,7 @@ import { API_BASE, predict } from '../../api/client';
 import type { ModelCard, ModelDeployment, ModelEffect, ModelInput, PredictionResult } from '../../types';
 import Spinner from '../Spinner';
 import EffectStrip from './EffectStrip';
+import { MaiaAvatar } from '../flow/Maia';
 import { classColor, formatValue } from './effects';
 
 /**
@@ -77,7 +78,7 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
   }, [card.effects, card.classes]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
         role="dialog"
         aria-label={`Test ${model.model_name}`}
@@ -101,9 +102,13 @@ export default function TestModelModal({ model, onClose }: { model: ModelDeploym
               </p>
             )}
           </div>
-          <button onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
-            <X size={18} />
-          </button>
+          <div className="flex shrink-0 items-start gap-1">
+            {/* Maia watches the cursor while the model is tried out. */}
+            <MaiaAvatar size={48} followCursor />
+            <button onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200">
+              <X size={18} />
+            </button>
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">

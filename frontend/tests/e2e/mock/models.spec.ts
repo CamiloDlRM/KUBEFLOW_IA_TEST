@@ -106,9 +106,9 @@ test.describe('models', () => {
     await page.goto('/models');
     await expect(row(page, 'iris-classifier')).toBeVisible();
 
-    page.once('dialog', (dialog) => dialog.accept());
     mockApi.on('GET', '/models', []);
     await row(page, 'iris-classifier').getByRole('button', { name: 'Delete' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Yes, delete' }).click();
 
     await expect(page.getByRole('link', { name: 'See the pipelines' })).toBeVisible();
     expect(mockApi.calls('DELETE', '/models/:name')[0].path).toBe('/models/iris-classifier');

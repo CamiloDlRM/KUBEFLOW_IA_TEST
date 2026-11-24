@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import './maia.css';
 import AIInsights from '../AIInsights';
 import type { PipelineView } from './usePipelineView';
@@ -83,6 +83,7 @@ export function MaiaAvatar({
   followCursor = false,
   swimming = null,
   mood = 'calm',
+  reviewer = false,
 }: {
   size?: number;
   className?: string;
@@ -90,6 +91,8 @@ export function MaiaAvatar({
   /** While she is being moved: she leans that way and her tentacles beat faster. */
   swimming?: 'left' | 'right' | null;
   mood?: MaiaMood;
+  /** As she is in the notebook editor: glasses on and a pencil in her right tentacle. */
+  reviewer?: boolean;
 }) {
   // Gradient and filter ids are global in the page, and Maia can be on it more than once.
   const id = useId().replace(/:/g, '');
@@ -126,11 +129,23 @@ export function MaiaAvatar({
     };
   }, [followCursor]);
 
-  // One tentacle: its thick stroke and the highlight along it.
-  const tentacle = (body: string, shine: string, extraClass = '') => (
+  // One tentacle: its thick stroke, the highlight along it, and anything it holds.
+  const tentacle = (body: string, shine: string, extraClass = '', held: ReactNode = null) => (
     <g className={extraClass}>
       <path d={body} fill="none" stroke={ref('tent')} strokeWidth="30" strokeLinecap="round" />
       <path d={shine} fill="none" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" opacity="0.45" />
+      {held}
+    </g>
+  );
+
+  // Gripped at the tip of her right tentacle and leaning out, point down, as if about to write.
+  const pencil = (
+    <g transform="translate(294 270) rotate(25) translate(0 22)" stroke="#1E1B4B" strokeWidth="2" strokeLinejoin="round">
+      <rect x="-7" y="-62" width="14" height="9" rx="3" fill="#F9A8D4" />
+      <rect x="-7" y="-53" width="14" height="6" fill="#CBD5E1" />
+      <rect x="-7" y="-47" width="14" height="40" fill="#FBBF24" />
+      <path d="M-7 -7 L7 -7 L0 10 Z" fill="#FDE68A" />
+      <path d="M-2.5 4 L2.5 4 L0 10 Z" fill="#1E1B4B" />
     </g>
   );
 
@@ -187,7 +202,12 @@ export function MaiaAvatar({
           {tentacle('M160 232 C148 272 118 292 106 270', 'M152 248 C142 272 124 284 114 274')}
           {tentacle('M200 242 C200 282 196 304 216 312', 'M193 262 C193 286 192 298 204 306')}
           {/* The tentacle on the viewer's right is the one she raises when alert. */}
-          {tentacle('M240 232 C252 272 282 292 294 270', 'M233 248 C243 272 262 286 280 276', 'maia-tentacle-right')}
+          {tentacle(
+            'M240 232 C252 272 282 292 294 270',
+            'M233 248 C243 272 262 286 280 276',
+            'maia-tentacle-right',
+            reviewer ? pencil : null,
+          )}
         </g>
 
         {/* The head turns toward the cursor (headRef); the tentacles stay below it. */}
@@ -219,6 +239,17 @@ export function MaiaAvatar({
             <path d="M157 188 Q170 176 183 188" />
             <path d="M217 188 Q230 176 243 188" />
           </g>
+
+          {/* Round glasses over her eyes; inside the head, so they turn with it. */}
+          {reviewer && (
+            <g fill="none" stroke="#1E1B4B" strokeWidth="5" strokeLinecap="round">
+              <circle cx="170" cy="183" r="25" fill="#FFFFFF" fillOpacity="0.14" />
+              <circle cx="230" cy="183" r="25" fill="#FFFFFF" fillOpacity="0.14" />
+              <path d="M195 180 Q200 175 205 180" />
+              <path d="M145 180 L124 172" />
+              <path d="M255 180 L276 172" />
+            </g>
+          )}
 
           {/* What her face says beyond calm: her brows. */}
           <g fill="none" stroke="#FFFFFF" strokeLinecap="round" filter={ref('glow')}>

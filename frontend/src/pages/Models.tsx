@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner';
 import ModelDashboard, { ModelStatusBadge } from '../components/ModelDashboard';
 import TestModelModal from '../components/models/TestModelModal';
 import VersionsDialog from '../components/models/VersionsDialog';
+import DeleteModelDialog from '../components/models/DeleteModelDialog';
 import ShareLinkCell from '../components/models/ShareLinkCell';
 import { formatDate, modelMetric } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
@@ -31,11 +32,7 @@ export default function Models() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['models'] }),
   });
 
-  function handleDelete(modelName: string) {
-    if (window.confirm(`Delete model "${modelName}"? This will unload it from the model server.`)) {
-      deleteMut.mutate(modelName);
-    }
-  }
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -137,7 +134,7 @@ export default function Models() {
                         Versions
                       </button>
                       <button
-                        onClick={() => handleDelete(m.model_name)}
+                        onClick={() => setDeleting(m.model_name)}
                         disabled={deleteMut.isPending}
                         className="rounded bg-red-600/20 px-2.5 py-1 text-xs font-medium text-red-400 hover:bg-red-600/30 disabled:opacity-50"
                       >
@@ -150,6 +147,17 @@ export default function Models() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {deleting && (
+        <DeleteModelDialog
+          modelName={deleting}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            deleteMut.mutate(deleting);
+            setDeleting(null);
+          }}
+        />
       )}
 
       {versionsOf && <VersionsDialog modelName={versionsOf} onClose={() => setVersionsOf(null)} />}
