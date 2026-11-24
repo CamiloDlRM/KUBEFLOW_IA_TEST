@@ -12,7 +12,7 @@ from core.config import AppSettings, get_settings
 from core.ownership import get_visible_pipeline_or_404
 from core.security import get_current_user
 from db import get_session
-from models.schemas import InsightResponse, PipelineInsight, User
+from models.schemas import InsightResponse, PipelineInsight, Repository, User
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/pipelines", tags=["insights"])
@@ -109,7 +109,7 @@ async def apply_insight_endpoint(
     pipelines the caller can see: this endpoint *writes* to the repository, so
     letting it run on somebody else's repo would be a write-side breach.
     """
-    get_visible_pipeline_or_404(session, pipeline_id, current_user)
+    pipeline = get_visible_pipeline_or_404(session, pipeline_id, current_user)
 
     insight = session.get(PipelineInsight, insight_id)
     if not insight or insight.pipeline_id != pipeline_id:
@@ -135,10 +135,19 @@ async def apply_insight_endpoint(
                 "configured on the server (missing API key or base URL)."
             ),
         )
-    if not settings.github_token:
+    # The push goes with the repository's own token (its owner's), so that is
+    # the one that must exist; the server's GITHUB_TOKEN is not asked for.
+    from core.github_credentials import MissingOwnerToken, repo_token
+
+    repo = session.get(Repository, pipeline.repo_id)
+    try:
+        token = repo_token(repo, settings) if repo else ""
+    except MissingOwnerToken as exc:
+        raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=str(exc)) from exc
+    if not token:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GITHUB_TOKEN is not configured on the server; cannot push.",
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail="This repository has no GitHub token to push with.",
         )
 
     insight.apply_status = "queued"

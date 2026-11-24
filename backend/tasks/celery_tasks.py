@@ -322,8 +322,14 @@ def _record_egress(engine: Any, egress: Any) -> None:
         record(session, egress, advisor_recipient(current), resolve_model(current))
 
 
-def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> dict[str, Any]:
-    """Fetch a run's training notebook from GitHub at a given ref."""
+def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str, token: str) -> dict[str, Any]:
+    """Fetch a run's training notebook from GitHub at a given ref, with the repository's token.
+
+    ``token`` is the repository's (``repo_token``): its owner's, never the
+    server's own. The server's token reads whatever its account can, so it hid
+    an owner's expired token on public repositories, and it cannot write to a
+    repository it does not own, which is what the advisor's push needs.
+    """
     import base64
 
     import httpx
@@ -332,7 +338,7 @@ def _download_notebook_for_analysis(repo: Any, notebook_path: str, ref: str) -> 
 
     owner, repo_name = parse_repo_url(repo.github_url)
     headers = {
-        "Authorization": f"Bearer {settings.github_token or ''}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
     }
     clean_nb_path = notebook_path.strip("/")
@@ -548,6 +554,11 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
             repo = session.get(Repository, pipeline.repo_id)
             if not repo:
                 raise ValueError(f"Repository {pipeline.repo_id} not found.")
+            from core.github_credentials import repo_token
+
+            # Resolved while the session is open: an owner's token is read
+            # from the owner's identity row.
+            token = repo_token(repo, settings)
 
             history = session.exec(
                 select(Pipeline)
@@ -582,6 +593,7 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
             repo,
             pipeline_data["notebook_path"],
             pipeline_data["commit_sha"] or pipeline_data["branch"],
+            token,
         )
 
         egress, data_columns = _advisor_egress(engine, pipeline_id, "advisor.analysis")
@@ -614,9 +626,11 @@ def analyze_pipeline(self: Any, pipeline_id: str, insight_id: int) -> dict[str, 
 
     except Exception as exc:
         log.exception("ai_advisor.failed", error=str(exc))
+        from core.github_credentials import token_problem
+
         _update_insight(
             status="failed",
-            error=str(exc),
+            error=token_problem(exc, "read the notebook") or str(exc),
             finished_at=datetime.now(timezone.utc),
         )
         record_advisor_analysis(
@@ -684,13 +698,17 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
             base_branch = pipeline.branch
             commit_ref = pipeline.commit_sha or base_branch
             notebook_path = pipeline.notebook_path
+            from core.github_credentials import repo_token
 
-        token = settings.github_token
+            # The repository's own token, as everywhere else: the branch is
+            # pushed by the account that owns the repository, and the server's
+            # token can only write where its own account can.
+            token = repo_token(repo, settings)
         if not token:
-            raise ValueError("GITHUB_TOKEN is not configured; cannot push.")
+            raise ValueError("This repository has no GitHub token to push with.")
 
         # 1. Notebook as it was for this run
-        notebook = _download_notebook_for_analysis(repo, notebook_path, commit_ref)
+        notebook = _download_notebook_for_analysis(repo, notebook_path, commit_ref, token)
 
         # 2. LLM applies the report's recommendations
         egress, _ = _advisor_egress(engine, pipeline_id, "advisor.apply")
@@ -724,8 +742,11 @@ def apply_insight(self: Any, pipeline_id: str, insight_id: int) -> dict[str, Any
 
     except Exception as exc:
         log.exception("ai_advisor.apply.failed", error=str(exc))
-        _update_insight(apply_status="failed", apply_error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        from core.github_credentials import token_problem
+
+        reason = token_problem(exc, "push the corrected notebook") or str(exc)
+        _update_insight(apply_status="failed", apply_error=reason)
+        return {"status": "failed", "error": reason}
 
 
 # ---------------------------------------------------------------------------
@@ -880,13 +901,20 @@ def run_pipeline(
             notebook_path = pipeline_row.notebook_path
             project_id = pipeline_row.project_id
             run_parameters = dict(pipeline_row.parameters or {})
+            from core.github_credentials import repo_token
+
+            # The repository's own token, the same one "Run pipeline" checked
+            # the branch with. The server's token used to download here, so a
+            # push-triggered run of a public repository went through on it
+            # even when the owner's token had expired.
+            token = repo_token(repo, settings)
 
         # Sync download (we are in a Celery worker, not async)
         from core.github import parse_repo_url
+        from core.github_credentials import token_problem
         import base64
 
         owner, repo_name = parse_repo_url(repo.github_url)
-        token = settings.github_token or ""
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -913,6 +941,8 @@ def run_pipeline(
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if problem := token_problem(exc, "download the notebook"):
+                raise ValueError(problem) from exc
             if exc.response.status_code == 404:
                 raise ValueError(
                     f"Notebook not found at '{clean_nb_path}' in repo "

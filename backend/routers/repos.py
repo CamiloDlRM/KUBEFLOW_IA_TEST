@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 import structlog
 
 from core.config import AppSettings, get_settings
-from core.github_credentials import encrypt_token, mask_token, repo_token, user_token
+from core.github_credentials import encrypt_token, mask_token, repo_token, token_problem, user_token
 from core.ownership import filter_repos_by_owner, get_visible_repo_or_404, linked_projects
 from core.security import get_current_user
 from db import get_session
@@ -80,8 +80,10 @@ async def create_repo(
 
     # A token in the body keeps the old per-repository behaviour. Otherwise the
     # repository follows its owner's sign-in token, so renewing it fixes all.
+    # Never the server's GITHUB_TOKEN: stored on the repository, it would make
+    # every push, branch and download on it act as the server's account.
     owner_token = "" if body.github_token else user_token(session, current_user, settings)
-    token = body.github_token or owner_token or settings.github_token
+    token = body.github_token or owner_token
     if not token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -262,6 +264,8 @@ async def list_repo_branches(
         branches = await list_branches(repo.github_url, repo_token(repo, settings))
     except Exception as exc:
         logger.error("repo.list_branches_failed", repo_id=repo_id, error=str(exc))
+        if problem := token_problem(exc, "list the branches"):
+            raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=problem) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to list branches from GitHub: {exc}",
@@ -285,6 +289,8 @@ async def list_repo_notebooks(
         return await list_notebooks(repo.github_url, repo_token(repo, settings), branch)
     except Exception as exc:
         logger.error("repo.list_notebooks_failed", repo_id=repo_id, branch=branch, error=str(exc))
+        if problem := token_problem(exc, "list the notebooks"):
+            raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=problem) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to list notebooks from GitHub: {exc}",
@@ -303,17 +309,21 @@ def _require_notebook_path(path: str) -> str:
 
 
 def _github_error(action: str, exc: Exception) -> HTTPException:
-    """What GitHub answered, in words the editor can show."""
+    """What GitHub answered, in words the editor can show.
+
+    A refused token is a 424, not a 502. The API sits behind Cloudflare, and a
+    502 reaches the browser as Cloudflare's own error page, without the CORS
+    headers: the page could only say "Network Error". A 4xx passes through as
+    the backend wrote it, so the person reads that the owner's token expired.
+    """
     import httpx
 
+    problem = token_problem(exc, action)
+    if problem:
+        return HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=problem)
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
-        if code in (401, 403):
-            detail = (
-                f"GitHub refused to {action}: the token has no write access to this repository "
-                "(or the branch is protected)."
-            )
-        elif code == 404:
+        if code == 404:
             detail = f"GitHub could not {action}: the notebook or the branch was not found."
         else:
             detail = f"GitHub could not {action} (HTTP {code})."
@@ -476,6 +486,8 @@ async def launch_pipeline(
         branches = await list_branches(repo.github_url, repo_token(repo, settings))
     except Exception as exc:
         logger.error("repo.trigger_branch_lookup_failed", repo_id=repo.id, error=str(exc))
+        if problem := token_problem(exc, "read the branch to run"):
+            raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=problem) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to resolve branch '{branch}' on GitHub: {exc}",
