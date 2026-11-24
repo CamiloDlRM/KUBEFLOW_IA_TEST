@@ -396,7 +396,7 @@ this shape:
 {
   "commit_message": "<one-line conventional commit message in Spanish>",
   "cells": [
-    {"index": <int, the number in the cell's "# --- Cell N" header>, "tag": "<the cell's mlops:* tag from that header, or an empty string if it has none>", "source": "<the FULL new source code of that cell>"}
+    {"index": <int, the number in the cell's "# --- Cell N" header>, "tag": "<the cell's tag from that header, such as parameters or mlops:training, or an empty string if it has none>", "source": "<the FULL new source code of that cell>"}
   ]
 }
 

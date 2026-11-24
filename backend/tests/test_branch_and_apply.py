@@ -260,6 +260,27 @@ class TestNotebookPatching:
         assert "".join(patched["cells"][2]["source"]).startswith("model = RandomForest")
         assert patched["cells"][1] == sample_notebook["cells"][1], "the cell the index named is untouched"
 
+    def test_an_index_on_the_title_markdown_follows_the_parameters_tag(self):
+        """Seen in production: a title in markdown at index 0, and a change for
+        the parameters cell sent with index 0. The tag is not mlops:*, and
+        must still win."""
+        from core.ai_advisor import apply_cells_patch
+
+        notebook = {
+            "cells": [
+                {"cell_type": "markdown", "metadata": {}, "source": ["# PULSO v1\n"]},
+                {"cell_type": "code", "metadata": {"tags": ["parameters"]}, "source": ["DATASET_PATH = \"\"\n"],
+                 "outputs": [], "execution_count": None},
+                {"cell_type": "code", "metadata": {"tags": ["mlops:training"]}, "source": ["model.fit(X, y)\n"],
+                 "outputs": [], "execution_count": None},
+            ]
+        }
+
+        patched = apply_cells_patch(notebook, [{"index": 0, "tag": "parameters", "source": "DATASET_PATH = \"x\"\n"}])
+
+        assert "".join(patched["cells"][1]["source"]) == "DATASET_PATH = \"x\"\n"
+        assert patched["cells"][0] == notebook["cells"][0], "the title is untouched"
+
     def test_without_a_tag_the_index_is_used(self, sample_notebook):
         from core.ai_advisor import apply_cells_patch
 
