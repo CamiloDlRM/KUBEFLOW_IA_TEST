@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import numpy as np
 import structlog
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
@@ -383,7 +384,7 @@ def _missing_library_message(client: Any, mlflow_run_id: str, module: str) -> st
     )
 
 
-def _probabilities(model: Any, data: list[list[float]]) -> list[dict[str, float]] | None:
+def _probabilities(model: Any, data: Any) -> list[dict[str, float]] | None:
     """Each row's probability per class, or None when the model has none.
 
     Best effort: a classifier that cannot produce probabilities still answers
@@ -438,9 +439,14 @@ async def predict(
         )
 
     def _infer() -> tuple[list[Any], list[dict[str, float]] | None]:
-        prediction = entry.model.predict(body.data)
+        # A NumPy array, not the request's nested lists. scikit-learn turns a
+        # list into one anyway, but a model's own code may only recognise the
+        # array: PULSO's threshold wrapper gives an ndarray its column names
+        # and passed a list through unnamed, to a pipeline that selects by name.
+        rows = np.asarray(body.data, dtype=float)
+        prediction = entry.model.predict(rows)
         values = prediction.tolist() if hasattr(prediction, "tolist") else list(prediction)
-        return values, _probabilities(entry.model, body.data)
+        return values, _probabilities(entry.model, rows)
 
     try:
         # Off the event loop, so a slow model does not stall every other request,
