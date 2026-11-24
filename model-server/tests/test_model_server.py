@@ -13,21 +13,24 @@ class TestLoadModel:
     def test_load_model_when_valid_run_id_should_load_into_memory(
         self,
         model_server_client,
+        tmp_path,
     ):
+        # A real artifact folder, as MLflow downloads it, instead of a mocked
+        # pathlib.Path: patching the class itself broke every real Path built
+        # meanwhile, such as the one _see_shared_libraries() makes.
+        artifact = tmp_path / "model"
+        artifact.mkdir()
+        (artifact / "model.joblib").write_bytes(b"stand-in; joblib.load is patched")
         mock_client_instance = MagicMock()
-        mock_client_instance.download_artifacts.return_value = "/tmp/test-models/model.joblib"
+        mock_client_instance.download_artifacts.return_value = str(artifact)
 
         mock_model = MagicMock()
         mock_model.predict.return_value = [0]
 
-        mock_path_instance = MagicMock()
-        mock_path_instance.is_dir.return_value = False
-
         with (
             patch("mlflow.set_tracking_uri"),
             patch("mlflow.tracking.MlflowClient", return_value=mock_client_instance),
-            patch("joblib.load", return_value=mock_model),
-            patch("pathlib.Path", return_value=mock_path_instance),
+            patch("joblib.load", return_value=mock_model) as load,
         ):
             resp = model_server_client.post(
                 "/internal/load/test-model",
@@ -36,6 +39,7 @@ class TestLoadModel:
 
         assert resp.status_code == 200
         assert "loaded successfully" in resp.json()["message"]
+        assert str(load.call_args.args[0]).endswith("model.joblib")
 
     def test_load_model_when_mlflow_fails_should_return_500(
         self,
@@ -75,6 +79,26 @@ class TestPredict:
         assert data["prediction"] == [0, 1, 2]
         assert data["model_name"] == "test-model"
         assert data["version"] == "1"
+
+    def test_the_model_receives_a_numpy_array_not_nested_lists(
+        self,
+        model_server_client,
+        loaded_model,
+        mock_model,
+    ):
+        """A wrapper written in a notebook may only name the columns of an ndarray (PULSO's does)."""
+        import numpy as np
+
+        resp = model_server_client.post(
+            "/predict/test-model",
+            json={"data": [[5.1, 3.5, 1.4, 0.2], [6.0, 2.9, 4.5, 1.5]]},
+        )
+
+        assert resp.status_code == 200
+        rows = mock_model.predict.call_args.args[0]
+        assert isinstance(rows, np.ndarray)
+        assert rows.shape == (2, 4)
+        assert rows.dtype == float
 
     def test_predict_when_model_not_found_should_return_404(
         self,
