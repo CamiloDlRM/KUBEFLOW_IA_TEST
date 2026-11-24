@@ -2,7 +2,7 @@
   "id": null,
   "uid": "mlops-ml",
   "title": "My Models",
-  "description": "Per-user view of training pipelines and deployed models. Every query is scoped to the signed-in user through ${__user.login} -> users.username -> the owner of the repository or project.",
+  "description": "Per-user view of training pipelines and deployed models. Every query is scoped to the signed-in user through ${__user.login} (user-<id>, never the username) -> users.id -> the owner of the repository or project.",
   "tags": ["mlops", "ml"],
   "timezone": "browser",
   "editable": false,
@@ -70,7 +70,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT COUNT(*) AS \"projects\"\nFROM projects pr\nJOIN users u ON u.id = pr.owner_id\nWHERE u.username = '${__user.login}'\n  AND pr.is_active;"
+          "rawSql": "SELECT COUNT(*) AS \"projects\"\nFROM projects pr\nJOIN users u ON u.id = pr.owner_id\nWHERE 'user-' || u.id = '${__user.login}'\n  AND pr.is_active;"
         }
       ]
     },
@@ -123,7 +123,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT COUNT(DISTINCT d.model_name) AS \"models\"\nFROM model_deployments d\nJOIN pipelines p ON p.id = d.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND d.is_active;"
+          "rawSql": "SELECT COUNT(DISTINCT d.model_name) AS \"models\"\nFROM model_deployments d\nJOIN pipelines p ON p.id = d.pipeline_id\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE 'user-' || u.id = '${__user.login}'\n  AND d.is_active;"
         }
       ]
     },
@@ -227,7 +227,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  m.name AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\nORDER BY p.finished_at DESC\nLIMIT 1;"
+          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  m.name AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE 'user-' || u.id = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\nORDER BY p.finished_at DESC\nLIMIT 1;"
         }
       ]
     },
@@ -298,7 +298,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT ROUND(\n         100.0 * COUNT(*) FILTER (WHERE p.status = 'success')\n         / NULLIF(COUNT(*) FILTER (WHERE p.status IN ('success', 'failed')), 0)\n       , 1) AS \"success_rate\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at);"
+          "rawSql": "SELECT ROUND(\n         100.0 * COUNT(*) FILTER (WHERE p.status = 'success')\n         / NULLIF(COUNT(*) FILTER (WHERE p.status IN ('success', 'failed')), 0)\n       , 1) AS \"success_rate\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE 'user-' || u.id = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at);"
         }
       ]
     },
@@ -382,7 +382,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  COALESCE(pr.name, r.github_url) || ' @ ' || COALESCE(NULLIF(p.branch, ''), pr.branch) || ' (' || m.name || ')' AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(p.finished_at)\nORDER BY 1;"
+          "rawSql": "SELECT\n  p.finished_at AS \"time\",\n  COALESCE(pr.name, r.github_url) || ' @ ' || COALESCE(NULLIF(p.branch, ''), pr.branch) || ' (' || m.name || ')' AS metric,\n  (p.metrics->>m.name)::float AS value\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT CASE\n    WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n    THEN pr.deploy_policy->>'metric'\n    ELSE 'accuracy'\n  END AS name\n) m\nWHERE 'user-' || u.id = '${__user.login}'\n  AND p.status = 'success'\n  AND p.finished_at IS NOT NULL\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND $__timeFilter(p.finished_at)\nORDER BY 1;"
         }
       ]
     },
@@ -464,7 +464,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  COALESCE(NULLIF(p.branch, ''), pr.branch) || ' (' || m.name || ')' AS \"branch\",\n  ROUND(AVG((p.metrics->>m.name)::numeric), 4) AS \"average\",\n  ROUND(\n    CASE\n      WHEN bool_or(m.lower) THEN MIN((p.metrics->>m.name)::numeric)\n      ELSE MAX((p.metrics->>m.name)::numeric)\n    END, 4\n  ) AS \"best\",\n  COUNT(*) AS \"runs\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT\n    CASE\n      WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n      THEN pr.deploy_policy->>'metric'\n      ELSE 'accuracy'\n    END AS name,\n    COALESCE(\n      p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n      AND pr.deploy_policy->>'direction' = 'lower',\n      FALSE\n    ) AS lower\n) m\nWHERE u.username = '${__user.login}'\n  AND p.status = 'success'\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND p.finished_at IS NOT NULL\n  AND $__timeFilter(p.finished_at)\nGROUP BY 1\nORDER BY 1;"
+          "rawSql": "SELECT\n  COALESCE(NULLIF(p.branch, ''), pr.branch) || ' (' || m.name || ')' AS \"branch\",\n  ROUND(AVG((p.metrics->>m.name)::numeric), 4) AS \"average\",\n  ROUND(\n    CASE\n      WHEN bool_or(m.lower) THEN MIN((p.metrics->>m.name)::numeric)\n      ELSE MAX((p.metrics->>m.name)::numeric)\n    END, 4\n  ) AS \"best\",\n  COUNT(*) AS \"runs\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nLEFT JOIN projects pr ON pr.id = p.project_id\nJOIN users u ON u.id = r.owner_id\nCROSS JOIN LATERAL (\n  SELECT\n    CASE\n      WHEN p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n      THEN pr.deploy_policy->>'metric'\n      ELSE 'accuracy'\n    END AS name,\n    COALESCE(\n      p.metrics->>(pr.deploy_policy->>'metric') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n      AND pr.deploy_policy->>'direction' = 'lower',\n      FALSE\n    ) AS lower\n) m\nWHERE 'user-' || u.id = '${__user.login}'\n  AND p.status = 'success'\n  AND p.metrics->>m.name ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'\n  AND p.finished_at IS NOT NULL\n  AND $__timeFilter(p.finished_at)\nGROUP BY 1\nORDER BY 1;"
         }
       ]
     },
@@ -523,7 +523,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT\n  p.status AS \"status\",\n  COUNT(*) AS \"runs\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at)\nGROUP BY 1\nORDER BY 2 DESC;"
+          "rawSql": "SELECT\n  p.status AS \"status\",\n  COUNT(*) AS \"runs\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE 'user-' || u.id = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND $__timeFilter(p.started_at)\nGROUP BY 1\nORDER BY 2 DESC;"
         }
       ]
     },
@@ -585,7 +585,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT\n  $__timeGroupAlias(p.started_at, $__interval),\n  AVG(EXTRACT(EPOCH FROM (p.finished_at - p.started_at))) AS \"avg_duration\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE u.username = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND p.finished_at IS NOT NULL\n  AND p.finished_at >= p.started_at\n  AND $__timeFilter(p.started_at)\nGROUP BY 1\nORDER BY 1;"
+          "rawSql": "SELECT\n  $__timeGroupAlias(p.started_at, $__interval),\n  AVG(EXTRACT(EPOCH FROM (p.finished_at - p.started_at))) AS \"avg_duration\"\nFROM pipelines p\nJOIN repositories r ON r.id = p.repo_id\nJOIN users u ON u.id = r.owner_id\nWHERE 'user-' || u.id = '${__user.login}'\n  AND p.started_at IS NOT NULL\n  AND p.finished_at IS NOT NULL\n  AND p.finished_at >= p.started_at\n  AND $__timeFilter(p.started_at)\nGROUP BY 1\nORDER BY 1;"
         }
       ]
     }

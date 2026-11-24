@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -45,11 +44,11 @@ from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
 from core.config import AppSettings, get_settings
-from core.grafana_queries import QueryNotAllowed, authorize_query, is_query_path
+from core.grafana_queries import QueryNotAllowed, authorize_query, grafana_login, is_query_path
 from core.ownership import restrict_by_pipeline
 from core.security import get_current_user
 from db import get_session
-from models.schemas import USERNAME_PATTERN, ModelDeployment, User
+from models.schemas import ModelDeployment, User
 
 logger = structlog.get_logger(__name__)
 
@@ -386,30 +385,15 @@ def _resolve_proxy_user(
 def _identity_headers(user: User, settings: AppSettings) -> dict[str, str]:
     """Build the auth-proxy identity headers Grafana is told to trust.
 
-    Grafana hands this username to the dashboards as ``${__user.login}`` and
+    Grafana hands this login to the dashboards as ``${__user.login}`` and
     interpolates it *verbatim* into the panel SQL, with no parameter binding.
-    ``USERNAME_PATTERN`` is enforced on both paths that can set a username, so
-    a stored value should never contain a quote — but this is the one place the
-    value leaves our process, and a row predating that rule (or seeded straight
-    from ``ADMIN_USERNAME``) would bypass it. Fail closed here rather than hand
-    Grafana something that changes the meaning of its own queries.
+    It is ``user-<id>`` (``grafana_login``), never the username: Grafana
+    lowercases logins, so a username with capitals no longer matched its own
+    rows, and an id cannot carry a quote whatever the username holds. That is
+    also why this no longer checks the username's characters: it never leaves
+    our process.
     """
-    if not re.fullmatch(USERNAME_PATTERN, user.username):
-        logger.error(
-            "grafana.username_rejected",
-            user_id=user.id,
-            reason="does not match USERNAME_PATTERN",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "This account's username contains characters that cannot be "
-                "passed to Grafana safely (a quote, a backslash or whitespace). "
-                "Letters, digits and _ . + - @ are accepted, so an email "
-                "address works. Change it in Settings, or ask an admin to."
-            ),
-        )
-    return {settings.grafana_auth_proxy_header: user.username}
+    return {settings.grafana_auth_proxy_header: grafana_login(user)}
 
 
 def _is_forbidden_client_header(name: str, settings: AppSettings) -> bool:
